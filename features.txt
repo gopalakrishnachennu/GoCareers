@@ -1,0 +1,1178 @@
+# Complete Feature List by User Role
+
+---
+
+## 1. ADMIN FEATURES
+
+### 1.1 Dashboard & Analytics
+- [ ] **Main Dashboard**
+  - View total users (consultants, employees, admins)
+  - Active users today/week/month
+  - New registrations graph
+  - Jobs posted statistics
+  - Resumes generated statistics
+  - Application submission stats
+  - Platform growth metrics
+  - Revenue metrics (if applicable)
+  - Real-time activity feed
+
+- [ ] **Advanced Analytics**
+  - User retention rate
+  - Churn rate analysis
+  - Jobs posted trends (daily/weekly/monthly)
+  - Application-to-hire ratio
+  - Average time to hire
+  - Geographic distribution map
+  - Most popular job categories
+  - Peak usage times
+  - Export all analytics to CSV/PDF
+
+### 1.2 User Management
+- [ ] **View All Users**
+  - Search users (by name, email, role)
+  - Filter by user type (admin/consultant/employee)
+  - Filter by status (active/suspended/banned)
+  - Filter by registration date
+  - Sort by various fields
+  - Pagination
+
+- [ ] **User Details**
+  - View complete profile
+  - View activity history
+  - View login history
+  - View IP addresses
+  - View devices used
+  - View all jobs posted (for employees)
+  - View all applications (for consultants)
+
+- [ ] **User Actions**
+  - Impersonate any user (with audit trail)
+  - Suspend user account
+  - Ban user account
+  - Reactivate account
+  - Reset user password
+  - Verify credentials manually
+  - Merge duplicate accounts
+  - Delete user account
+  - Export user data
+  - Send direct message to user
+
+- [ ] **Bulk Operations**
+  - Bulk suspend users
+  - Bulk email users
+  - Bulk export user data
+  - Bulk delete inactive accounts
+
+### 1.3 Content Moderation
+- [ ] **Review System**
+  - View flagged content
+  - Review reported users
+  - Review reported jobs
+  - Review reported messages
+  - Review inappropriate submissions
+
+- [ ] **Moderation Actions**
+  - Remove inappropriate content
+  - Edit content
+  - Warn users
+  - Blacklist users
+  - Monitor messaging (when flagged)
+  - Handle disputes
+  - Resolve conflicts
+
+### 1.4 Resume Prompt Management
+- [ ] **Prompt Templates**
+  - View all prompt templates
+  - Create new prompt template
+  - Edit existing prompts
+  - Duplicate prompts
+  - Delete prompts
+  - Set default prompt
+  - Activate/deactivate prompts
+  - Preview prompt output
+
+- [ ] **Prompt Configuration**
+  - System instructions
+  - Resume structure template
+  - Formatting guidelines
+  - Tone & style settings
+  - Target industry tags
+  - Target role types
+  - Experience level targeting
+  - Version control
+
+- [ ] **Prompt Analytics**
+  - Usage statistics per template
+  - Success rate per template
+  - Most used templates
+  - Template performance comparison
+  - Generation time by template
+  - Token usage by template
+
+### 1.5 LLM Configuration
+- [ ] **LLM Settings**
+  - Configure LLM provider (OpenAI/Anthropic/etc.)
+  - Set API keys
+  - Choose models
+  - Set temperature settings
+  - Set max tokens
+  - Configure rate limits
+  - Set usage quotas
+
+- [ ] **LLM Monitoring**
+  - Total resumes generated
+  - Token usage today/week/month
+  - Cost tracking
+  - Error rate monitoring
+  - Average generation time
+  - Failed generation logs
+  - API response time tracking
+
+### 1.6 Job Management
+- [ ] **View All Jobs**
+  - Search jobs
+  - Filter by category
+  - Filter by status
+  - Filter by company
+  - Filter by date posted
+  - Sort by various fields
+
+- [ ] **Job Actions**
+  - Edit any job
+  - Delete jobs
+  - Close jobs
+  - Reopen jobs
+  - Feature jobs
+  - Mark as filled
+  - Bulk operations
+
+- [ ] **Job Analytics**
+  - Jobs by category breakdown
+  - Jobs by location
+  - Application rate per job
+  - Time to fill metrics
+  - Most active companies
+
+### 1.7 Application Management
+- [ ] **View All Submissions**
+  - Search submissions
+  - Filter by status
+  - Filter by consultant
+  - Filter by company
+  - View submission details
+  - View generated resumes
+  - View proof of submissions
+
+- [ ] **Submission Actions**
+  - Update submission status
+  - Add admin notes
+  - Delete submissions
+  - Resolve disputes
+
+### 1.8 Platform Configuration
+- [ ] **General Settings**
+  - Platform name & branding
+  - Logo upload
+  - Color scheme
+  - Time zone settings
+  - Language settings
+  - Currency settings
+
+- [ ] **Feature Flags**
+  - Enable/disable resume generation
+  - Enable/disable messaging
+  - Enable/disable notifications
+  - Enable/disable job scraping
+  - Enable/disable social login
+  - A/B testing controls
+
+- [ ] **Category Management**
+  - Add job categories
+  - Edit categories
+  - Delete categories
+  - Reorder categories
+  - Add subcategories
+  - Set category icons
+
+- [ ] **Email Configuration**
+  - Email templates management
+  - SMTP settings
+  - Email service provider config
+  - Test email sending
+  - Email signature settings
+
+- [ ] **Notification Settings**
+  - Configure notification types
+  - Set default preferences
+  - Email frequency settings
+  - SMS settings
+
+### 1.9 Security & Compliance
+- [ ] **Audit Logs**
+  - View all admin actions
+  - Filter by admin user
+  - Filter by action type
+  - Filter by date
+  - View impersonation history
+  - Export audit logs
+
+- [ ] **Security Settings**
+  - Two-factor authentication enforcement
+  - Password policy configuration
+  - Session timeout settings
+  - IP whitelist/blacklist
+  - Rate limiting rules
+  - Failed login tracking
+
+- [ ] **Compliance**
+  - GDPR data export
+  - User data deletion requests
+  - Privacy policy management
+  - Terms of service management
+  - Cookie consent management
+  - Data retention policies
+
+### 1.10 Reporting
+- [ ] **Generate Reports**
+  - User activity report
+  - Job posting report
+  - Resume generation report
+  - Submission tracking report
+  - Financial report (if applicable)
+  - Performance report
+  - Custom date range reports
+
+- [ ] **Export Options**
+  - Export to CSV
+  - Export to Excel
+  - Export to PDF
+  - Scheduled reports (email delivery)
+
+### 1.11 Support Management
+- [ ] **Ticket System**
+  - View all support tickets
+  - Filter by priority
+  - Filter by status
+  - Assign tickets to admins
+  - Respond to tickets
+  - Close/resolve tickets
+  - Ticket escalation
+  - SLA monitoring
+
+- [ ] **Help Center Management**
+  - Create FAQ articles
+  - Edit FAQ content
+  - Organize categories
+  - Publish/unpublish articles
+  - Search analytics
+
+### 1.12 System Monitoring
+- [ ] **System Health**
+  - Server status
+  - Database status
+  - Redis status
+  - Celery workers status
+  - Disk space monitoring
+  - Memory usage
+  - CPU usage
+
+- [ ] **Performance Metrics**
+  - API response times
+  - Error rate tracking
+  - Slow query logs
+  - Cache hit rate
+  - Background job queue length
+
+### 1.13 Communication
+- [ ] **Mass Communication**
+  - Send broadcast emails
+  - Send targeted emails (by user type)
+  - SMS broadcasts
+  - In-app announcements
+  - Push notifications
+
+- [ ] **Templates**
+  - Email template editor
+  - SMS template editor
+  - Notification templates
+  - Dynamic variables support
+
+---
+
+## 2. EMPLOYEE FEATURES
+
+### 2.1 Dashboard
+- [ ] **Overview Dashboard**
+  - Total jobs posted
+  - Active jobs count
+  - Total applications submitted
+  - Pending submissions
+  - Success rate metrics
+  - Recent activity feed
+  - Quick actions menu
+
+- [ ] **Statistics Cards**
+  - Jobs posted this week/month
+  - Resumes generated this week/month
+  - Submissions pending proof upload
+  - Applications in review
+  - Interviews scheduled
+
+### 2.2 Profile Management
+- [ ] **Company Profile**
+  - Edit company name
+  - Upload company logo
+  - Add company description
+  - Set company website
+  - Set company location
+  - Set industry/sector
+  - Set company size
+  - Add social media links
+
+- [ ] **Personal Profile**
+  - Edit personal information
+  - Upload profile photo
+  - Set job title/role
+  - Set contact information
+  - Set time zone
+  - Set language preference
+
+- [ ] **Account Settings**
+  - Change password
+  - Enable two-factor authentication
+  - Email preferences
+  - Notification preferences
+  - Privacy settings
+
+### 2.3 Job Management
+
+#### 2.3.1 Job Upload
+- [ ] **Manual Job Entry**
+  - Job title
+  - Company name
+  - Company website
+  - Job URL (external link)
+  - Rich text job description
+  - Requirements
+  - Qualifications
+  - Location
+  - Job type (full-time/part-time/contract)
+  - Experience level
+  - Education required
+  - Skills required (tags)
+  - Salary range (optional)
+  - Application deadline
+  - Source (where job was found)
+  - Category selection
+  - Notes
+  - Save as draft
+  - Publish immediately
+
+- [ ] **Bulk Upload**
+  - Download CSV template
+  - Upload CSV file
+  - Preview imported data
+  - Validate data
+  - Error reporting
+  - Import jobs
+  - View import history
+  - Re-import failed jobs
+
+- [ ] **Copy-Paste Import**
+  - Paste job description
+  - Auto-extract fields (AI-powered)
+  - Review and edit
+  - Save job
+
+- [ ] **URL Scraper** (Optional)
+  - Enter job posting URL
+  - Auto-scrape job details
+  - Review extracted data
+  - Edit and save
+
+#### 2.3.2 Job Listing Management
+- [ ] **View All Jobs**
+  - List view with cards
+  - Search jobs by title/company
+  - Filter by status (draft/active/filled/closed)
+  - Filter by category
+  - Filter by date posted
+  - Sort by date, applications, views
+  - Pagination
+
+- [ ] **Job Actions**
+  - View job details
+  - Edit job
+  - Duplicate job
+  - Close job
+  - Reopen job
+  - Delete job
+  - Mark as filled
+  - View applications for job
+  - Export job data
+
+- [ ] **Job Analytics**
+  - View count
+  - Application count
+  - Resume generated count
+  - Submission status breakdown
+  - Time since posted
+  - Average time to submission
+
+### 2.4 Consultant Discovery
+- [ ] **Search Consultants**
+  - Search by name, skills, specialization
+  - Filter by category/subject
+  - Filter by location
+  - Filter by availability
+  - Filter by experience level
+  - Filter by rating
+  - Filter by hourly rate range
+  - Filter by certifications
+  - Filter by education level expertise
+  - Sort by rating, experience, rate
+
+- [ ] **Consultant Profile View**
+  - View full profile
+  - View credentials
+  - View experience
+  - View portfolio
+  - View reviews & ratings
+  - View availability
+  - View rates
+  - View completed jobs count
+  - View response time
+
+- [ ] **Consultant Actions**
+  - Save consultant to favorites
+  - Add notes to consultant
+  - Tag consultants
+  - Invite to apply for job
+  - Message consultant
+  - View past collaborations
+
+### 2.5 Resume Generation
+
+#### 2.5.1 Generate Resume
+- [ ] **Resume Creation Workflow**
+  - Select consultant from list/search
+  - Select job from my jobs
+  - Choose prompt template (dropdown)
+  - Add custom instructions (optional)
+  - Click "Generate Resume"
+  - View generation progress
+  - Preview generated resume
+
+- [ ] **Resume Preview & Editing**
+  - View formatted resume
+  - Edit resume content (rich text editor)
+  - Regenerate with different prompt
+  - Regenerate with same prompt
+  - Approve resume
+  - Download as DOCX
+  - Download as PDF (optional)
+  - Save as draft
+  - Discard
+
+- [ ] **Resume Management**
+  - View all generated resumes
+  - Filter by consultant
+  - Filter by job
+  - Filter by status (draft/approved/submitted)
+  - Filter by date
+  - Search resumes
+  - Delete drafts
+  - Bulk download
+  - Re-edit approved resumes
+
+#### 2.5.2 Resume Analytics
+- [ ] **Personal Resume Stats**
+  - Total resumes generated
+  - Resumes this week/month
+  - Average generation time
+  - Success rate (submissions)
+  - Most used templates
+  - Resumes by consultant
+  - Resumes by job category
+
+### 2.6 Application Submission
+
+#### 2.6.1 Submit Application
+- [ ] **Submission Workflow**
+  - Select approved resume
+  - Download resume (.docx)
+  - Submit to external portal (manual)
+  - Return to platform
+  - Fill submission details:
+    - Portal name
+    - Portal URL
+    - Confirmation number
+    - Submission method
+  - Upload proof of submission (multiple files)
+  - Add submission notes
+  - Set follow-up date
+  - Mark as submitted
+
+- [ ] **Proof Upload**
+  - Drag & drop files
+  - Browse files
+  - Multiple file support
+  - File type validation (PDF, PNG, JPG)
+  - File size validation (max 10MB)
+  - Preview uploaded files
+  - Add description per file
+  - Remove files
+  - Reorder files
+
+#### 2.6.2 Submission Management
+- [ ] **View All Submissions**
+  - List view with status badges
+  - Search by company, consultant, job
+  - Filter by status
+  - Filter by date submitted
+  - Filter by consultant
+  - Filter by job category
+  - Sort by date, status
+
+- [ ] **Submission Details**
+  - View full submission info
+  - View consultant profile
+  - View job details
+  - View generated resume
+  - View proof documents
+  - View timeline/history
+  - View notes
+
+- [ ] **Update Submission**
+  - Update status
+  - Add new proof documents
+  - Edit submission details
+  - Add follow-up notes
+  - Set interview date
+  - Update outcome
+  - Add internal notes
+
+- [ ] **Submission Actions**
+  - Download resume
+  - View all proof files
+  - Message consultant
+  - Resubmit (if rejected)
+  - Withdraw submission
+  - Archive submission
+  - Export submission details
+
+#### 2.6.3 Submission Tracking
+- [ ] **Status Pipeline**
+  - Pending (resume generated, not submitted)
+  - Submitted (proof uploaded)
+  - Acknowledged (company confirmed)
+  - Under Review
+  - Interview Scheduled
+  - Rejected
+  - Offer Received
+  - Hired
+  - Withdrawn
+
+- [ ] **Follow-up Management**
+  - Set follow-up reminders
+  - View upcoming follow-ups
+  - Mark as followed up
+  - Add follow-up notes
+  - Reschedule follow-ups
+
+### 2.7 Consultant Management
+- [ ] **My Consultants**
+  - View all consultants I've worked with
+  - Saved/favorite consultants
+  - Recently viewed consultants
+  - Filter by performance
+  - Sort by success rate
+
+- [ ] **Consultant Performance**
+  - View submission success rate
+  - View interview conversion rate
+  - View hire rate
+  - View average response time
+  - View collaboration history
+  - Add performance notes
+
+### 2.8 Communication
+- [ ] **Messaging System**
+  - View all conversations
+  - Search messages
+  - Filter by consultant
+  - Filter by read/unread
+  - Start new conversation
+  - Send messages
+  - Attach files
+  - View message history
+  - Mark as read/unread
+  - Archive conversations
+  - Delete conversations
+
+- [ ] **Notifications**
+  - View all notifications
+  - Mark as read
+  - Clear all notifications
+  - Notification preferences
+  - Email notification settings
+  - SMS notification settings
+  - Push notification settings
+
+### 2.9 Team Collaboration
+- [ ] **Team Management** (if company has multiple employees)
+  - View team members
+  - Invite team members
+  - Assign roles/permissions
+  - View team activity
+  - Shared job listings
+  - Shared consultant pool
+  - Internal notes on applications
+  - Activity feed for team
+
+### 2.10 Reviews & Ratings
+- [ ] **Rate Consultants**
+  - Overall rating (1-5 stars)
+  - Expertise rating
+  - Communication rating
+  - Professionalism rating
+  - Timeliness rating
+  - Value rating
+  - Write review text
+  - Would work again (yes/no)
+  - Submit review
+
+- [ ] **View My Reviews**
+  - Reviews I've given
+  - Reviews received (if applicable)
+  - Edit my reviews
+  - Delete my reviews
+
+### 2.11 Analytics & Reporting
+- [ ] **Personal Analytics**
+  - Jobs posted timeline
+  - Applications submitted timeline
+  - Success rate metrics
+  - Average time to hire
+  - Consultant performance comparison
+  - Category performance
+  - Monthly/weekly reports
+
+- [ ] **Export Reports**
+  - Resume generation report
+  - Submission tracking report
+  - Consultant performance report
+  - Custom date range
+  - Export as CSV/Excel/PDF
+
+### 2.12 Calendar & Scheduling
+- [ ] **Calendar View**
+  - View submission deadlines
+  - View follow-up dates
+  - View interview schedules
+  - Month/week/day views
+  - Add events manually
+  - Set reminders
+  - Sync with external calendar (Google/Outlook)
+
+### 2.13 Help & Support
+- [ ] **Support Access**
+  - View FAQ
+  - Search help articles
+  - Submit support ticket
+  - View my tickets
+  - Track ticket status
+  - Live chat support (if available)
+
+- [ ] **Platform Guides**
+  - How to upload jobs
+  - How to generate resumes
+  - How to submit applications
+  - Best practices
+  - Video tutorials
+
+---
+
+## 3. CONSULTANT FEATURES
+
+### 3.1 Dashboard
+- [ ] **Overview Dashboard**
+  - Total applications submitted (on my behalf)
+  - Active applications count
+  - Pending applications
+  - Interview scheduled
+  - Success rate
+  - Recent activity feed
+  - Quick stats cards
+
+- [ ] **Statistics Cards**
+  - Applications this week/month
+  - Response rate
+  - Interview rate
+  - Hire rate
+  - Applications by status breakdown
+
+### 3.2 Profile Management
+
+#### 3.2.1 Basic Information
+- [ ] **Personal Details**
+  - Full name
+  - Email address
+  - Phone number
+  - Profile photo upload
+  - Bio/professional summary
+  - Location (city, state, country)
+  - Time zone
+  - Languages spoken
+  - Years of experience
+  - Preferred work schedule
+  - Professional headline
+
+#### 3.2.2 Credentials
+- [ ] **Education**
+  - Add degrees
+  - Institution name
+  - Field of study
+  - Graduation year
+  - GPA (optional)
+  - Honors/awards
+  - Multiple education entries
+  - Reorder education
+
+- [ ] **Certifications & Licenses**
+  - Certification name
+  - Issuing organization
+  - Issue date
+  - Expiration date
+  - Credential ID
+  - Upload certificate files
+  - Multiple certifications
+
+- [ ] **Subject Expertise**
+  - Add subject areas
+  - Proficiency level
+  - Years of experience per subject
+  - Tag-based system
+  - Primary vs secondary subjects
+
+- [ ] **Specializations**
+  - Teaching methodologies
+  - Student age groups
+  - Special education expertise
+  - Test prep specializations
+  - Technology skills
+
+#### 3.2.3 Experience
+- [ ] **Work History**
+  - Job title
+  - Institution/company
+  - Location
+  - Start date
+  - End date (or current)
+  - Description
+  - Key achievements
+  - Multiple positions
+  - Reorder positions
+
+- [ ] **Institutions Worked With**
+  - Organization name
+  - Type (school/university/corporate)
+  - Years worked
+  - Role
+  - Notable projects
+
+- [ ] **Student Success Stories**
+  - Title
+  - Description
+  - Outcomes
+  - Testimonials
+  - Before/after metrics
+
+#### 3.2.4 Portfolio
+- [ ] **Work Samples**
+  - Upload documents
+  - Curriculum samples
+  - Lesson plans
+  - Teaching materials
+  - Student work (anonymized)
+  - File descriptions
+  - Organize by category
+
+- [ ] **Publications**
+  - Title
+  - Publication name
+  - Date published
+  - URL/link
+  - Description
+
+- [ ] **Projects**
+  - Project name
+  - Description
+  - Role
+  - Outcomes
+  - Skills used
+  - Upload project files
+
+#### 3.2.5 Availability & Rates
+- [ ] **Availability Settings**
+  - Available hours per week
+  - Time zone
+  - Preferred work schedule
+  - Blackout dates
+  - Vacation mode
+  - Immediate availability toggle
+
+- [ ] **Rate Information**
+  - Hourly rate
+  - Project rate range
+  - Retainer rates
+  - Rate negotiable toggle
+  - Currency preference
+
+#### 3.2.6 Verification
+- [ ] **Document Upload**
+  - Upload ID/passport
+  - Upload degrees/certificates
+  - Upload licenses
+  - Upload background check
+  - Document expiration tracking
+
+- [ ] **References**
+  - Add references
+  - Reference name
+  - Relationship
+  - Contact information
+  - Request recommendation
+  - View reference status
+
+- [ ] **Profile Strength**
+  - Profile completion percentage
+  - Completion checklist
+  - Suggestions for improvement
+  - Profile badge (verified, expert, etc.)
+
+### 3.3 Application Tracking
+
+#### 3.3.1 Applications Dashboard
+- [ ] **Summary Metrics**
+  - Total applications count
+  - Applications this month
+  - Active applications
+  - Pending submissions
+  - Interview scheduled
+  - Success rate percentage
+  - Response rate
+  - Average response time
+
+- [ ] **Applications List**
+  - Card/list view toggle
+  - Search applications
+  - Filter by status
+  - Filter by date range
+  - Filter by company
+  - Filter by job category
+  - Filter by employee who submitted
+  - Sort by date, status, company
+  - Pagination
+
+- [ ] **Application Status Badges**
+  - Pending (visual indicator)
+  - Submitted (visual indicator)
+  - Acknowledged (visual indicator)
+  - Under Review (visual indicator)
+  - Interview Scheduled (visual indicator)
+  - Rejected (visual indicator)
+  - Offer Received (visual indicator)
+  - Hired (visual indicator)
+
+#### 3.3.2 Application Details
+- [ ] **Company Information**
+  - Company name
+  - Company logo
+  - Industry
+  - Location
+  - Website link
+  - Company description (if available)
+
+- [ ] **Job Details**
+  - Job title
+  - Job description
+  - Requirements
+  - Qualifications
+  - Location
+  - Job type
+  - Salary range (if available)
+  - Application deadline
+  - External job URL
+
+- [ ] **Application Timeline**
+  - Resume generated date & time
+  - Submitted date & time
+  - Status update history
+  - Follow-up dates
+  - Interview dates
+  - Response received dates
+  - Visual timeline view
+
+- [ ] **Documents Section**
+  - View generated resume
+    - Preview in browser
+    - Download as DOCX
+    - Download as PDF (if available)
+  - Resume generation details
+    - Template used
+    - Generated by (employee name)
+    - Generation date
+  - View proof of submission
+    - All uploaded proof files
+    - Image gallery view
+    - Zoom in/out on images
+    - Download proof files
+    - View upload dates
+
+- [ ] **Submission Details**
+  - Submitted by (employee name & photo)
+  - Submission method
+  - Portal name
+  - Portal URL
+  - Confirmation number
+  - Submission notes from employee
+  - Follow-up schedule
+
+- [ ] **Actions**
+  - Download all documents (ZIP)
+  - Share application (link)
+  - Add personal notes
+  - Message employee
+  - Print application summary
+
+#### 3.3.3 Application Analytics
+- [ ] **Personal Performance**
+  - Success rate by category
+  - Success rate by company type
+  - Interview conversion rate
+  - Best performing job types
+  - Response time averages
+  - Monthly application trends
+  - Year-over-year comparison
+
+- [ ] **Visual Charts**
+  - Applications by status (pie chart)
+  - Applications over time (line graph)
+  - Success rate by category (bar chart)
+  - Response time trends
+
+### 3.4 Document Management
+- [ ] **Resume Library**
+  - View all my generated resumes
+  - Filter by job
+  - Filter by company
+  - Filter by date
+  - Search resumes
+  - Download individual resumes
+  - Bulk download
+  - Compare resume versions
+
+- [ ] **Proof Documents**
+  - View all proof documents
+  - Organized by application
+  - Search documents
+  - Download documents
+
+### 3.5 Communication
+- [ ] **Messaging System**
+  - View all conversations
+  - Filter by employee
+  - Search messages
+  - Filter by read/unread
+  - Send messages
+  - Attach files
+  - View message history
+  - Mark as read/unread
+  - Archive conversations
+  - Delete conversations
+
+- [ ] **Notifications**
+  - New resume generated
+  - Application submitted notification
+  - Proof uploaded notification
+  - Status update notifications
+  - Interview scheduled alerts
+  - Response received alerts
+  - Message notifications
+  - View all notifications
+  - Mark as read
+  - Clear notifications
+  - Notification settings
+
+### 3.6 Calendar & Schedule
+- [ ] **Calendar View**
+  - View application deadlines
+  - View interview schedules
+  - View follow-up dates
+  - Month/week/day views
+  - Add personal events
+  - Set reminders
+  - Sync with external calendar
+
+- [ ] **Availability Management**
+  - Set available hours
+  - Block dates
+  - Set vacation mode
+  - Update availability status
+
+### 3.7 Reviews & Ratings
+- [ ] **View My Reviews**
+  - All reviews received
+  - Average ratings
+  - Rating breakdown
+  - Filter by date
+  - Sort by rating
+  - Most recent reviews
+  - Most helpful reviews
+
+- [ ] **Review Display**
+  - Overall rating
+  - Individual rating categories
+  - Review text
+  - Reviewer info (employee/company)
+  - Review date
+  - Job/project context
+
+- [ ] **Respond to Reviews**
+  - Reply to reviews
+  - Thank reviewers
+  - Address concerns
+
+### 3.8 Saved Items
+- [ ] **Saved Jobs**
+  - View saved jobs (if browsing is enabled)
+  - Add notes to saved jobs
+  - Organize saved jobs
+  - Remove from saved
+
+### 3.9 Account Settings
+- [ ] **Profile Settings**
+  - Edit profile information
+  - Update credentials
+  - Update portfolio
+  - Profile visibility settings
+
+- [ ] **Security Settings**
+  - Change password
+  - Enable 2FA
+  - View login history
+  - View active sessions
+  - Logout from all devices
+
+- [ ] **Notification Preferences**
+  - Email notifications on/off
+  - SMS notifications on/off
+  - Push notifications on/off
+  - Notification frequency
+  - Notification types selection
+  - Quiet hours settings
+
+- [ ] **Privacy Settings**
+  - Profile visibility
+  - Data sharing preferences
+  - Email visibility
+  - Phone visibility
+
+### 3.10 Reports & Exports
+- [ ] **Generate Reports**
+  - Application summary report
+  - Performance report
+  - Timeline report
+  - Custom date range reports
+
+- [ ] **Export Data**
+  - Export applications to CSV
+  - Export applications to PDF
+  - Export resume history
+  - Export all documents (ZIP)
+
+### 3.11 Career Progress
+- [ ] **Achievements**
+  - View earned badges
+  - Milestones reached
+  - Profile level
+  - Next achievements preview
+
+- [ ] **Stats Dashboard**
+  - Total jobs applied to
+  - Total interviews
+  - Total hires
+  - Success metrics
+  - Career timeline
+  - Year in review
+
+### 3.12 Help & Support
+- [ ] **Support Access**
+  - View FAQ
+  - Search help articles
+  - Submit support ticket
+  - View my tickets
+  - Track ticket status
+  - Live chat (if available)
+
+- [ ] **Learning Resources**
+  - Platform tutorials
+  - Best practices guides
+  - Video tutorials
+  - Tips for success
+
+### 3.13 Feedback
+- [ ] **Provide Feedback**
+  - Rate platform experience
+  - Suggest improvements
+  - Report bugs
+  - Feature requests
+
+---
+
+## SUMMARY COUNT
+
+### Admin Features: **130+**
+### Employee Features: **120+**
+### Consultant Features: **100+**
+
+### **TOTAL FEATURES: 350+**
+
+---
+
+## PRIORITY LEVELS (MVP Phasing)
+
+### **Phase 1 - MVP (Must Have)**
+- User authentication & profiles
+- Job upload (manual)
+- Resume generation
+- DOCX conversion
+- Application submission
+- Proof upload
+- Basic consultant dashboard
+- Basic employee dashboard
+- Admin user management
+- Messaging
+- Basic notifications
+
+### **Phase 2 - Core Features**
+- Bulk job upload
+- Advanced search & filters
+- Calendar integration
+- Reviews & ratings
+- Analytics dashboards
+- Prompt template management
+- Document management
+- Advanced notifications
+- Team collaboration
+
+### **Phase 3 - Advanced Features**
+- Mobile app
+
+- Advanced analytics
+
+- AI-powered matching
+- Automated follow-ups
+- API access
+- Third-party integrations

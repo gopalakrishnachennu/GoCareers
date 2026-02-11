@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="flex justify-center items-center min-h-screen bg-gray-100">
+    <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-2xl">
+        <h2 class="text-2xl font-bold mb-6 text-center text-gray-800">
+            {% if form.instance.pk %}Update Application{% else %}Log Application Submission{% endif %}
+        </h2>
+
+        {% if form.instance.pk %}
+        <div class="mb-4 text-sm text-gray-600">
+            Job: <strong>{{ form.instance.job.title }}</strong><br>
+            Consultant: <strong>{{ form.instance.consultant.user.get_full_name }}</strong>
+        </div>
+        {% else %}
+        {% if view.kwargs.resume_id or request.GET.resume_id %}
+        <!-- Context from URL/GET -->
+        {% endif %}
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+
+            {% for hidden in form.hidden_fields %}
+            {{ hidden }}
+            {% endfor %}
+
+            {% for field in form.visible_fields %}
+            <div class="mb-4">
+                <label for="{{ field.id_for_label }}" class="block text-gray-700 font-bold mb-2">
+                    {{ field.label }}
+                </label>
+                {% if field.errors %}
+                <div class="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-2" role="alert">
+                    {{ field.errors }}
+                </div>
+                {% endif %}
+                {% render_field field class="shadow appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" %}
+                {% if field.help_text %}
+                <p class="text-gray-600 text-xs italic mt-1">{{ field.help_text }}</p>
+                {% endif %}
+            </div>
+            {% endfor %}
+
+            <div class="flex items-center justify-between mt-6">
+                <a href="{% url 'submission-list' %}" class="text-gray-600 hover:text-gray-900 font-bold">
+                    Cancel
+                </a>
+                <button
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline"
+                    type="submit">
+                    {% if form.instance.pk %}Update{% else %}Log Submission{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

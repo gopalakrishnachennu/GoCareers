@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row justify-between items-center mb-6 space-y-4 md:space-y-0">
+    <h1 class="text-3xl font-bold text-gray-800">Job Listings</h1>
+    <div class="flex items-center space-x-4">
+        <select onchange="window.location.href='{% url 'job-list' %}?role='+this.value"
+            class="px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+            <option value="">All Roles</option>
+            {% for role in marketing_roles %}
+            <option value="{{ role.slug }}" {% if selected_role == role.slug %}selected{% endif %}>{{ role.name }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="search"
+            class="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Search jobs..." hx-get="{% url 'job-list' %}" hx-trigger="keyup changed delay:500ms"
+            hx-target="#job-list-results" hx-indicator="#loading-indicator">
+
+        {% if user.role == 'EMPLOYEE' or user.is_superuser %}
+        <a href="{% url 'job-bulk-upload' %}"
+            class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded shadow">
+            Bulk Upload
+        </a>
+        <a href="{% url 'job-create' %}"
+            class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded shadow">
+            Post New Job
+        </a>
+        {% endif %}
+    </div>
+</div>
+
+<div id="loading-indicator" class="htmx-indicator flex justify-center py-4">
+    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+</div>
+
+<div id="job-list-results">
+    {% include 'jobs/_job_list_partial.html' %}
+</div>
+{% endblock %}

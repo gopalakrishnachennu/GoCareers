@@ -1,0 +1,10 @@
+If you don't remember the passwords, you can reset any of them by running this command:
+
+bash
+python3 manage.py changepassword admin
+Or if you want to create a brand new superuser with a fresh password:
+
+bash
+python3 manage.py createsuperuser
+Want me to reset the password for any of these accounts right now?
+

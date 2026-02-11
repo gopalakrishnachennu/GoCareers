@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="flex justify-between items-center mb-6">
+    <h1 class="text-3xl font-bold text-gray-800">Job Applications</h1>
+</div>
+
+<div class="bg-white shadow overflow-hidden sm:rounded-md">
+    <ul class="divide-y divide-gray-200">
+        {% for submission in submissions %}
+        <li>
+            <div class="px-4 py-4 sm:px-6">
+                <div class="flex items-center justify-between">
+                    <div class="flex flex-col">
+                        <p class="text-sm font-medium text-indigo-600 truncate">
+                            {{ submission.job.title }} at {{ submission.job.company }}
+                        </p>
+                        <p class="text-sm text-gray-500">
+                            Applicant: {{ submission.consultant.user.get_full_name }}
+                        </p>
+                    </div>
+                    <div class="ml-2 flex-shrink-0 flex">
+                        <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full 
+                                {% if submission.status == 'APPLIED' %}bg-blue-100 text-blue-800{% endif %}
+                                {% if submission.status == 'INTERVIEW' %}bg-yellow-100 text-yellow-800{% endif %}
+                                {% if submission.status == 'OFFER' %}bg-green-100 text-green-800{% endif %}
+                                {% if submission.status == 'REJECTED' %}bg-red-100 text-red-800{% endif %}
+                                {% if submission.status == 'WITHDRAWN' %}bg-gray-100 text-gray-800{% endif %}">
+                            {{ submission.get_status_display }}
+                        </span>
+                    </div>
+                </div>
+                <div class="mt-2 sm:flex sm:justify-between">
+                    <div class="sm:flex">
+                        <p class="flex items-center text-sm text-gray-500 mr-6">
+                            Submitted on {{ submission.created_at|date:"M d, Y" }} by {{ submission.submitted_by.username }}
+                        </p>
+                        {% if submission.proof_file %}
+                        <a href="{{ submission.proof_file.url }}" target="_blank"
+                            class="text-sm text-indigo-600 hover:text-indigo-900">
+                            View Proof
+                        </a>
+                        {% else %}
+                        <span class="text-sm text-gray-400">No proof attached</span>
+                        {% endif %}
+                    </div>
+                    {% if user.role == 'EMPLOYEE' or user.is_superuser %}
+                    <div class="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
+                        <a href="{% url 'submission-update' submission.pk %}"
+                            class="font-medium text-indigo-600 hover:text-indigo-500">
+                            Update Status
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </li>
+        {% empty %}
+        <li class="px-4 py-4 text-center text-gray-500">No applications found.</li>
+        {% endfor %}
+    </ul>
+</div>
+
+{% if is_paginated %}
+<div class="mt-8 flex justify-center">
+    <!-- Pagination logic same as job_list (omitted for brevity) -->
+    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}"
+            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Previous</a>
+        {% endif %}
+        <span
+            class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}"
+            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Next</a>
+        {% endif %}
+    </nav>
+</div>
+{% endif %}
+{% endblock %}

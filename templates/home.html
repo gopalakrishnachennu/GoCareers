@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="text-center">
+    <h1 class="text-4xl font-bold mb-4">{{ MSG_HOME_WELCOME }}</h1>
+    <p class="mb-4">{{ SITE_TAGLINE }}</p>
+
+    {% if not user.is_authenticated %}
+    <a href="{% url 'login' %}" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded">
+        {{ MSG_HOME_CTA }}
+    </a>
+    {% else %}
+    <p class="text-lg">You are logged in as <span class="font-bold">{{ user.username }}</span> ({{ user.get_role_display }})</p>
+    {% endif %}
+</div>
+{% endblock %}

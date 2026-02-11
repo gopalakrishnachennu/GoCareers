@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="flex flex-col space-y-8">
+    <h1 class="text-3xl font-bold text-gray-800">Analytics Dashboard</h1>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-blue-500">
+            <h3 class="text-gray-500 text-sm font-semibold uppercase">Total Jobs</h3>
+            <p class="text-3xl font-bold text-gray-800">{{ total_jobs }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-green-500">
+            <h3 class="text-gray-500 text-sm font-semibold uppercase">Active Jobs</h3>
+            <p class="text-3xl font-bold text-gray-800">{{ active_jobs }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-purple-500">
+            <h3 class="text-gray-500 text-sm font-semibold uppercase">Total Consultants</h3>
+            <p class="text-3xl font-bold text-gray-800">{{ total_consultants }}</p>
+        </div>
+        <div class="bg-white p-6 rounded-lg shadow-md border-l-4 border-indigo-500">
+            <h3 class="text-gray-500 text-sm font-semibold uppercase">Total Applications</h3>
+            <p class="text-3xl font-bold text-gray-800">{{ total_applications }}</p>
+        </div>
+    </div>
+
+    <!-- Charts -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Applications Status Pie Chart -->
+        <div class="bg-white p-6 rounded-lg shadow-lg">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Application Status</h3>
+            <div class="relative h-64 w-full">
+                <canvas id="appStatusChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Jobs Over Time Line Chart -->
+        <div class="bg-white p-6 rounded-lg shadow-lg">
+            <h3 class="text-xl font-bold text-gray-800 mb-4">Jobs Posted Over Time</h3>
+            <div class="relative h-64 w-full">
+                <canvas id="jobsTimeChart"></canvas>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    // Application Status Chart
+    const appCtx = document.getElementById('appStatusChart').getContext('2d');
+    new Chart(appCtx, {
+        type: 'doughnut',
+        data: {
+            labels: {{ app_status_labels| safe }},
+        datasets: [{
+            data: {{ app_status_data| safe }},
+        backgroundColor: [
+            '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#6B7280'
+        ],
+        borderWidth: 1
+            }]
+        },
+        options: {
+        responsive: true,
+        maintainAspectRatio: false
+    }
+    });
+
+    // Jobs Over Time Chart
+    const jobCtx = document.getElementById('jobsTimeChart').getContext('2d');
+    // Parse month labels properly if needed, but strings are fine for Chart.js
+    const jobLabels = {{ jobs_time_labels| safe }};
+    // We might need to ensure they are parsed as strings, JSON dumps does "Jan 2024"
+
+    new Chart(jobCtx, {
+        type: 'line',
+        data: {
+            labels: jobLabels,
+            datasets: [{
+                label: 'Jobs Posted',
+                data: {{ jobs_time_data| safe }
+    },
+        borderColor: '#8B5CF6',
+        tension: 0.3,
+        fill: true,
+        backgroundColor: 'rgba(139, 92, 246, 0.1)'
+            }]
+        },
+        options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+            y: {
+                beginAtZero: true,
+                ticks: {
+                    stepSize: 1
+                }
+            }
+        }
+    }
+    });
+</script>
+{% endblock %}

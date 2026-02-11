@@ -1,0 +1,249 @@
+from django import forms
+from django.contrib.auth import get_user_model
+from .models import Review, Experience, Education, Certification, ConsultantProfile, EmployeeProfile, MarketingRole, Department
+
+User = get_user_model()
+
+
+class ConsultantCreateForm(forms.Form):
+    """Form for admins to create a new consultant user + profile."""
+    # User fields
+    username = forms.CharField(max_length=150)
+    email = forms.EmailField(required=False)
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    password = forms.CharField(
+        widget=forms.PasswordInput,
+        required=False,
+        help_text="Leave blank to auto-generate from name + email.",
+    )
+
+    # Profile fields
+    phone = forms.CharField(max_length=20, required=False)
+    bio = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), required=False)
+    skills = forms.CharField(
+        required=False,
+        help_text="Comma-separated list, e.g. Python, Django, AWS",
+    )
+    hourly_rate = forms.DecimalField(max_digits=10, decimal_places=2, required=False)
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("A user with this username already exists.")
+        return username
+
+    def _generate_password(self):
+        """Build password from firstname.lastname@domain or fallback."""
+        first = self.cleaned_data.get('first_name', '').strip()
+        last = self.cleaned_data.get('last_name', '').strip()
+        email = self.cleaned_data.get('email', '').strip()
+
+        domain_part = ''
+        if email and '@' in email:
+            domain_part = email.split('@')[1].split('.')[0]  # e.g. "example" from "a@example.com"
+
+        if first and last and domain_part:
+            return f"{first}.{last}@{domain_part}"
+        elif first and last:
+            return f"{first}.{last}@consultant"
+        else:
+            username = self.cleaned_data.get('username', 'user')
+            return f"consultant_{username}"
+
+    def save(self):
+        data = self.cleaned_data
+        password = data.get('password', '').strip()
+        generated = False
+        if not password:
+            password = self._generate_password()
+            generated = True
+
+        user = User.objects.create_user(
+            username=data['username'],
+            email=data.get('email', ''),
+            password=password,
+            first_name=data.get('first_name', ''),
+            last_name=data.get('last_name', ''),
+            role=User.Role.CONSULTANT,
+        )
+        skills_raw = data.get('skills', '')
+        skills_list = [s.strip() for s in skills_raw.split(',') if s.strip()] if skills_raw else []
+        ConsultantProfile.objects.create(
+            user=user,
+            bio=data.get('bio', ''),
+            skills=skills_list,
+            hourly_rate=data.get('hourly_rate'),
+            phone=data.get('phone', ''),
+        )
+        return user, password, generated
+
+class EmployeeCreateForm(forms.Form):
+    """Form for admins to create a new employee user + profile."""
+    # User fields
+    username = forms.CharField(max_length=150)
+    email = forms.EmailField(required=False)
+    first_name = forms.CharField(max_length=150, required=False)
+    last_name = forms.CharField(max_length=150, required=False)
+    password = forms.CharField(
+        widget=forms.PasswordInput,
+        required=False,
+        help_text="Leave blank to auto-generate from name + email.",
+    )
+
+    # Profile fields
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False, empty_label="Select Department")
+    company_name = forms.CharField(max_length=100, required=False)
+
+    def clean_username(self):
+        username = self.cleaned_data['username']
+        if User.objects.filter(username=username).exists():
+            raise forms.ValidationError("A user with this username already exists.")
+        return username
+
+    def _generate_password(self):
+        """Build password from firstname.lastname@domain or fallback."""
+        first = self.cleaned_data.get('first_name', '').strip()
+        last = self.cleaned_data.get('last_name', '').strip()
+        email = self.cleaned_data.get('email', '').strip()
+
+        domain_part = ''
+        if email and '@' in email:
+            domain_part = email.split('@')[1].split('.')[0]
+
+        if first and last and domain_part:
+            return f"{first}.{last}@{domain_part}"
+        elif first and last:
+            return f"{first}.{last}@employee"
+        else:
+            username = self.cleaned_data.get('username', 'user')
+            return f"employee_{username}"
+
+    def save(self):
+        data = self.cleaned_data
+        password = data.get('password', '').strip()
+        generated = False
+        if not password:
+            password = self._generate_password()
+            generated = True
+
+        user = User.objects.create_user(
+            username=data['username'],
+            email=data.get('email', ''),
+            password=password,
+            first_name=data.get('first_name', ''),
+            last_name=data.get('last_name', ''),
+            role=User.Role.EMPLOYEE,
+        )
+        EmployeeProfile.objects.create(
+            user=user,
+            department=data.get('department'),
+            company_name=data.get('company_name', ''),
+        )
+        return user, password, generated
+
+
+class ReviewForm(forms.ModelForm):
+    class Meta:
+        model = Review
+        fields = ['rating', 'comment']
+        widgets = {
+            'comment': forms.Textarea(attrs={'rows': 3}),
+            'rating': forms.Select(choices=[(i, str(i)) for i in range(1, 6)]),
+        }
+
+class ExperienceForm(forms.ModelForm):
+    class Meta:
+        model = Experience
+        fields = ['title', 'company', 'start_date', 'end_date', 'is_current', 'description']
+        widgets = {
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'end_date': forms.DateInput(attrs={'type': 'date'}),
+            'description': forms.Textarea(attrs={'rows': 3}),
+        }
+
+class EducationForm(forms.ModelForm):
+    class Meta:
+        model = Education
+        fields = ['institution', 'degree', 'field_of_study', 'start_date', 'end_date']
+        widgets = {
+            'start_date': forms.DateInput(attrs={'type': 'date'}),
+            'end_date': forms.DateInput(attrs={'type': 'date'}),
+        }
+
+class CertificationForm(forms.ModelForm):
+    class Meta:
+        model = Certification
+        fields = ['name', 'issuing_organization', 'issue_date', 'expiration_date', 'credential_id']
+        widgets = {
+            'issue_date': forms.DateInput(attrs={'type': 'date'}),
+            'expiration_date': forms.DateInput(attrs={'type': 'date'}),
+        }
+
+
+class UserProfileForm(forms.ModelForm):
+    """Edit basic user fields: first_name, last_name, email."""
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'email']
+
+
+class EmployeeProfileForm(forms.ModelForm):
+    """Edit employee-specific fields: department, company_name."""
+    class Meta:
+        model = EmployeeProfile
+        fields = ['department', 'company_name']
+
+
+class ConsultantProfileEditForm(forms.ModelForm):
+    """Edit consultant-specific fields: bio, skills (as comma-separated), hourly_rate, phone."""
+    skills_text = forms.CharField(
+        required=False,
+        label='Skills',
+        help_text='Comma-separated list, e.g. Python, Django, AWS',
+        widget=forms.TextInput(),
+    )
+
+    class Meta:
+        model = ConsultantProfile
+        fields = ['bio', 'hourly_rate', 'phone', 'marketing_roles', 'status']
+        widgets = {
+            'bio': forms.Textarea(attrs={'rows': 3}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        self.user = kwargs.pop('user', None)
+        super().__init__(*args, **kwargs)
+        if self.instance and self.instance.pk:
+            self.fields['skills_text'].initial = ', '.join(self.instance.skills or [])
+        
+        # Marketing Roles: Admin only, as checkboxes
+        is_admin = self.user and (self.user.is_superuser or self.user.role == User.Role.ADMIN)
+        if is_admin:
+            self.fields['marketing_roles'].widget = forms.CheckboxSelectMultiple()
+            self.fields['marketing_roles'].queryset = MarketingRole.objects.all()
+            # Status field is already in Meta.fields, so we just ensure it's available for admins
+        else:
+            if 'marketing_roles' in self.fields:
+                del self.fields['marketing_roles']
+            if 'status' in self.fields:
+                del self.fields['status']
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        raw = self.cleaned_data.get('skills_text', '')
+        instance.skills = [s.strip() for s in raw.split(',') if s.strip()]
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
+
+
+class MarketingRoleForm(forms.ModelForm):
+    """Form for admins to create/edit marketing roles."""
+    class Meta:
+        model = MarketingRole
+        fields = ['name', 'description']
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 3}),
+        }

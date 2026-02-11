@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">Admin Dashboard</h1>
+        <p class="text-gray-500 mt-1">Welcome back, {{ request.user.get_full_name|default:request.user.username }}!</p>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-6 mb-8">
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Total Jobs</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ total_jobs }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-green-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Active Jobs</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ active_jobs }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-indigo-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Consultants</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ total_consultants }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-amber-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Employees</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ total_employees }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-purple-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Applications</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ total_applications }}</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Recent Jobs -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Recent Job Postings</h2>
+                <a href="{% url 'job-list' %}" class="text-blue-600 text-sm hover:underline">View All &rarr;</a>
+            </div>
+            {% if recent_jobs %}
+            <div class="space-y-3">
+                {% for job in recent_jobs %}
+                <a href="{% url 'job-detail' pk=job.pk %}" class="block p-3 bg-gray-50 rounded-lg hover:bg-blue-50 transition">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <p class="font-medium text-gray-800">{{ job.title }}</p>
+                            <p class="text-sm text-gray-500">{{ job.company }} &middot; {{ job.location }}</p>
+                        </div>
+                        <span class="px-3 py-1 text-xs font-semibold rounded-full {% if job.status == 'OPEN' %}bg-green-100 text-green-800{% else %}bg-gray-100 text-gray-600{% endif %}">{{ job.status }}</span>
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">No jobs posted yet.</p>
+            {% endif %}
+        </div>
+
+        <!-- Recent Applications -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Recent Applications</h2>
+                <a href="{% url 'submission-list' %}" class="text-blue-600 text-sm hover:underline">View All &rarr;</a>
+            </div>
+            {% if recent_applications %}
+            <div class="space-y-3">
+                {% for app in recent_applications %}
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <div>
+                        <p class="font-medium text-gray-800">{{ app.job.title }}</p>
+                        <p class="text-sm text-gray-500">by {{ app.consultant.user.get_full_name|default:app.consultant.user.username }}</p>
+                    </div>
+                    <span class="px-3 py-1 text-xs font-semibold rounded-full {% if app.status == 'APPLIED' %}bg-yellow-100 text-yellow-800{% elif app.status == 'REJECTED' %}bg-red-100 text-red-800{% else %}bg-green-100 text-green-800{% endif %}">{{ app.status }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">No applications yet.</p>
+            {% endif %}
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="bg-white rounded-xl shadow-md p-6 lg:col-span-2">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Quick Actions</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <a href="{% url 'job-create' %}" class="block text-center px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium">&#x2795; Post Job</a>
+                <a href="{% url 'consultant-add' %}" class="block text-center px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-medium">&#x2795; Add Consultant</a>
+                <a href="{% url 'analytics-dashboard' %}" class="block text-center px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition font-medium">&#x1F4CA; Analytics</a>
+                <a href="{% url 'employee-list' %}" class="block text-center px-4 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition font-medium">&#x1F465; Employees</a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

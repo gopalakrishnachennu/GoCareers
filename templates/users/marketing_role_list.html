@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Marketing Roles</h1>
+            <p class="text-gray-500 mt-1">Manage marketing roles for consultants and job listings.</p>
+        </div>
+        <a href="{% url 'marketing-role-add' %}" class="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition font-medium">&#x2795; Add Role</a>
+    </div>
+
+    {% if roles %}
+    <div class="bg-white rounded-xl shadow-md overflow-hidden">
+        <table class="w-full">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Consultants</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Jobs</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                    <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {% for role in roles %}
+                <tr class="hover:bg-gray-50">
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="font-medium text-gray-800">{{ role.name }}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-3 py-1 text-sm bg-indigo-100 text-indigo-800 rounded-full">{{ role.consultants.count }}</span>
+                    </td>
+                    <td class="px-6 py-4 whitespace-nowrap">
+                        <span class="px-3 py-1 text-sm bg-green-100 text-green-800 rounded-full">{{ role.jobs.count }}</span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">{{ role.description|truncatewords:15 }}</td>
+                    <td class="px-6 py-4 whitespace-nowrap text-right space-x-2">
+                        <a href="{% url 'marketing-role-edit' pk=role.pk %}" class="text-blue-600 hover:underline text-sm">Edit</a>
+                        <a href="{% url 'marketing-role-delete' pk=role.pk %}" class="text-red-600 hover:underline text-sm">Delete</a>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="bg-white rounded-xl shadow-md p-8 text-center">
+        <p class="text-gray-500">No marketing roles defined yet.</p>
+        <a href="{% url 'marketing-role-add' %}" class="inline-block mt-4 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">Create Your First Role</a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

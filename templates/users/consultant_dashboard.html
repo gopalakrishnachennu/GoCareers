@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">My Dashboard</h1>
+        <p class="text-gray-500 mt-1">Welcome back, {{ request.user.get_full_name|default:request.user.username }}!</p>
+    </div>
+
+    <!-- KPI Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-blue-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Total Applications</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ total_applications }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-green-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Active</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ active_applications }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-yellow-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Pending</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ pending_applications }}</p>
+        </div>
+        <div class="bg-white rounded-xl shadow-md p-6 border-l-4 border-purple-500">
+            <p class="text-sm text-gray-500 uppercase tracking-wide">Reviews</p>
+            <p class="text-3xl font-bold text-gray-800 mt-2">{{ reviews_count }}</p>
+            {% if avg_rating %}
+            <p class="text-sm text-yellow-500 mt-1">★ {{ avg_rating|floatformat:1 }} avg</p>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <!-- Recent Applications -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Recent Applications</h2>
+                <a href="{% url 'submission-list' %}" class="text-blue-600 text-sm hover:underline">View All →</a>
+            </div>
+            {% if recent_submissions %}
+            <div class="space-y-3">
+                {% for submission in recent_submissions %}
+                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                    <div>
+                        <p class="font-medium text-gray-800">{{ submission.job.title }}</p>
+                        <p class="text-sm text-gray-500">{{ submission.job.company }}</p>
+                    </div>
+                    <span class="px-3 py-1 text-xs font-semibold rounded-full
+                        {% if submission.status == 'PENDING' %}bg-yellow-100 text-yellow-800
+                        {% elif submission.status == 'SUBMITTED' %}bg-blue-100 text-blue-800
+                        {% elif submission.status == 'REJECTED' %}bg-red-100 text-red-800
+                        {% else %}bg-green-100 text-green-800{% endif %}">
+                        {{ submission.status }}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">No applications yet. <a href="{% url 'job-list' %}"
+                    class="text-blue-600 hover:underline">Browse Jobs</a></p>
+            {% endif %}
+        </div>
+
+        <!-- Recent Open Jobs -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Latest Open Jobs</h2>
+                <a href="{% url 'job-list' %}" class="text-blue-600 text-sm hover:underline">View All →</a>
+            </div>
+            {% if recent_jobs %}
+            <div class="space-y-3">
+                {% for job in recent_jobs %}
+                <a href="{% url 'job-detail' pk=job.pk %}"
+                    class="block p-3 bg-gray-50 rounded-lg hover:bg-blue-50 transition">
+                    <p class="font-medium text-gray-800">{{ job.title }}</p>
+                    <p class="text-sm text-gray-500">{{ job.company }} · {{ job.location }}</p>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">No open jobs at the moment.</p>
+            {% endif %}
+        </div>
+
+        <!-- Saved Jobs -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Saved Jobs</h2>
+                <a href="{% url 'saved-jobs' %}" class="text-blue-600 text-sm hover:underline">View All →</a>
+            </div>
+            {% if saved_jobs %}
+            <div class="space-y-3">
+                {% for saved in saved_jobs %}
+                <a href="{% url 'job-detail' pk=saved.job.pk %}"
+                    class="block p-3 bg-gray-50 rounded-lg hover:bg-blue-50 transition">
+                    <p class="font-medium text-gray-800">{{ saved.job.title }}</p>
+                    <p class="text-sm text-gray-500">{{ saved.job.company }} · Saved {{ saved.saved_at|timesince }} ago
+                    </p>
+                </a>
+                {% endfor %}
+            </div>
+            {% else %}
+            <p class="text-gray-500 text-center py-4">No saved jobs yet. Bookmark jobs you're interested in!</p>
+            {% endif %}
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="bg-white rounded-xl shadow-md p-6">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">Quick Actions</h2>
+            <div class="space-y-3">
+                <a href="{% url 'consultant-detail' pk=request.user.pk %}"
+                    class="block w-full text-center px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+                    👤 View My Profile
+                </a>
+                <a href="{% url 'job-list' %}"
+                    class="block w-full text-center px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition">
+                    🔍 Browse Jobs
+                </a>
+                <a href="{% url 'inbox' %}"
+                    class="block w-full text-center px-4 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition">
+                    💬 My Messages
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

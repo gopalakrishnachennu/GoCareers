@@ -1,0 +1,71 @@
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="consultant-list-container">
+    {% for consultant in consultants %}
+    <div class="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition">
+        <div class="flex items-center mb-4">
+            {% if consultant.avatar %}
+            <img src="{{ consultant.avatar.url }}" alt="{{ consultant.username }}"
+                class="h-12 w-12 rounded-full mr-4 bg-gray-200">
+            {% else %}
+            <div
+                class="h-12 w-12 rounded-full mr-4 bg-gray-200 flex items-center justify-center text-gray-500 font-bold text-xl">
+                {{ consultant.username|first|upper }}
+            </div>
+            {% endif %}
+            <div>
+                <h2 class="text-xl font-bold text-gray-900">
+                    <a href="{% url 'consultant-detail' consultant.pk %}" class="hover:text-indigo-600">
+                        {{ consultant.get_full_name|default:consultant.username }}
+                    </a>
+                </h2>
+                <div class="text-gray-600 text-sm flex items-center gap-2">
+                    <span>Rate: ${{ consultant.consultant_profile.hourly_rate|default:"N/A" }}/hr</span>
+                    {% with status=consultant.consultant_profile.status %}
+                    <span
+                        class="px-2 py-0.5 rounded text-xs font-semibold {% if status == 'ACTIVE' %}bg-green-100 text-green-800{% elif status == 'BENCH' %}bg-yellow-100 text-yellow-800{% elif status == 'PLACED' %}bg-blue-100 text-blue-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                        {{ consultant.consultant_profile.get_status_display }}
+                    </span>
+                    {% endwith %}
+                </div>
+            </div>
+        </div>
+
+        <p class="text-gray-500 mb-4 line-clamp-3">{{ consultant.consultant_profile.bio|default:"No bio available." }}
+        </p>
+
+        <div class="mb-4">
+            {% for skill in consultant.consultant_profile.skills %}
+            <span class="inline-block bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-1 mb-1">{{ skill                }}</span>
+            {% empty %}            <span class="text-gray-400 text-sm italic">No skills listed</span>
+            {% endfor %}
+        </div>
+
+        <div class="flex justify-between items-center mt-4 border-t pt-4">
+            <a href="{% url 'start-thread' consultant.id %}"
+                class="text-indigo-600 hover:text-indigo-800 font-medium">Message</a>
+            <a href="{% url 'consultant-detail' consultant.pk %}"
+                class="text-gray-600 hover:text-gray-800 font-medium">View Profile</a>
+        </div>
+    </div>
+    {% empty %}
+    <p class="text-gray-600 col-span-full text-center py-10">No consultants found matching your criteria.</p>
+    {% endfor %}
+</div>
+
+{% if is_paginated %}
+<div class="mt-8 flex justify-center">
+    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
+            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Previous</a>
+        {% endif %}
+        <span
+            class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
+            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+        </span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
+            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Next</a>
+        {% endif %}
+    </nav>
+</div>
+{% endif %}

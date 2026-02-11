@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Saved Jobs</h1>
+        <a href="{% url 'job-list' %}" class="text-blue-600 hover:underline text-sm">← Back to Jobs</a>
+    </div>
+
+    {% if saved_jobs %}
+    <div class="space-y-4">
+        {% for saved in saved_jobs %}
+        <div class="bg-white rounded-xl shadow-md p-6 flex justify-between items-center">
+            <div>
+                <a href="{% url 'job-detail' pk=saved.job.pk %}"
+                    class="text-lg font-semibold text-blue-600 hover:underline">
+                    {{ saved.job.title }}
+                </a>
+                <p class="text-gray-600">{{ saved.job.company }} · {{ saved.job.location }}</p>
+                <p class="text-sm text-gray-400 mt-1">Saved {{ saved.saved_at|timesince }} ago</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span class="px-3 py-1 text-xs font-semibold rounded-full 
+                    {% if saved.job.status == 'OPEN' %}bg-green-100 text-green-800
+                    {% else %}bg-red-100 text-red-800{% endif %}">
+                    {{ saved.job.status }}
+                </span>
+                <form method="post" action="{% url 'save-job' pk=saved.job.pk %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="next" value="{% url 'saved-jobs' %}">
+                    <button type="submit" class="text-red-500 hover:text-red-700 text-sm font-medium">
+                        Remove ✕
+                    </button>
+                </form>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% if is_paginated %}
+    <div class="flex justify-center mt-8 space-x-2">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}"
+            class="px-4 py-2 bg-blue-500 text-white rounded-lg">Previous</a>
+        {% endif %}
+        <span class="px-4 py-2 bg-gray-100 rounded-lg">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="px-4 py-2 bg-blue-500 text-white rounded-lg">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="bg-white rounded-xl shadow-md p-12 text-center">
+        <p class="text-gray-500 text-lg">You haven't saved any jobs yet.</p>
+        <a href="{% url 'job-list' %}"
+            class="mt-4 inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition">
+            Browse Jobs
+        </a>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

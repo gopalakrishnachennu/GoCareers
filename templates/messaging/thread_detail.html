@@ -1,0 +1,50 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="container mx-auto mt-8 h-screen flex flex-col">
+    <div class="flex justify-between items-center mb-4">
+        <a href="{% url 'inbox' %}" class="text-indigo-600 hover:text-indigo-900 font-bold">&larr; Back to Inbox</a>
+        <h2 class="text-2xl font-bold text-gray-800">
+            Conversation with
+            {% for participant in thread.participants.all %}
+            {% if participant != user %}
+            {{ participant.username }}
+            {% endif %}
+            {% endfor %}
+        </h2>
+    </div>
+
+    <div class="flex-1 overflow-y-auto bg-gray-50 p-4 rounded-lg shadow-inner mb-4 space-y-4">
+        {% for message in messages %}
+        <div class="flex {% if message.sender == user %}justify-end{% else %}justify-start{% endif %}">
+            <div
+                class="max-w-xs lg:max-w-md px-4 py-2 rounded-lg shadow 
+                            {% if message.sender == user %}bg-blue-500 text-white{% else %}bg-white text-gray-800{% endif %}">
+                <p class="text-sm">{{ message.content }}</p>
+                <p
+                    class="text-xs {% if message.sender == user %}text-blue-200{% else %}text-gray-500{% endif %} mt-1 text-right">
+                    {{ message.created_at|date:"M d, P" }}
+                </p>
+            </div>
+        </div>
+        {% empty %}
+        <p class="text-center text-gray-400">No messages yet. Start the conversation!</p>
+        {% endfor %}
+    </div>
+
+    <div class="bg-white p-4 rounded-lg shadow-lg">
+        <form method="post">
+            {% csrf_token %}
+            <div class="flex space-x-4">
+                {% render_field form.content class="flex-1 appearance-none border rounded w-full py-2 px-3 text-gray-700 leading-tight focus:outline-none focus:shadow-outline" rows="2" %}
+                <button
+                    class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded focus:outline-none focus:shadow-outline self-end"
+                    type="submit">
+                    Send
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

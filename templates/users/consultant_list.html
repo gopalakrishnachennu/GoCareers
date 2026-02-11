@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="flex flex-col md:flex-row justify-between items-center mb-6 space-y-4 md:space-y-0">
+    <h1 class="text-3xl font-bold text-gray-800">Find Consultants</h1>
+    <div class="flex items-center space-x-4">
+        {% if user.is_superuser or user.role == 'ADMIN' %}
+        <a href="{% url 'consultant-add' %}"
+            class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
+            + Add Consultant
+        </a>
+        <a href="{% url 'marketing-role-list' %}"
+            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition text-sm font-medium">
+            Manage Roles
+        </a>
+        {% endif %}
+        <select onchange="window.location.href='{% url 'consultant-list' %}?role='+this.value"
+            class="px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+            <option value="">All Roles</option>
+            {% for role in marketing_roles %}
+            <option value="{{ role.slug }}" {% if selected_role == role.slug %}selected{% endif %}>{{ role.name }}</option>
+            {% endfor %}
+        </select>
+        <input type="text" name="search"
+            class="px-4 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 w-64"
+            placeholder="Search by name, skill, or bio..." hx-get="{% url 'consultant-list' %}"
+            hx-trigger="keyup changed delay:500ms" hx-target="#consultant-list-results"
+            hx-indicator="#loading-indicator">
+    </div>
+</div>
+
+<div id="loading-indicator" class="htmx-indicator flex justify-center py-4">
+    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
+</div>
+
+<div id="consultant-list-results">
+    {% include 'users/_consultant_list_partial.html' %}
+</div>
+{% endblock %}
