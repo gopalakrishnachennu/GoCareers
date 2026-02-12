@@ -1,0 +1,143 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Platform Configuration</h1>
+            <p class="text-gray-600">Manage global settings for {{ PLATFORM_CONFIG.site_name }}.</p>
+        </div>
+        <a href="{% url 'settings-dashboard' %}" class="text-blue-600 hover:text-blue-800 font-medium">
+            &larr; Back to Settings
+        </a>
+    </div>
+
+    <form method="post" class="bg-white rounded-lg shadow-lg overflow-hidden">
+        {% csrf_token %}
+
+        <div class="p-6 space-y-8">
+            <!-- Branding Section -->
+            <section>
+                <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Branding & SEO</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Site Name</label>
+                        {{ form.site_name }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Tagline</label>
+                        {{ form.site_tagline }}
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Logo URL</label>
+                        {{ form.logo_url }}
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Meta Description</label>
+                        {{ form.meta_description }}
+                        <p class="text-xs text-gray-500 mt-1">Used for SEO.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Feature Flags -->
+            <section>
+                <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Feature Flags</h2>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            {{ form.enable_consultant_registration }}
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="{{ form.enable_consultant_registration.id_for_label }}"
+                                class="font-medium text-gray-700">Consultant Registration</label>
+                            <p class="text-gray-500">Allow new consultants to sign up.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            {{ form.enable_job_applications }}
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="{{ form.enable_job_applications.id_for_label }}"
+                                class="font-medium text-gray-700">Job Applications</label>
+                            <p class="text-gray-500">Allow consultants to apply.</p>
+                        </div>
+                    </div>
+                    <div class="flex items-start">
+                        <div class="flex items-center h-5">
+                            {{ form.enable_public_consultant_view }}
+                        </div>
+                        <div class="ml-3 text-sm">
+                            <label for="{{ form.enable_public_consultant_view.id_for_label }}"
+                                class="font-medium text-gray-700">Public Profiles</label>
+                            <p class="text-gray-500">Guests can view consultants.</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- System Settings -->
+            <section>
+                <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">System Settings</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-red-50 p-4 rounded-lg border border-red-200">
+                        <div class="flex items-start">
+                            <div class="flex items-center h-5">
+                                {{ form.maintenance_mode }}
+                            </div>
+                            <div class="ml-3 text-sm">
+                                <label for="{{ form.maintenance_mode.id_for_label }}"
+                                    class="font-bold text-red-700">Maintenance Mode</label>
+                                <p class="text-red-500">Puts the site into read-only mode for non-admins.</p>
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Maintenance Message</label>
+                            {{ form.maintenance_message }}
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Session Timeout
+                                (Minutes)</label>
+                            {{ form.session_timeout_minutes }}
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">Max Upload Size (MB)</label>
+                            {{ form.max_upload_size_mb }}
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Contact Info -->
+            <section>
+                <h2 class="text-xl font-bold text-gray-800 border-b pb-2 mb-4">Contact Information</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Support Email</label>
+                        {{ form.contact_email }}
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Support Phone</label>
+                        {{ form.support_phone }}
+                    </div>
+                    <div class="md:col-span-2">
+                        <label class="block text-sm font-medium text-gray-700 mb-1">Address</label>
+                        {{ form.address }}
+                    </div>
+                </div>
+            </section>
+        </div>
+
+        <div class="px-6 py-4 bg-gray-50 border-t flex justify-end">
+            <button type="submit"
+                class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded shadow transition">
+                Save Configuration
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

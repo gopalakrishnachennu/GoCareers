@@ -1,35 +1,171 @@
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="job-list-container">
-    {% for job in jobs %}
-    <div class="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition">
-        <h2 class="text-xl font-bold text-gray-900 mb-2">{{ job.title }}</h2>
-        <p class="text-gray-600 mb-2">{{ job.company }} • {{ job.location }}</p>
-        <p class="text-gray-500 mb-4 truncate">{{ job.description }}</p>
-        <div class="flex justify-between items-center mt-4">
-            <span class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded">{{ job.get_job_type_display }}</span>
-            <a href="{% url 'job-detail' job.pk %}" class="text-blue-600 hover:text-blue-800 font-medium">View Details
-                &rarr;</a>
+<!-- LIST CONTAINER -->
+<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden" id="job-list-container">
+    {% if jobs %}
+    <div class="divide-y divide-gray-100">
+        {% for job in jobs %}
+        <div
+            class="group relative p-5 hover:bg-blue-50/30 transition duration-150 ease-in-out flex flex-col md:flex-row md:items-center justify-between gap-4">
+
+            <!-- LEFT: Main Info -->
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-3 mb-1">
+                    <h2 class="text-base font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">
+                        <a href="{% url 'job-detail' job.pk %}" class="focus:outline-none">
+                            <span class="absolute inset-0" aria-hidden="true"></span>
+                            {{ job.title }}
+                        </a>
+                    </h2>
+                    <!-- New Badge (Logic: Created < 3 days ago - placeholder logic for now) -->
+                    {% if forloop.first %}
+                    <span
+                        class="px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700 border border-green-200/50">New</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex items-center text-sm text-gray-500 gap-x-4">
+                    <span class="font-medium text-gray-700 flex items-center gap-1.5">
+                        <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        {{ job.company }}
+                    </span>
+
+                    <span class="flex items-center gap-1.5 hidden sm:flex">
+                        <svg class="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        {{ job.location|default:"Remote" }}
+                    </span>
+                </div>
+            </div>
+
+            <!-- MIDDLE: Metadata Pills -->
+            <div class="flex items-center gap-3 shrink-0">
+                <span
+                    class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-gray-100 text-gray-700 border border-gray-200">
+                    {{ job.get_job_type_display|default:"Full Time" }}
+                </span>
+                {% if job.status %}
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium 
+                    {% if job.status == 'OPEN' %}bg-blue-100 text-blue-700 border border-blue-200
+                    {% elif job.status == 'CLOSED' %}bg-gray-100 text-gray-600 border border-gray-200
+                    {% else %}bg-yellow-100 text-yellow-700 border border-yellow-200{% endif %}">
+                    {{ job.status|title }}
+                </span>
+                {% endif %}
+            </div>
+
+            <!-- RIGHT: Actions & Date -->
+            <div class="flex items-center gap-6 shrink-0 md:w-48 justify-end text-sm">
+                <span class="text-gray-400 text-xs hidden lg:block">Posted {{ job.created_at|date:"M d" }}</span>
+
+                <div class="flex items-center gap-3 opacity-0 group-hover:opacity-100 transition-opacity relative z-10">
+                    <a href="{% url 'job-detail' job.pk %}"
+                        class="text-gray-400 hover:text-blue-600 p-1 rounded hover:bg-blue-50 transition" title="View">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                        </svg>
+                    </a>
+                    {% if user.role == 'EMPLOYEE' or user.is_superuser %}
+                    <a href="{% url 'job-update' job.pk %}"
+                        class="text-gray-400 hover:text-indigo-600 p-1 rounded hover:bg-indigo-50 transition"
+                        title="Edit">
+                        <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                    </a>
+                    {% endif %}
+                </div>
+
+                <svg class="h-5 w-5 text-gray-300 group-hover:text-blue-400 transition transform group-hover:translate-x-1"
+                    fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                </svg>
+            </div>
         </div>
+        {% endfor %}
     </div>
-    {% empty %}
-    <p class="text-gray-600 col-span-full text-center py-10">No jobs found matching your criteria.</p>
-    {% endfor %}
+    {% else %}
+    <div class="p-12 text-center">
+        <div class="mx-auto h-12 w-12 text-gray-300 mb-4">
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+        </div>
+        <h3 class="mt-2 text-sm font-medium text-gray-900">No jobs found</h3>
+        <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filters.</p>
+    </div>
+    {% endif %}
 </div>
 
+<!-- PAGINATION -->
 {% if is_paginated %}
-<div class="mt-8 flex justify-center">
-    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+<div class="mt-6 flex items-center justify-between border-t border-gray-200 pt-4 px-1">
+    <div class="flex-1 flex justify-between sm:hidden">
         {% if page_obj.has_previous %}
         <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
-            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Previous</a>
+            class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+            Previous
+        </a>
         {% endif %}
-        <span
-            class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
-            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-        </span>
         {% if page_obj.has_next %}
         <a href="?page={{ page_obj.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
-            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Next</a>
+            class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+            Next
+        </a>
         {% endif %}
-    </nav>
+    </div>
+    <div class="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+        <div>
+            <p class="text-sm text-gray-700">
+                Showing
+                <span class="font-medium">{{ page_obj.start_index }}</span>
+                to
+                <span class="font-medium">{{ page_obj.end_index }}</span>
+                of
+                <span class="font-medium">{{ page_obj.paginator.count }}</span>
+                results
+            </p>
+        </div>
+        <div>
+            <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
+                    class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                    title="Previous">
+                    <span class="sr-only">Previous</span>
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                    </svg>
+                </a>
+                {% endif %}
+
+                <span
+                    class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-gray-50 text-sm font-bold text-gray-700">
+                    {{ page_obj.number }}
+                </span>
+
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
+                    class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
+                    title="Next">
+                    <span class="sr-only">Next</span>
+                    <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                    </svg>
+                </a>
+                {% endif %}
+            </nav>
+        </div>
+    </div>
 </div>
 {% endif %}

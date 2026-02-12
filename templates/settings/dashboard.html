@@ -1,0 +1,66 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-800">System Settings</h1>
+        <p class="text-gray-600">Manage users, roles, and platform configuration.</p>
+    </div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <!-- Employee Management -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-blue-500 hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Employees</h2>
+                <span class="bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded">Access
+                    Control</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Manage employee accounts and granular permissions (e.g. Edit
+                Consultants).</p>
+            <a href="{% url 'employee-list' %}"
+                class="block text-center bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded transition">
+                Manage Employees
+            </a>
+        </div>
+
+        <!-- Marketing Roles -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-purple-500 hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Marketing Roles</h2>
+                <span
+                    class="bg-purple-100 text-purple-800 text-xs font-semibold px-2.5 py-0.5 rounded">Configuration</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Define and manage standard marketing roles for consultants and jobs.</p>
+            <a href="{% url 'marketing-role-list' %}"
+                class="block text-center bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded transition">
+                Manage Roles
+            </a>
+        </div>
+
+        <!-- Platform Config -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-green-500 hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Platform Config</h2>
+                <span class="bg-green-100 text-green-800 text-xs font-semibold px-2.5 py-0.5 rounded">Active</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Manage global settings, branding, features, and system controls.</p>
+            <a href="{% url 'platform-config' %}"
+                class="block text-center bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">
+                Configure
+            </a>
+        </div>
+        <!-- System Health -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-500 hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">System Health</h2>
+                <span class="bg-red-100 text-red-800 text-xs font-semibold px-2.5 py-0.5 rounded">Monitor</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Real-time status checks for webpages, database, and core features.</p>
+            <a href="{% url 'system-status' %}"
+                class="block text-center bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition">
+                Check Status
+            </a>
+        </div>
+    </div>
+</div>
+{% endblock %}

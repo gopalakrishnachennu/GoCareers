@@ -166,6 +166,20 @@
                             </div>
                         </div>
 
+                        {% if object.marketing_roles.exists %}
+                        <div>
+                            <span class="block text-gray-500 mb-1">Marketing Roles</span>
+                            <div class="flex flex-wrap gap-2">
+                                {% for role in object.marketing_roles.all %}
+                                <span
+                                    class="text-gray-900 font-medium bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs">
+                                    {{ role.name }}
+                                </span>
+                                {% endfor %}
+                            </div>
+                        </div>
+                        {% endif %}
+
                         {% if object.salary_range %}
                         <div>
                             <span class="block text-gray-500 mb-1">Salary Range</span>

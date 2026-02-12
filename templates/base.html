@@ -5,13 +5,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ SITE_FULL_TITLE }}</title>
+    <title>{{ PLATFORM_CONFIG.site_name|default:"EduConsult" }} - {{ PLATFORM_CONFIG.site_tagline|default:"Dashboard" }}
+    </title>
     {% tailwind_css %}
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
+    <meta name="description" content="{{ PLATFORM_CONFIG.meta_description }}">
 </head>
 
 <body class="bg-gray-100 font-sans leading-normal tracking-normal">
+
+    {% if PLATFORM_CONFIG.maintenance_mode and not user.is_staff %}
+    <div class="bg-red-600 text-white text-center py-2 px-4 shadow-md z-50 relative">
+        <p class="font-bold text-sm">{{ PLATFORM_CONFIG.maintenance_message }}</p>
+    </div>
+    {% endif %}
 
     {% if is_impersonating %}
     <div id="impersonate-banner"
@@ -39,7 +47,12 @@
 
     <nav class="flex items-center justify-between flex-wrap bg-blue-600 p-6">
         <div class="flex items-center flex-shrink-0 text-white mr-6">
-            <span class="font-semibold text-xl tracking-tight">{{ SITE_NAME }}</span>
+            <span class="font-semibold text-xl tracking-tight">
+                {% if PLATFORM_CONFIG.logo_url %}
+                <img src="{{ PLATFORM_CONFIG.logo_url }}" alt="Logo" class="h-8 inline-block mr-2 rounded bg-white p-1">
+                {% endif %}
+                {{ PLATFORM_CONFIG.site_name|default:"EduConsult" }}
+            </span>
         </div>
         <div class="block lg:hidden">
             <button
@@ -76,14 +89,9 @@
                     class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">
                     Consultants
                 </a>
-                <a href="{% url 'employee-list' %}"
-                    class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">
-                    Employees
-                </a>
-
-                <a href="{% url 'analytics-dashboard' %}"
-                    class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">
-                    Analytics
+                <a href="{% url 'settings-dashboard' %}"
+                    class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4 font-bold">
+                    ⚙️ Settings
                 </a>
 
                 {% elif user.role == 'EMPLOYEE' %}
@@ -103,6 +111,10 @@
                 <a href="{% url 'inbox' %}"
                     class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">
                     Messages
+                </a>
+                <a href="{% url 'consultant-list' %}"
+                    class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">
+                    Consultants
                 </a>
                 <a href="{% url 'analytics-dashboard' %}"
                     class="block mt-4 lg:inline-block lg:mt-0 text-blue-200 hover:text-white mr-4">

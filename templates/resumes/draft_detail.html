@@ -1,0 +1,94 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 py-12">
+    <div class="container mx-auto px-4 max-w-4xl">
+        <!-- Header -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-6">
+            <div class="px-8 py-6 border-b border-gray-100">
+                <div class="flex justify-between items-start">
+                    <div>
+                        <div class="flex items-center gap-3 mb-2">
+                            <h1 class="text-2xl font-bold text-gray-900">Resume Draft</h1>
+                            <span class="font-mono font-bold text-gray-500">v{{ draft.version }}</span>
+                            {% if draft.status == 'FINAL' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">✅
+                                Final</span>
+                            {% elif draft.status == 'DRAFT' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">📝
+                                Draft</span>
+                            {% elif draft.status == 'ERROR' %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800">❌
+                                Error</span>
+                            {% else %}
+                            <span class="px-3 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">⏳
+                                Processing</span>
+                            {% endif %}
+                        </div>
+                        <p class="text-gray-600">
+                            <strong>{{ draft.consultant.user.get_full_name }}</strong>
+                            applying to
+                            <strong>{{ draft.job.title }}</strong> at <strong>{{ draft.job.company }}</strong>
+                        </p>
+                        <p class="text-sm text-gray-400 mt-1">
+                            Generated {{ draft.created_at|date:"M d, Y" }} at {{ draft.created_at|date:"H:i" }}
+                            {% if draft.created_by %}by {{ draft.created_by.get_full_name }}{% endif %}
+                            {% if draft.tokens_used %}· {{ draft.tokens_used }} tokens{% endif %}
+                        </p>
+                    </div>
+                    <div class="flex gap-3">
+                        {% if draft.content %}
+                        <a href="{% url 'draft-download' draft.pk %}"
+                            class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg shadow text-sm flex items-center gap-2">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                            </svg>
+                            Download .DOCX
+                        </a>
+                        {% endif %}
+                        <a href="{% url 'consultant-detail' draft.consultant.user.pk %}"
+                            class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-bold py-2 px-4 rounded-lg text-sm">
+                            ← Back to Profile
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {% if draft.status == 'ERROR' %}
+        <!-- Error Display -->
+        <div class="bg-red-50 border border-red-200 rounded-xl p-6 mb-6">
+            <h3 class="font-bold text-red-800 mb-2">Generation Failed</h3>
+            <p class="text-red-700 text-sm">{{ draft.error_message }}</p>
+        </div>
+        {% endif %}
+
+        {% if draft.content %}
+        <!-- Resume Content -->
+        <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+            <div class="px-8 py-6 border-b border-gray-100 flex justify-between items-center">
+                <h2 class="text-lg font-bold text-gray-800">Generated Content</h2>
+                {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
+                {% if draft.status == 'DRAFT' %}
+                <form method="post" action="{% url 'draft-promote' draft.pk %}" class="inline">
+                    {% csrf_token %}
+                    <button type="submit"
+                        class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-1.5 px-4 rounded-lg text-sm">
+                        Promote to Final
+                    </button>
+                </form>
+                {% endif %}
+                {% endif %}
+            </div>
+            <div class="p-8">
+                <div
+                    class="prose max-w-none whitespace-pre-wrap font-mono text-sm leading-relaxed text-gray-800 bg-gray-50 border border-gray-200 rounded-lg p-6">
+                    {{ draft.content }}
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

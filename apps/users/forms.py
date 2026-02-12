@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth import get_user_model
-from .models import Review, Experience, Education, Certification, ConsultantProfile, EmployeeProfile, MarketingRole, Department
+from .models import Experience, Education, Certification, ConsultantProfile, EmployeeProfile, MarketingRole, Department
 
 User = get_user_model()
 
@@ -143,14 +143,7 @@ class EmployeeCreateForm(forms.Form):
         return user, password, generated
 
 
-class ReviewForm(forms.ModelForm):
-    class Meta:
-        model = Review
-        fields = ['rating', 'comment']
-        widgets = {
-            'comment': forms.Textarea(attrs={'rows': 3}),
-            'rating': forms.Select(choices=[(i, str(i)) for i in range(1, 6)]),
-        }
+
 
 class ExperienceForm(forms.ModelForm):
     class Meta:
@@ -192,7 +185,11 @@ class EmployeeProfileForm(forms.ModelForm):
     """Edit employee-specific fields: department, company_name."""
     class Meta:
         model = EmployeeProfile
-        fields = ['department', 'company_name']
+        fields = ['department', 'company_name', 'can_manage_consultants']
+        widgets = {
+            'department': forms.Select(attrs={'class': 'w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'}),
+            'can_manage_consultants': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded'}),
+        }
 
 
 class ConsultantProfileEditForm(forms.ModelForm):
@@ -242,8 +239,9 @@ class ConsultantProfileEditForm(forms.ModelForm):
 class MarketingRoleForm(forms.ModelForm):
     """Form for admins to create/edit marketing roles."""
     class Meta:
-        model = MarketingRole
-        fields = ['name', 'description']
+        model = EmployeeProfile
+        fields = ['company_name', 'department', 'can_manage_consultants']
         widgets = {
-            'description': forms.Textarea(attrs={'rows': 3}),
+            'department': forms.Select(attrs={'class': 'w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'}),
+            'can_manage_consultants': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded'}),
         }

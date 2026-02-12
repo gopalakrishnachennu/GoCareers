@@ -1,16 +1,24 @@
 from django.urls import path
 from .views import (
-    ConsultantListView, ConsultantDetailView, ConsultantDashboardView,
+    ConsultantListView, EmployeeListView, EmployeeDetailView, EmployeeCreateView,
+    EmployeeEditView, ConsultantEditView, ConsultantDetailView, ConsultantDashboardView,
+    SaveJobView, SavedJobListView, ConsultantCreateView,
+    MarketingRoleListView, MarketingRoleCreateView, MarketingRoleUpdateView, MarketingRoleDeleteView,
+    SettingsView,
     ExperienceCreateView, ExperienceUpdateView, ExperienceDeleteView,
     EducationCreateView, EducationUpdateView, EducationDeleteView,
     CertificationCreateView, CertificationUpdateView, CertificationDeleteView,
-    SaveJobView, SavedJobListView,
-    ConsultantCreateView, ConsultantEditView,
-    MarketingRoleListView, MarketingRoleCreateView, MarketingRoleUpdateView, MarketingRoleDeleteView,
 )
+from resumes.views import DraftGenerateView
+
 
 urlpatterns = [
-    path('', ConsultantListView.as_view(), name='consultant-list'),
+    path('employees/', EmployeeListView.as_view(), name='employee-list'),
+    path('employees/create/', EmployeeCreateView.as_view(), name='employee-create'),
+    
+    path('settings/', SettingsView.as_view(), name='settings-dashboard'),
+    
+    path('consultants/', ConsultantListView.as_view(), name='consultant-list'),
     path('add/', ConsultantCreateView.as_view(), name='consultant-add'),
     path('<int:pk>/', ConsultantDetailView.as_view(), name='consultant-detail'),
     path('<int:pk>/edit/', ConsultantEditView.as_view(), name='consultant-edit'),
@@ -51,4 +59,7 @@ urlpatterns = [
     path('marketing-roles/add/', MarketingRoleCreateView.as_view(), name='marketing-role-add'),
     path('marketing-roles/<int:pk>/edit/', MarketingRoleUpdateView.as_view(), name='marketing-role-edit'),
     path('marketing-roles/<int:pk>/delete/', MarketingRoleDeleteView.as_view(), name='marketing-role-delete'),
+
+    # Resume Draft Generation (Admin/Employee only)
+    path('<int:pk>/drafts/generate/', DraftGenerateView.as_view(), name='draft-generate'),
 ]

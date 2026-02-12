@@ -76,23 +76,12 @@ class EmployeeProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='employee_profile')
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, related_name='employees')
     company_name = models.CharField(max_length=200, default="My Company")
+    can_manage_consultants = models.BooleanField(default=False, help_text="Designates whether this employee can add, edit, or delete consultants.")
     
     def __str__(self):
         return f"{self.user.username}'s Employee Profile"
 
-class Review(models.Model):
-    consultant = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews_received')
-    reviewer = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviews_given')
-    rating = models.PositiveSmallIntegerField(choices=[(i, str(i)) for i in range(1, 6)])
-    comment = models.TextField()
-    created_at = models.DateTimeField(auto_now_add=True)
 
-    class Meta:
-        unique_together = ('consultant', 'reviewer')
-        ordering = ['-created_at']
-
-    def __str__(self):
-        return f"Review for {self.consultant.username} by {self.reviewer.username}"
 
 class Experience(models.Model):
     consultant_profile = models.ForeignKey(ConsultantProfile, on_delete=models.CASCADE, related_name='experience')

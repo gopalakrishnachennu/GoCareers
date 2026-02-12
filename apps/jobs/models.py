@@ -34,10 +34,8 @@ class Job(models.Model):
         default=Status.OPEN
     )
 
-    marketing_role = models.ForeignKey(
+    marketing_roles = models.ManyToManyField(
         MarketingRole,
-        on_delete=models.SET_NULL,
-        null=True,
         blank=True,
         related_name='jobs'
     )

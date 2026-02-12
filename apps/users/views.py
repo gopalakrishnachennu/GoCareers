@@ -3,15 +3,14 @@ from django.views.generic import ListView, DetailView, CreateView, UpdateView, D
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Q, Avg, Count
 from django.urls import reverse_lazy
-from .models import User, ConsultantProfile, Review, Experience, Education, Certification, SavedJob, MarketingRole, EmployeeProfile
-from .forms import ReviewForm, ExperienceForm, EducationForm, CertificationForm, ConsultantCreateForm, UserProfileForm, EmployeeProfileForm, ConsultantProfileEditForm, MarketingRoleForm, EmployeeCreateForm
+from .models import User, ConsultantProfile, Experience, Education, Certification, SavedJob, MarketingRole, EmployeeProfile
+from .forms import ExperienceForm, EducationForm, CertificationForm, ConsultantCreateForm, UserProfileForm, EmployeeProfileForm, ConsultantProfileEditForm, MarketingRoleForm, EmployeeCreateForm
 from django.contrib import messages
 from django.views import View as BaseView
 from jobs.models import Job
 from submissions.models import ApplicationSubmission
 from config.constants import (
     PAGINATION_CONSULTANTS, PAGINATION_SAVED_JOBS, DASHBOARD_RECENT_ITEMS, DASHBOARD_RECENT_JOBS,
-    MSG_REVIEW_SUCCESS, MSG_REVIEW_DUPLICATE, MSG_REVIEW_SELF,
     MSG_EXPERIENCE_ADDED, MSG_EXPERIENCE_UPDATED, MSG_EXPERIENCE_DELETED,
     MSG_EDUCATION_ADDED, MSG_EDUCATION_UPDATED, MSG_EDUCATION_DELETED,
     MSG_CERT_ADDED, MSG_CERT_UPDATED, MSG_CERT_DELETED,
@@ -64,6 +63,7 @@ class EmployeeListView(LoginRequiredMixin, UserPassesTestMixin, ListView):
 
     def test_func(self):
         return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
+        # return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
 
     def get_queryset(self):
         qs = User.objects.filter(role=User.Role.EMPLOYEE)
@@ -220,46 +220,34 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         profile = self.object.consultant_profile
-        context['reviews'] = self.object.reviews_received.all()
-        context['average_rating'] = self.object.reviews_received.aggregate(Avg('rating'))['rating__avg']
         context['experiences'] = profile.experience.all() if profile else []
         context['educations'] = profile.education.all() if profile else []
         context['certifications'] = profile.certifications.all() if profile else []
         
-        can_review = self.request.user != self.object and not self.object.reviews_received.filter(reviewer=self.request.user).exists()
-        context['can_review'] = can_review
         context['is_own_profile'] = self.request.user == self.object
         context['is_admin'] = self.request.user.is_superuser or self.request.user.role == 'ADMIN'
+        context['is_employee'] = self.request.user.role == 'EMPLOYEE'
         context['consultant_pk'] = self.object.pk
-        if can_review:
-            context['review_form'] = ReviewForm()
+
+        # Resume Drafts (Admin/Employee only)
+        if context['is_admin'] or context['is_employee']:
+            context['resume_drafts'] = profile.resume_drafts.all() if profile else []
+            from resumes.forms import DraftGenerateForm
+            
+            # Filter jobs: OPEN + Matches Consultant's Marketing Roles
+            roles = profile.marketing_roles.all() if profile else []
+            form = DraftGenerateForm()
+            if roles:
+                form.fields['job'].queryset = Job.objects.filter(
+                    status='OPEN',
+                    marketing_roles__in=roles
+                ).distinct()
+            else:
+                form.fields['job'].queryset = Job.objects.none()
+            
+            context['draft_form'] = form
+
         return context
-
-    def post(self, request, *args, **kwargs):
-        self.object = self.get_object()
-        if request.user == self.object:
-             messages.error(request, MSG_REVIEW_SELF)
-             return redirect('consultant-detail', pk=self.object.pk)
-        
-        if self.object.reviews_received.filter(reviewer=request.user).exists():
-             messages.error(request, "You have already reviewed this consultant.")
-             return redirect('consultant-detail', pk=self.object.pk)
-
-        form = ReviewForm(request.POST)
-        if form.is_valid():
-            review = form.save(commit=False)
-            review.consultant = self.object
-            review.reviewer = request.user
-            try:
-                review.save()
-                messages.success(request, MSG_REVIEW_SUCCESS)
-            except Exception:
-                messages.error(request, MSG_REVIEW_DUPLICATE)
-            return redirect('consultant-detail', pk=self.object.pk)
-        
-        context = self.get_context_data(object=self.object)
-        context['review_form'] = form
-        return self.render_to_response(context)
 
 
 # --- Mixin: Consultant owner OR admin can edit ---
@@ -268,7 +256,13 @@ class ConsultantOwnerMixin(LoginRequiredMixin, UserPassesTestMixin):
         u = self.request.user
         is_admin = u.is_superuser or u.role == 'ADMIN'
         is_owner = u.role == User.Role.CONSULTANT and hasattr(u, 'consultant_profile')
-        return is_admin or is_owner
+        
+        # Employee Permission Check
+        is_permitted_employee = False
+        if u.role == User.Role.EMPLOYEE and hasattr(u, 'employee_profile'):
+             is_permitted_employee = u.employee_profile.can_manage_consultants
+
+        return is_admin or is_owner or is_permitted_employee
 
     def get_profile(self):
         """Return the consultant profile being edited. Admins pass consultant_pk in URL."""
@@ -459,9 +453,7 @@ class ConsultantDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateV
         else:
             context['saved_jobs'] = []
         
-        # Reviews
-        context['reviews_count'] = user.reviews_received.count()
-        context['avg_rating'] = user.reviews_received.aggregate(Avg('rating'))['rating__avg']
+
         
         return context
 
@@ -526,7 +518,8 @@ class ConsultantCreateView(AdminRequiredMixin, BaseView):
 # ─── Marketing Role CRUD (Admin only) ─────────────────────────────────
 class AdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
     def test_func(self):
-        return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
+        return self.request.user.is_superuser or self.request.user.role == "ADMIN"
+        # return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
 
 
 class MarketingRoleListView(AdminRequiredMixin, ListView):
@@ -566,3 +559,14 @@ class MarketingRoleDeleteView(AdminRequiredMixin, DeleteView):
         messages.success(self.request, f'Marketing role "{self.object.name}" deleted!')
         return super().form_valid(form)
 
+
+class SettingsView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
+    template_name = 'settings/dashboard.html'
+    
+    def test_func(self):
+        return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Add any necessary context for settings dashboard here
+        return context

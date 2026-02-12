@@ -1,5 +1,4 @@
 {% extends 'base.html' %}
-{% load widget_tweaks %}
 
 {% block content %}
 <div class="container mx-auto mt-8">
@@ -23,16 +22,25 @@
                         <div class="flex items-center gap-3">
                             <div class="uppercase tracking-wide text-sm text-indigo-500 font-semibold">Consultant</div>
                             {% with status=consultant.consultant_profile.status %}
-                            <span class="px-2 py-0.5 rounded text-xs font-semibold
-                                {% if status == 'ACTIVE' %}bg-green-100 text-green-800
-                                {% elif status == 'BENCH' %}bg-yellow-100 text-yellow-800
-                                {% elif status == 'PLACED' %}bg-blue-100 text-blue-800
-                                {% else %}bg-gray-100 text-gray-800{% endif %}">
+                            <span
+                                class="px-2 py-0.5 rounded text-xs font-semibold {% if status == 'ACTIVE' %}bg-green-100 text-green-800{% elif status == 'BENCH' %}bg-yellow-100 text-yellow-800{% elif status == 'PLACED' %}bg-blue-100 text-blue-800{% else %}bg-gray-100 text-gray-800{% endif %}">
                                 {{ consultant.consultant_profile.get_status_display }}
                             </span>
                             {% endwith %}
                         </div>
-                        <h1 class="block mt-1 text-3xl leading-tight font-bold text-gray-900">{{                            consultant.get_full_name|default:consultant.username }}</h1>
+                        <h1 class="block mt-1 text-3xl leading-tight font-bold text-gray-900">
+                            {{ consultant.get_full_name|default:consultant.username }}
+                        </h1>
+
+                        <!-- Marketing Roles -->
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            {% for role in consultant.consultant_profile.marketing_roles.all %}
+                            <span
+                                class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                                {{ role.name }}
+                            </span>
+                            {% endfor %}
+                        </div>
                         <p class="mt-2 text-gray-600">{{ consultant.consultant_profile.bio|linebreaks }}</p>
                         {% if consultant.consultant_profile.phone %}
                         <p class="mt-1 text-gray-500 text-sm">
@@ -46,15 +54,10 @@
                         {% endif %}
                     </div>
                     <div class="text-right">
-                        <div class="text-2xl font-bold text-gray-800">${{                            consultant.consultant_profile.hourly_rate|default:"N/A" }}/hr</div>
-                        <div class="mt-2 text-yellow-500 flex items-center justify-end">
-                            <span class="text-xl font-bold mr-1">{{ average_rating|default:"-"|floatformat:1 }}</span>
-                            <svg class="w-5 h-5 fill-current" viewBox="0 0 24 24">
-                                <path
-                                    d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                            </svg>
-                            <span class="text-gray-500 text-sm ml-1">({{ reviews.count }} reviews)</span>
+                        <div class="text-2xl font-bold text-gray-800">
+                            ${{ consultant.consultant_profile.hourly_rate|default:"N/A" }}/hr
                         </div>
+
                     </div>
                 </div>
 
@@ -62,7 +65,9 @@
                     <h3 class="font-bold text-gray-700 mb-2">Skills</h3>
                     <div class="flex flex-wrap">
                         {% for skill in consultant.consultant_profile.skills %}
-                        <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-2 mb-2">{{ skill                            }}</span>
+                        <span class="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded-full mr-2 mb-2">
+                            {{ skill }}
+                        </span>
                         {% empty %}
                         <span class="text-gray-400 italic">No skills listed</span>
                         {% endfor %}
@@ -72,15 +77,12 @@
                 <div class="mt-6 flex space-x-4">
                     {% if user != consultant %}
                     <a href="{% url 'start-thread' consultant.id %}"
-                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded shadow">
-                        Message
-                    </a>
+                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded shadow">Message</a>
                     {% endif %}
                     {% if is_own_profile %}
                     <a href="{% url 'consultant-dashboard' %}"
-                        class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded shadow">
-                        My Dashboard
-                    </a>
+                        class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded shadow">My
+                        Dashboard</a>
                     {% endif %}
                     {% if is_admin or is_own_profile %}
                     <a href="{% url 'consultant-edit' consultant.pk %}"
@@ -91,11 +93,24 @@
                         </svg>
                         Edit Profile
                     </a>
+                    {% elif user.role == 'EMPLOYEE' and user.employee_profile.can_manage_consultants %}
+                    <a href="{% url 'consultant-edit' consultant.pk %}"
+                        class="bg-blue-100 text-blue-700 hover:bg-blue-200 font-bold py-2 px-6 rounded shadow flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        Edit Profile
+                    </a>
                     {% endif %}
-                    {% if is_admin and not is_own_profile %}
+
+                    {# Impersonate: Only true Admins #}
+                    {% if user.is_superuser or user.role == 'ADMIN' %}
+                    {% if not is_own_profile %}
                     <a href="{% url 'start-impersonate' consultant.pk %}"
                         class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-6 rounded shadow flex items-center gap-2">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -103,6 +118,7 @@
                         </svg>
                         Impersonate
                     </a>
+                    {% endif %}
                     {% endif %}
                 </div>
             </div>
@@ -128,7 +144,10 @@
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800">{{ exp.title }}</h3>
                     <p class="text-gray-600">{{ exp.company }}</p>
-                    <p class="text-sm text-gray-400">{{ exp.start_date|date:"M Y" }} – {% if exp.is_current %}Present{%                        else %}{{ exp.end_date|date:"M Y" }}{% endif %}</p>
+                    <p class="text-sm text-gray-400">
+                        {{ exp.start_date|date:"M Y" }} – {% if exp.is_current %}Present{% else %}{{
+                        exp.end_date|date:"M Y" }}{% endif %}
+                    </p>
                     {% if exp.description %}<p class="text-gray-600 mt-2 text-sm">{{ exp.description }}</p>{% endif %}
                 </div>
                 {% if is_own_profile %}
@@ -171,7 +190,9 @@
                 <div>
                     <h3 class="text-lg font-semibold text-gray-800">{{ edu.degree }} in {{ edu.field_of_study }}</h3>
                     <p class="text-gray-600">{{ edu.institution }}</p>
-                    <p class="text-sm text-gray-400">{{ edu.start_date|date:"Y" }} – {{                        edu.end_date|date:"Y"|default:"Present" }}</p>
+                    <p class="text-sm text-gray-400">
+                        {{ edu.start_date|date:"Y" }} – {{ edu.end_date|date:"Y"|default:"Present" }}
+                    </p>
                 </div>
                 {% if is_own_profile %}
                 <div class="flex space-x-2">
@@ -217,9 +238,6 @@
                         Issued {{ cert.issue_date|date:"M Y" }}
                         {% if cert.expiration_date %} · Expires {{ cert.expiration_date|date:"M Y" }}{% endif %}
                     </p>
-                    {% if cert.credential_id %}
-                    <p class="text-xs text-gray-400">ID: {{ cert.credential_id }}</p>
-                    {% endif %}
                 </div>
                 {% if is_own_profile %}
                 <div class="flex space-x-2">
@@ -242,62 +260,128 @@
         <p class="text-gray-500 italic">No certifications listed.</p>
         {% endfor %}
     </div>
-    <!-- Reviews Section -->
-    <div class="bg-gray-50 rounded-lg shadow p-8">
-        <h2 class="text-2xl font-bold text-gray-800 mb-6">Reviews</h2>
 
-        {% if can_review %}
-        <div class="bg-white p-6 rounded-lg shadow-sm mb-8 border border-gray-200">
-            <h3 class="text-lg font-bold mb-4">Leave a Review</h3>
-            <form method="post">
+    {% if is_admin or is_employee %}
+    <!-- AI Resume Drafts Section (Admin/Employee Only) -->
+    <div class="bg-white rounded-lg shadow-lg p-8 mb-8">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                <svg class="w-6 h-6 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                AI Resume Drafts
+            </h2>
+        </div>
+
+        <!-- Generate New Draft -->
+        <div class="bg-purple-50 border border-purple-200 rounded-lg p-4 mb-6">
+            <form method="post" action="{% url 'draft-generate' consultant.pk %}" class="flex items-end gap-4">
                 {% csrf_token %}
-                <div class="mb-4">
-                    <label class="block text-gray-700 text-sm font-bold mb-2">Rating</label>
-                    {% render_field review_form.rating class="border rounded py-2 px-3 text-gray-700 leading-tight                     focus:outline-none focus:shadow-outline" %}
-                </div>
-                <div class="mb-4">
-                    <label class="block text-gray-700 text-sm font-bold mb-2">Comment</label>
-                    {% render_field review_form.comment class="border rounded w-full py-2 px-3 text-gray-700                     leading-tight focus:outline-none focus:shadow-outline" rows="3" %}
+                <div class="flex-1">
+                    <label class="block text-sm font-bold text-purple-800 mb-1">Generate Draft for Job</label>
+                    <select name="job"
+                        class="w-full border border-purple-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                        <option value="">— Choose an open job —</option>
+                        {% for choice in draft_form.job.field.queryset %}
+                        <option value="{{ choice.pk }}">{{ choice.title }} @ {{ choice.company }}</option>
+                        {% endfor %}
+                    </select>
                 </div>
                 <button type="submit"
-                    class="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline">
-                    Submit Review
+                    class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg shadow flex items-center gap-2 whitespace-nowrap">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Generate Draft
                 </button>
             </form>
         </div>
-        {% elif user != consultant %}
-        {% if reviews.count > 0 %}
-        <!-- Already reviewed -->
-        {% else %}
-        <!-- No reviews yet -->
-        {% endif %}
-        {% endif %}
 
-        <div class="space-y-6">
-            {% for review in reviews %}
-            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-100">
-                <div class="flex justify-between items-start mb-2">
-                    <div class="flex items-center">
-                        <div class="font-bold text-gray-800 mr-2">{{ review.reviewer.username }}</div>
-                        <span class="text-gray-500 text-sm">{{ review.created_at|date:"M d, Y" }}</span>
-                    </div>
-                    <div class="flex text-yellow-400">
-                        {% for i in "12345"|make_list %}
-                        <svg class="w-4 h-4 {% if forloop.counter <= review.rating %}fill-current{% else %}text-gray-300 fill-current{% endif %}"
-                            viewBox="0 0 24 24">
-                            <path
-                                d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
-                        </svg>
-                        {% endfor %}
-                    </div>
-                </div>
-                <p class="text-gray-700">{{ review.comment }}</p>
-            </div>
-            {% empty %}
-            <p class="text-gray-500 italic">No reviews yet.</p>
-            {% endfor %}
+        <!-- Existing Drafts Table -->
+        {% if resume_drafts %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Job
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Version
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Status
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Tokens
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Created
+                        </th>
+                        <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Actions
+                        </th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for draft in resume_drafts %}
+                    <tr class="hover:bg-gray-50">
+                        <td class="px-4 py-3 text-sm">
+                            <div class="font-medium text-gray-900">{{ draft.job.title }}</div>
+                            <div class="text-xs text-gray-500">{{ draft.job.company }}</div>
+                        </td>
+                        <td class="px-4 py-3 text-sm font-mono font-bold text-gray-700">v{{ draft.version }}</td>
+                        <td class="px-4 py-3 text-sm">
+                            {% if draft.status == 'FINAL' %}
+                            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">✅
+                                Final</span>
+                            {% elif draft.status == 'DRAFT' %}
+                            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">📝
+                                Draft</span>
+                            {% elif draft.status == 'ERROR' %}
+                            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-800"
+                                title="{{ draft.error_message }}">❌ Error</span>
+                            {% else %}
+                            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-yellow-100 text-yellow-800">⏳
+                                Processing</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-4 py-3 text-sm text-gray-500">{{ draft.tokens_used|default:"—" }}</td>
+                        <td class="px-4 py-3 text-sm text-gray-500">{{ draft.created_at|date:"M d, H:i" }}</td>
+                        <td class="px-4 py-3 text-sm">
+                            <div class="flex items-center gap-2">
+                                {% if draft.status == 'DRAFT' or draft.status == 'FINAL' %}
+                                <a href="{% url 'draft-detail' draft.pk %}"
+                                    class="text-blue-600 hover:underline text-xs font-semibold">View</a>
+                                <a href="{% url 'draft-download' draft.pk %}"
+                                    class="text-green-600 hover:underline text-xs font-semibold">Download</a>
+                                {% endif %}
+                                {% if is_admin and draft.status == 'DRAFT' %}
+                                <form method="post" action="{% url 'draft-promote' draft.pk %}" class="inline">
+                                    {% csrf_token %}
+                                    <button type="submit"
+                                        class="text-purple-600 hover:underline text-xs font-semibold">Promote</button>
+                                </form>
+                                {% endif %}
+                                {% if is_admin %}
+                                <form method="post" action="{% url 'draft-delete' draft.pk %}" class="inline"
+                                    onsubmit="return confirm('Delete this draft?')">
+                                    {% csrf_token %}
+                                    <button type="submit"
+                                        class="text-red-500 hover:underline text-xs font-semibold">Delete</button>
+                                </form>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
         </div>
+        {% else %}
+        <p class="text-gray-500 italic text-center py-4">No resume drafts generated yet. Select a job above to create
+            one.</p>
+        {% endif %}
     </div>
+    {% endif %}
+
+
 
 </div>
 {% endblock %}

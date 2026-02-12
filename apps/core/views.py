@@ -1,10 +1,41 @@
 from django.shortcuts import render, redirect
-from django.views.generic import TemplateView
+from django.views.generic import TemplateView, UpdateView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Count, Q
+from django.urls import reverse_lazy
+from django.contrib import messages
 from users.models import User
 from jobs.models import Job
 from submissions.models import ApplicationSubmission
+from .models import PlatformConfig
+from .forms import PlatformConfigForm
+from .monitor import SystemMonitor
+
+class AdminRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
+    def test_func(self):
+        return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
+
+class SystemStatusView(AdminRequiredMixin, TemplateView):
+    template_name = 'settings/system_status.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        monitor = SystemMonitor()
+        context['health_check'] = monitor.check_all()
+        return context
+
+class PlatformConfigView(AdminRequiredMixin, UpdateView):
+    model = PlatformConfig
+    form_class = PlatformConfigForm
+    template_name = 'settings/platform_config.html'
+    success_url = reverse_lazy('platform-config')
+
+    def get_object(self, queryset=None):
+        return PlatformConfig.load()
+
+    def form_valid(self, form):
+        messages.success(self.request, "Platform configuration updated successfully.")
+        return super().form_valid(form)
 
 
 def home(request):

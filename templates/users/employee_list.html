@@ -2,7 +2,10 @@
 
 {% block content %}
 <div class="flex flex-col md:flex-row justify-between items-center mb-6 space-y-4 md:space-y-0">
-    <h1 class="text-3xl font-bold text-gray-800">Manage Employees</h1>
+    <h1 class="text-3xl font-bold text-gray-800">
+        Manage Employees
+        <span class="bg-gray-100 text-gray-600 text-sm font-medium px-2.5 py-0.5 rounded-full ml-3 align-middle">{{ page_obj.paginator.count|default:0 }}</span>
+    </h1>
     <div class="flex items-center space-x-4">
         <a href="{% url 'employee-add' %}"
             class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm font-medium">
