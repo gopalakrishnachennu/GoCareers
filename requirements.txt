@@ -18,3 +18,4 @@ django-extensions>=3.2
 ipython>=8.20
 pytest-django>=4.7
 coverage>=7.4
+cryptography>=42.0

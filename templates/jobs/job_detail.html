@@ -77,6 +77,22 @@
                         Delete
                     </a>
                     {% endif %}
+
+                    {% if user.is_authenticated and object.posted_by == user or user.is_superuser %}
+                    <form action="{% url 'job-duplicate' object.pk %}" method="post" class="inline">
+                        {% csrf_token %}
+                        <button type="submit"
+                            class="bg-blue-500/80 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 backdrop-blur-sm"
+                            onclick="return confirm('Duplicate this job?');">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20"
+                                fill="currentColor">
+                                <path d="M7 9a2 2 0 012-2h6a2 2 0 012 2v6a2 2 0 01-2 2H9a2 2 0 01-2-2V9z" />
+                                <path d="M5 3a2 2 0 00-2 2v6a2 2 0 002 2V5h8a2 2 0 00-2-2H5z" />
+                            </svg>
+                            Duplicate
+                        </button>
+                    </form>
+                    {% endif %}
                 </div>
             </div>
         </div>

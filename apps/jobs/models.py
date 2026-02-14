@@ -54,3 +54,12 @@ class Job(models.Model):
     
     class Meta:
         ordering = ['-created_at']
+
+class JobTemplate(models.Model):
+    title = models.CharField(max_length=200, help_text="Template Name")
+    description = models.TextField()
+    default_marketing_roles = models.ManyToManyField(MarketingRole, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.title

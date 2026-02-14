@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Interviews</h1>
+            <p class="text-gray-500">Manage interviews tied to your submissions.</p>
+        </div>
+        <div class="flex gap-2">
+            <a href="{% url 'interview-calendar' %}"
+               class="px-4 py-2 rounded border border-gray-300 text-gray-700 hover:bg-gray-50">Calendar</a>
+            <a href="{% url 'interview-add' %}"
+               class="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-700">Add Interview</a>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Date</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Job</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Company</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Round</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Status</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {% for interview in interviews %}
+                <tr>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ interview.scheduled_at|date:"Y-m-d H:i" }}</td>
+                    <td class="px-4 py-3 text-sm font-medium text-gray-800">{{ interview.job_title }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ interview.company }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ interview.get_round_display }}</td>
+                    <td class="px-4 py-3 text-sm text-gray-600">{{ interview.get_status_display }}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <a class="text-blue-600 hover:underline" href="{% url 'interview-edit' interview.pk %}">Edit</a>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="6" class="px-4 py-6 text-center text-gray-500">No interviews found.</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

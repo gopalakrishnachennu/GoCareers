@@ -49,6 +49,33 @@
                 Configure
             </a>
         </div>
+
+        <!-- LLM Settings -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-indigo-500 hover:shadow-lg transition">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">LLM Settings</h2>
+                <span class="bg-indigo-100 text-indigo-800 text-xs font-semibold px-2.5 py-0.5 rounded">AI</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Configure models, API key, and token limits.</p>
+            <a href="{% url 'llm-config' %}"
+                class="block text-center bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded transition">
+                Edit LLMs
+            </a>
+        </div>
+
+        <!-- Prompt Service -->
+        <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-teal-500 hover:shadow-lg transition" style="min-height:220px;display:flex;flex-direction:column;">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-bold text-gray-800">Prompt Service</h2>
+                <span class="bg-teal-100 text-teal-800 text-xs font-semibold px-2.5 py-0.5 rounded">AI</span>
+            </div>
+            <p class="text-gray-600 mb-4 h-12">Create, version, and assign prompts by marketing role.</p>
+            <a href="{% url 'prompt-list' %}"
+                class="mt-auto block text-center bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded transition"
+                style="margin-top:auto;display:block;text-align:center;background:#0d9488;color:#fff;padding:0.5rem 1rem;border-radius:0.5rem;">
+                Manage Prompts
+            </a>
+        </div>
         <!-- System Health -->
         <div class="bg-white rounded-lg shadow-md p-6 border-l-4 border-red-500 hover:shadow-lg transition">
             <div class="flex items-center justify-between mb-4">

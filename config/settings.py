@@ -11,6 +11,7 @@ sys.path.append(str(BASE_DIR / 'apps'))
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 DEBUG = config('DEBUG', default=False, cast=bool)
 ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost').split(',')
+LLM_ENCRYPTION_KEY = config('LLM_ENCRYPTION_KEY', default='')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -36,6 +37,8 @@ INSTALLED_APPS = [
     'submissions.apps.SubmissionsConfig',
     'messaging.apps.MessagingConfig',
     'analytics.apps.AnalyticsConfig',
+    'interviews_app.apps.InterviewsAppConfig',
+    'prompts_app.apps.PromptsAppConfig',
 ]
 
 AUTH_USER_MODEL = 'users.User'
@@ -48,6 +51,7 @@ MIDDLEWARE = [
     'django_htmx.middleware.HtmxMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'core.middleware.AuditMiddleware',  # Audit Log
     'config.middleware.ImpersonateMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',

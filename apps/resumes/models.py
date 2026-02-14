@@ -35,6 +35,9 @@ class ResumeDraft(models.Model):
     prompt_template = models.ForeignKey(
         PromptTemplate, on_delete=models.SET_NULL, null=True, blank=True
     )
+    llm_system_prompt = models.TextField(blank=True)
+    llm_user_prompt = models.TextField(blank=True)
+    llm_input_summary = models.JSONField(default=dict, blank=True)
     tokens_used = models.PositiveIntegerField(default=0, help_text="Total tokens consumed")
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,

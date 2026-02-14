@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-800">Interview Calendar — {{ month_name }} {{ year }}</h1>
+        <a href="{% url 'interview-list' %}" class="px-4 py-2 rounded border">Back to Interviews</a>
+    </div>
+
+    <form method="get" class="flex gap-3 items-center mb-6">
+        <input type="number" name="month" value="{{ month }}" class="border rounded px-3 py-2 w-24" min="1" max="12" />
+        <input type="number" name="year" value="{{ year }}" class="border rounded px-3 py-2 w-28" min="2000" max="2100" />
+        <button class="px-4 py-2 rounded bg-blue-600 text-white">Apply</button>
+    </form>
+
+    <div class="grid grid-cols-7 gap-2 text-sm">
+        <div class="font-semibold text-center">Mon</div>
+        <div class="font-semibold text-center">Tue</div>
+        <div class="font-semibold text-center">Wed</div>
+        <div class="font-semibold text-center">Thu</div>
+        <div class="font-semibold text-center">Fri</div>
+        <div class="font-semibold text-center">Sat</div>
+        <div class="font-semibold text-center">Sun</div>
+
+        {% for week in weeks %}
+            {% for day in week %}
+            <div class="border rounded min-h-[120px] p-2 {% if day.date.month != month %}bg-gray-50 text-gray-400{% endif %}">
+                <div class="text-xs font-semibold mb-1">{{ day.date.day }}</div>
+                <div class="space-y-1">
+                    {% for item in day.items %}
+                    <div class="text-xs bg-blue-50 border border-blue-200 rounded px-2 py-1">
+                        <div class="font-semibold">{{ item.job_title }}</div>
+                        <div>{{ item.scheduled_at|date:"H:i" }} · {{ item.get_status_display }}</div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endfor %}
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

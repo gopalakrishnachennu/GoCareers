@@ -1,0 +1,103 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="bg-white rounded-lg shadow p-6">
+        <h1 class="text-2xl font-bold text-gray-800 mb-4">Prompt</h1>
+        <form method="post" id="prompt-form">
+            {% csrf_token %}
+            {% for field in form.visible_fields %}
+            {% if field.name == "description" %}
+            <div class="mb-4">
+                <label class="block text-sm font-semibold text-gray-700 mb-1">{{ field.label }}</label>
+                <div class="border rounded-lg overflow-hidden shadow-sm">
+                    <div class="editor-toolbar flex flex-wrap gap-2 items-center border-b px-3 py-2 bg-white">
+                        <button type="button" class="editor-btn" data-cmd="bold" title="Bold"><strong>B</strong></button>
+                        <button type="button" class="editor-btn" data-cmd="italic" title="Italic"><em>I</em></button>
+                        <button type="button" class="editor-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+                        <span class="editor-sep"></span>
+                        <button type="button" class="editor-btn" data-cmd="insertUnorderedList" title="Bulleted List">• List</button>
+                        <button type="button" class="editor-btn" data-cmd="insertOrderedList" title="Numbered List">1. List</button>
+                        <span class="editor-sep"></span>
+                        <button type="button" class="editor-btn" data-cmd="createLink" title="Insert Link">Link</button>
+                        <button type="button" class="editor-btn editor-btn-ghost" data-cmd="removeFormat" title="Clear Formatting">Clear</button>
+                    </div>
+                    <div id="desc-editor" class="editor-surface" contenteditable="true"
+                        data-initial="{{ form.description.value|default:''|escape }}"></div>
+                </div>
+                {% render_field field id="id_description_hidden" style="display:none;" %}
+                {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
+            </div>
+            {% else %}
+            <div class="mb-4">
+                <label class="block text-sm font-semibold text-gray-700 mb-1">{{ field.label }}</label>
+                {% render_field field class="w-full border rounded px-3 py-2" %}
+                {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
+            </div>
+            {% endif %}
+            {% endfor %}
+            <div class="flex gap-2">
+                <button class="px-4 py-2 rounded bg-teal-600 text-white">Save</button>
+                <a href="{% url 'prompt-list' %}" class="px-4 py-2 rounded border">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+
+<style>
+    .editor-toolbar { position: sticky; top: 0; z-index: 2; }
+    .editor-btn {
+        border: 1px solid #e5e7eb;
+        padding: 0.35rem 0.6rem;
+        border-radius: 0.5rem;
+        font-size: 0.85rem;
+        background: #f9fafb;
+        color: #111827;
+        transition: all .15s ease;
+    }
+    .editor-btn:hover { background: #eef2ff; border-color: #c7d2fe; }
+    .editor-btn:active { transform: translateY(1px); }
+    .editor-btn-ghost { background: transparent; }
+    .editor-sep { width: 1px; height: 1.5rem; background: #e5e7eb; margin: 0 0.25rem; }
+    .editor-surface {
+        min-height: 240px;
+        padding: 1rem;
+        outline: none;
+        background: #ffffff;
+        font-size: 0.95rem;
+        line-height: 1.6;
+    }
+    .editor-surface:empty:before {
+        content: "Write the prompt description here...";
+        color: #9ca3af;
+    }
+</style>
+
+<script>
+    (function () {
+        const editor = document.getElementById('desc-editor');
+        const hidden = document.getElementById('id_description_hidden');
+        if (!editor || !hidden) return;
+
+        editor.innerHTML = editor.getAttribute('data-initial') || '';
+        editor.addEventListener('input', () => {
+            hidden.value = editor.innerHTML;
+        });
+        hidden.value = editor.innerHTML;
+
+        document.querySelectorAll('[data-cmd]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const cmd = btn.getAttribute('data-cmd');
+                if (cmd === 'createLink') {
+                    const url = prompt('Enter URL');
+                    if (url) document.execCommand('createLink', false, url);
+                } else {
+                    document.execCommand(cmd, false, null);
+                }
+                hidden.value = editor.innerHTML;
+            });
+        });
+    })();
+</script>
+{% endblock %}

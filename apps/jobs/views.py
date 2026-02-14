@@ -101,6 +101,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from .services import JobService
+
+class JobDuplicateView(LoginRequiredMixin, EmployeeRequiredMixin, View):
+    def post(self, request, pk):
+        job = JobService.clone_job(pk, request.user)
+        if job:
+            messages.success(request, f"Job duplicated successfully as '{job.title}'")
+            return redirect('job-update', pk=job.pk)
+        else:
+            messages.error(request, "Failed to duplicate job.")
+            return redirect('job-list')
+
 class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     def get(self, request):
         form = JobBulkUploadForm()

@@ -8,7 +8,9 @@ from .forms import ExperienceForm, EducationForm, CertificationForm, ConsultantC
 from django.contrib import messages
 from django.views import View as BaseView
 from jobs.models import Job
-from submissions.models import ApplicationSubmission
+from submissions.models import ApplicationSubmission, SubmissionResponse
+from resumes.models import ResumeDraft
+from interviews_app.models import Interview
 from config.constants import (
     PAGINATION_CONSULTANTS, PAGINATION_SAVED_JOBS, DASHBOARD_RECENT_ITEMS, DASHBOARD_RECENT_JOBS,
     MSG_EXPERIENCE_ADDED, MSG_EXPERIENCE_UPDATED, MSG_EXPERIENCE_DELETED,
@@ -246,6 +248,30 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
                 form.fields['job'].queryset = Job.objects.none()
             
             context['draft_form'] = form
+            if profile:
+                context['claimed_job_ids'] = set(
+                    ApplicationSubmission.objects.filter(consultant=profile).values_list('job_id', flat=True)
+                )
+
+            # LLM Input (latest draft)
+            latest_draft = None
+            if profile:
+                latest_draft = profile.resume_drafts.order_by('-created_at').first()
+            context['latest_draft'] = latest_draft
+            if latest_draft:
+                from resumes.services import LLMService, build_input_summary, get_system_prompt_text
+                llm = LLMService()
+                user_prompt = latest_draft.llm_user_prompt or llm._build_prompt(latest_draft.job, profile)
+                llm_system = latest_draft.llm_system_prompt or get_system_prompt_text(latest_draft.job, profile)
+                context['llm_system_prompt'] = llm_system
+                context['llm_user_prompt'] = user_prompt
+                from core.models import LLMConfig
+                from prompts_app.models import Prompt
+                config = LLMConfig.load()
+                context['prompt_options'] = Prompt.objects.filter(is_active=True).order_by('name')
+                context['selected_prompt_id'] = config.active_prompt_id
+                context['selected_prompt_name'] = config.active_prompt.name if config.active_prompt else None
+                context['llm_input_summary'] = latest_draft.llm_input_summary or build_input_summary(latest_draft.job, profile)
 
         return context
 
@@ -435,7 +461,7 @@ class ConsultantDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateV
         profile = user.consultant_profile
         
         # My Applications
-        my_submissions = ApplicationSubmission.objects.filter(consultant=profile)
+        my_submissions = ApplicationSubmission.objects.filter(consultant=profile).select_related('job', 'resume')
         context['total_applications'] = my_submissions.count()
         context['pending_applications'] = my_submissions.filter(status='APPLIED').count()
         context['active_applications'] = my_submissions.exclude(status__in=['REJECTED', 'WITHDRAWN']).count()
@@ -452,9 +478,32 @@ class ConsultantDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateV
             context['saved_jobs'] = user.saved_jobs.all()[:5]
         else:
             context['saved_jobs'] = []
-        
 
-        
+        # Tracking: Drafts / In Progress / Submitted
+        drafts_qs = ResumeDraft.objects.filter(
+            consultant=profile,
+            status__in=[ResumeDraft.Status.DRAFT, ResumeDraft.Status.FINAL],
+        ).select_related('job')
+        claimed_job_ids = my_submissions.values_list('job_id', flat=True)
+        context['draft_tracking'] = drafts_qs.exclude(job_id__in=claimed_job_ids)
+
+        context['in_progress_submissions'] = my_submissions.filter(
+            status=ApplicationSubmission.Status.IN_PROGRESS
+        )
+        context['submitted_submissions'] = my_submissions.exclude(
+            status=ApplicationSubmission.Status.IN_PROGRESS
+        )
+
+        # Pipeline snapshot counts
+        context['count_draft'] = context['draft_tracking'].count()
+        context['count_in_progress'] = context['in_progress_submissions'].count()
+        context['count_submitted'] = my_submissions.exclude(status=ApplicationSubmission.Status.IN_PROGRESS).count()
+        context['count_active'] = my_submissions.exclude(status__in=[ApplicationSubmission.Status.REJECTED, ApplicationSubmission.Status.WITHDRAWN]).count()
+        context['count_interview'] = my_submissions.filter(status=ApplicationSubmission.Status.INTERVIEW).count()
+        context['count_rejected'] = my_submissions.filter(status=ApplicationSubmission.Status.REJECTED).count()
+        context['count_responses'] = SubmissionResponse.objects.filter(submission__consultant=profile).count()
+        context['recent_interviews'] = Interview.objects.filter(consultant=profile).order_by('-scheduled_at')[:5]
+
         return context
 
 

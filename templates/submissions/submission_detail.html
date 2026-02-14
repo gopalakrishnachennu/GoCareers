@@ -1,0 +1,131 @@
+{% extends 'base.html' %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="mb-6">
+        <a href="{% url 'submission-list' %}" class="text-blue-600 hover:underline">Submissions</a>
+        <h1 class="text-2xl font-bold text-gray-800">Submission {{ submission.pk }}</h1>
+        <p class="text-gray-500">{{ submission.consultant.user.get_full_name|default:submission.consultant.user.username }} → {{ submission.job.title }}</p>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <div class="text-sm text-gray-500">Consultant</div>
+                <div class="font-semibold">{{ submission.consultant.user.get_full_name|default:submission.consultant.user.username }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Status</div>
+                <div class="font-semibold">{{ submission.get_status_display }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Job</div>
+                <div class="font-semibold">{{ submission.job.title }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Company</div>
+                <div class="font-semibold">{{ submission.job.company }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Created</div>
+                <div class="font-semibold">{{ submission.created_at|date:"Y-m-d H:i" }}</div>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Submitted</div>
+                <div class="font-semibold">{{ submission.submitted_at|default:submission.updated_at|date:"Y-m-d H:i" }}</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-6 mb-6">
+        <div class="flex gap-4 text-sm font-semibold text-gray-600 mb-4">
+            <span class="border-b-2 border-blue-600 text-blue-700">Details</span>
+            <span>Resumes & Attachments</span>
+            <span>Feedback</span>
+            <span>Responses</span>
+            <span>Interviews</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <div class="text-sm text-gray-500">Original Posting</div>
+                <a href="{{ submission.job.original_link }}" target="_blank" class="text-blue-600 hover:underline">View Posting</a>
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Resume</div>
+                {% if submission.resume %}
+                <a href="{% url 'draft-detail' submission.resume.pk %}" class="text-blue-600 hover:underline">View Draft</a>
+                {% else %}
+                <span class="text-gray-400">No resume linked</span>
+                {% endif %}
+            </div>
+            <div>
+                <div class="text-sm text-gray-500">Proof</div>
+                {% if submission.proof_file %}
+                <a href="{{ submission.proof_file.url }}" target="_blank" class="text-blue-600 hover:underline">View Proof</a>
+                {% else %}
+                <span class="text-gray-400">No proof uploaded</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-gray-800">Responses</h2>
+        </div>
+        <div class="mb-6">
+            <form method="post">
+                {% csrf_token %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% for field in response_form.visible_fields %}
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-1">{{ field.label }}</label>
+                        {% render_field field class="w-full border rounded px-3 py-2" %}
+                        {% if field.errors %}
+                        <p class="text-xs text-red-600 mt-1">{{ field.errors }}</p>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <div class="mt-4">
+                    <button class="px-4 py-2 rounded bg-blue-600 text-white">Add Response</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="divide-y">
+            {% for response in submission.responses.all %}
+            <div class="py-3">
+                <div class="text-sm font-semibold text-gray-800">{{ response.get_response_type_display }} · {{ response.get_status_display }}</div>
+                <div class="text-xs text-gray-500">{{ response.responded_at|date:"Y-m-d H:i" }}</div>
+                {% if response.notes %}
+                <div class="text-sm text-gray-700 mt-1">{{ response.notes }}</div>
+                {% endif %}
+            </div>
+            {% empty %}
+            <p class="text-gray-500">No responses yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow p-6 mt-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-bold text-gray-800">Interviews</h2>
+            <a href="{% url 'interview-add' %}" class="text-blue-600 hover:underline">Add Interview</a>
+        </div>
+        <div class="divide-y">
+            {% for interview in submission.interviews.all %}
+            <div class="py-3">
+                <div class="text-sm font-semibold text-gray-800">{{ interview.job_title }} · {{ interview.company }}</div>
+                <div class="text-xs text-gray-500">{{ interview.scheduled_at|date:"Y-m-d H:i" }} · {{ interview.get_round_display }} · {{ interview.get_status_display }}</div>
+                {% if interview.notes %}<div class="text-sm text-gray-700 mt-1">{{ interview.notes }}</div>{% endif %}
+            </div>
+            {% empty %}
+            <p class="text-gray-500">No interviews linked yet.</p>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

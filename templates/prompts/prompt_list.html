@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 py-8">
+    <div class="flex flex-wrap gap-4 justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-800">Prompt Service</h1>
+            <p class="text-gray-600">Create and manage prompts for resume generation.</p>
+        </div>
+        <div class="flex gap-2 items-center">
+            <form method="get" class="flex gap-2 items-center">
+                <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Search prompts..."
+                    class="border rounded px-3 py-2" />
+                <button class="px-3 py-2 rounded border">Search</button>
+            </form>
+            <a href="{% url 'prompt-test' %}" class="px-4 py-2 rounded bg-indigo-600 text-white"
+               style="background:#4f46e5;color:#fff;">Test Prompt</a>
+            <a href="{% url 'prompt-add' %}" class="px-4 py-2 rounded bg-teal-600 text-white"
+               style="background:#0d9488;color:#fff;">Add Prompt</a>
+        </div>
+    </div>
+
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200">
+            <thead class="bg-gray-50">
+                <tr>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Name</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Active</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Default</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Updated</th>
+                    <th class="px-4 py-3 text-left text-xs font-semibold text-gray-500 uppercase">Actions</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200">
+                {% for prompt in prompts %}
+                <tr>
+                    <td class="px-4 py-3 text-sm text-gray-800 font-semibold">{{ prompt.name }}</td>
+                    <td class="px-4 py-3 text-sm">{% if prompt.is_active %}Yes{% else %}No{% endif %}</td>
+                    <td class="px-4 py-3 text-sm">{% if prompt.is_default %}Yes{% else %}No{% endif %}</td>
+                    <td class="px-4 py-3 text-sm text-gray-500">{{ prompt.updated_at|date:"Y-m-d" }}</td>
+                    <td class="px-4 py-3 text-sm">
+                        <a class="text-blue-600 hover:underline" href="{% url 'prompt-detail' prompt.pk %}">View</a>
+                        <a class="ml-3 text-indigo-600 hover:underline" href="{% url 'prompt-edit' prompt.pk %}">Edit</a>
+                        <form method="post" action="{% url 'prompt-delete' prompt.pk %}" class="inline">
+                            {% csrf_token %}
+                            <button class="ml-3 text-red-600 hover:underline" onclick="return confirm('Delete this prompt?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="px-4 py-4 text-center text-gray-500">No prompts yet.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

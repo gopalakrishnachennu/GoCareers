@@ -7,8 +7,11 @@ from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib import messages
 from .models import ResumeDraft
 from .forms import DraftGenerateForm
-from .services import LLMService, DocxService
+from .services import LLMService, DocxService, build_input_summary, get_system_prompt_text
 from users.models import ConsultantProfile
+from jobs.models import Job
+from core.models import LLMConfig
+from prompts_app.models import Prompt
 
 
 class AdminOrEmployeeMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -16,6 +19,18 @@ class AdminOrEmployeeMixin(LoginRequiredMixin, UserPassesTestMixin):
     def test_func(self):
         u = self.request.user
         return u.is_superuser or u.role in ('ADMIN', 'EMPLOYEE')
+
+
+class DraftAccessMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """Admins/Employees or the owning consultant can view/download drafts."""
+    def test_func(self):
+        u = self.request.user
+        if u.is_superuser or u.role in ('ADMIN', 'EMPLOYEE'):
+            return True
+        if u.role == 'CONSULTANT' and hasattr(u, 'consultant_profile'):
+            draft_id = self.kwargs.get('pk')
+            return ResumeDraft.objects.filter(pk=draft_id, consultant=u.consultant_profile).exists()
+        return False
 
 
 class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
@@ -38,11 +53,15 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
             status=ResumeDraft.Status.PROCESSING,
             created_by=request.user,
         )
+        llm = LLMService()
+        user_prompt = llm._build_prompt(job, consultant_profile)
+        draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
+        draft.llm_user_prompt = user_prompt
+        draft.llm_input_summary = build_input_summary(job, consultant_profile)
         draft.save()
 
         # Generate content
-        llm = LLMService()
-        content, tokens, error = llm.generate_resume_content(job, consultant_profile)
+        content, tokens, error = llm.generate_resume_content(job, consultant_profile, actor=request.user)
 
         if error:
             draft.status = ResumeDraft.Status.ERROR
@@ -62,14 +81,113 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
         return redirect('consultant-detail', pk=pk)
 
 
-class DraftDetailView(AdminOrEmployeeMixin, DetailView):
+class DraftGenerateAllView(AdminOrEmployeeMixin, BaseView):
+    """POST: Generate drafts for all eligible jobs for a consultant."""
+
+    def post(self, request, pk):
+        consultant_profile = get_object_or_404(ConsultantProfile, user__pk=pk)
+        roles = consultant_profile.marketing_roles.all()
+
+        if not roles:
+            messages.error(request, "This consultant has no marketing roles assigned.")
+            return redirect('consultant-detail', pk=pk)
+
+        # Use the same queryset as the dropdown (OPEN + consultant marketing roles)
+        form = DraftGenerateForm()
+        form.fields['job'].queryset = Job.objects.filter(
+            status='OPEN',
+            marketing_roles__in=roles
+        ).distinct()
+        eligible_jobs = form.fields['job'].queryset
+
+        existing_job_ids = ResumeDraft.objects.filter(consultant=consultant_profile).values_list('job_id', flat=True)
+        jobs_to_generate = eligible_jobs.exclude(id__in=existing_job_ids)
+
+        if not jobs_to_generate.exists():
+            messages.info(request, "All eligible jobs already have drafts.")
+            return redirect('consultant-detail', pk=pk)
+
+        llm = LLMService()
+        created_count = 0
+        error_count = 0
+
+        for job in jobs_to_generate:
+            draft = ResumeDraft(
+                consultant=consultant_profile,
+                job=job,
+                status=ResumeDraft.Status.PROCESSING,
+                created_by=request.user,
+            )
+            user_prompt = llm._build_prompt(job, consultant_profile)
+            draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
+            draft.llm_user_prompt = user_prompt
+            draft.llm_input_summary = build_input_summary(job, consultant_profile)
+            draft.save()
+
+            content, tokens, error = llm.generate_resume_content(job, consultant_profile, actor=request.user)
+            if error:
+                draft.status = ResumeDraft.Status.ERROR
+                draft.error_message = error
+                draft.save(skip_version=True)
+                error_count += 1
+            else:
+                draft.status = ResumeDraft.Status.DRAFT
+                draft.content = content
+                draft.tokens_used = tokens
+                draft.save(skip_version=True)
+                created_count += 1
+
+        if created_count:
+            messages.success(request, f"Generated {created_count} drafts.")
+        if error_count:
+            messages.warning(request, f"{error_count} drafts failed to generate.")
+
+        return redirect('consultant-detail', pk=pk)
+
+
+class DraftDetailView(DraftAccessMixin, DetailView):
     """View a single draft's generated content."""
     model = ResumeDraft
     template_name = 'resumes/draft_detail.html'
     context_object_name = 'draft'
 
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        draft = context['draft']
+        llm = LLMService()
+        user_prompt = draft.llm_user_prompt or llm._build_prompt(draft.job, draft.consultant)
+        system_prompt = draft.llm_system_prompt or get_system_prompt_text(draft.job, draft.consultant)
+        context['llm_system_prompt'] = system_prompt
+        context['llm_user_prompt'] = user_prompt
+        config = LLMConfig.load()
+        context['prompt_options'] = Prompt.objects.filter(is_active=True).order_by('name')
+        context['selected_prompt_id'] = config.active_prompt_id
+        context['selected_prompt_name'] = config.active_prompt.name if config.active_prompt else None
+        context['llm_input_summary'] = draft.llm_input_summary or build_input_summary(draft.job, draft.consultant)
+        return context
 
-class DraftDownloadView(AdminOrEmployeeMixin, BaseView):
+
+class DraftSetPromptView(AdminOrEmployeeMixin, BaseView):
+    """Set the active prompt used for LLM generation (global)."""
+
+    def post(self, request, pk):
+        prompt_id = request.POST.get('prompt_id')
+        config = LLMConfig.load()
+
+        if not prompt_id:
+            config.active_prompt = None
+            config.save()
+            messages.success(request, "Prompt selection cleared.")
+            return redirect('draft-detail', pk=pk)
+
+        prompt = get_object_or_404(Prompt, pk=prompt_id, is_active=True)
+        config.active_prompt = prompt
+        config.save()
+        messages.success(request, f"Prompt set to: {prompt.name}")
+        return redirect('draft-detail', pk=pk)
+
+
+class DraftDownloadView(DraftAccessMixin, BaseView):
     """Download a draft as .docx."""
 
     def get(self, request, pk):
@@ -118,7 +236,7 @@ class DraftDeleteView(AdminOrEmployeeMixin, BaseView):
 
     def test_func(self):
         u = self.request.user
-        return u.is_superuser or u.role == 'ADMIN'
+        return u.is_superuser or u.role in ('ADMIN', 'EMPLOYEE')
 
     def post(self, request, pk):
         draft = get_object_or_404(ResumeDraft, pk=pk)

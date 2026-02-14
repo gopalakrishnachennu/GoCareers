@@ -1,5 +1,48 @@
 from django import forms
-from .models import PlatformConfig
+from .models import PlatformConfig, LLMConfig
+from .security import encrypt_value
+
+
+class LLMConfigForm(forms.ModelForm):
+    active_model = forms.ChoiceField(required=False)
+    api_key = forms.CharField(
+        required=False,
+        widget=forms.PasswordInput(render_value=True),
+        help_text="Enter OpenAI API key (stored encrypted). Leave blank to keep existing."
+    )
+
+    class Meta:
+        model = LLMConfig
+        fields = [
+            'active_model',
+            'temperature',
+            'max_output_tokens',
+            'monthly_token_cap',
+            'generation_enabled',
+            'auto_disable_on_cap',
+            'data_pipelines_connected',
+        ]
+        widgets = {
+            'active_model': forms.Select(),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field in self.fields:
+            if isinstance(self.fields[field].widget, (forms.TextInput, forms.URLInput, forms.EmailInput, forms.NumberInput, forms.Textarea, forms.Select)):
+                self.fields[field].widget.attrs.update({'class': 'w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'})
+            elif isinstance(self.fields[field].widget, forms.CheckboxInput):
+                self.fields[field].widget.attrs.update({'class': 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded'})
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        api_key = self.cleaned_data.get('api_key')
+        if api_key:
+            instance.encrypted_api_key = encrypt_value(api_key)
+        if commit:
+            instance.save()
+            self.save_m2m()
+        return instance
 
 class PlatformConfigForm(forms.ModelForm):
     class Meta:
