@@ -5,49 +5,39 @@
     <div class="template-hero">
         <div>
             <div class="template-eyebrow">Resume System</div>
-            <h1 class="template-title">Prompt Service</h1>
-            <p class="template-subtitle">Create and manage system prompts.</p>
+            <h1 class="template-title">Resume Templates</h1>
+            <p class="template-subtitle">Manage layouts and AI injection rules.</p>
         </div>
-        <a href="{% url 'prompt-add' %}" class="btn-primary">New Prompt</a>
+        <a href="{% url 'resume-template-create' %}" class="btn-primary">New Template</a>
     </div>
 
     <div class="template-card">
         <form method="get" class="search-row">
-            <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Search prompts..." class="input">
+            <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Search templates..." class="input">
             <button class="btn-secondary">Search</button>
         </form>
     </div>
 
     <div class="template-grid">
-        {% for prompt in prompts %}
+        {% for t in templates %}
         <div class="template-card card-compact">
             <div class="card-top">
                 <div>
-                    <div class="card-title">{{ prompt.name }}</div>
-                    <div class="card-meta">Updated {{ prompt.updated_at|date:"Y-m-d" }}</div>
+                    <div class="card-title">{{ t.name }}</div>
+                    <div class="card-meta">Updated {{ t.updated_at|date:"Y-m-d" }}</div>
                 </div>
-                <div class="badge-group">
-                    <span class="badge {% if prompt.is_active %}badge-on{% else %}badge-off{% endif %}">
-                        {% if prompt.is_active %}Active{% else %}Inactive{% endif %}
-                    </span>
-                    <span class="badge {% if prompt.is_default %}badge-on{% else %}badge-off{% endif %}">
-                        {% if prompt.is_default %}Default{% else %}Custom{% endif %}
-                    </span>
-                </div>
+                <span class="badge {% if t.is_active %}badge-on{% else %}badge-off{% endif %}">
+                    {% if t.is_active %}Active{% else %}Inactive{% endif %}
+                </span>
             </div>
             <div class="card-actions">
-                <a href="{% url 'prompt-detail' prompt.pk %}" class="btn-ghost">View</a>
-                <a href="{% url 'prompt-edit' prompt.pk %}" class="btn-ghost">Edit</a>
-                <form method="post" action="{% url 'prompt-delete' prompt.pk %}" class="inline">
-                    {% csrf_token %}
-                    <button class="btn-danger" onclick="return confirm('Delete this prompt?')">Delete</button>
-                </form>
+                <a href="{% url 'resume-template-edit' t.pk %}" class="btn-ghost">Edit</a>
             </div>
         </div>
         {% empty %}
         <div class="template-card">
-            <div class="card-title">No prompts yet</div>
-            <div class="card-meta">Create your first prompt to get started.</div>
+            <div class="card-title">No templates yet</div>
+            <div class="card-meta">Create your first template to get started.</div>
         </div>
         {% endfor %}
     </div>
@@ -70,20 +60,18 @@
     .template-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: 0 10px 30px rgba(15,23,42,0.06); }
     .template-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
     .card-compact { display: flex; flex-direction: column; gap: 10px; }
-    .card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .card-top { display: flex; align-items: center; justify-content: space-between; }
     .card-title { font-size: 16px; font-weight: 700; color: var(--ink); }
     .card-meta { font-size: 12px; color: var(--muted); }
-    .card-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .card-actions { display: flex; gap: 8px; }
     .badge { font-size: 11px; padding: 4px 8px; border-radius: 999px; }
     .badge-on { background: #e0f2fe; color: #0369a1; }
     .badge-off { background: #f1f5f9; color: #64748b; }
-    .badge-group { display: flex; gap: 6px; }
     .input { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
     .search-row { display: grid; grid-template-columns: 1fr auto; gap: 10px; }
     .btn-primary { background: var(--accent); color: #fff; border: 0; padding: 10px 14px; border-radius: 10px; font-weight: 700; text-decoration: none; }
     .btn-secondary { background: #e2e8f0; color: var(--ink); border: 0; padding: 10px 14px; border-radius: 10px; font-weight: 600; }
     .btn-ghost { border: 1px solid var(--border); padding: 8px 12px; border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; }
-    .btn-danger { border: 1px solid #fecaca; background: #fee2e2; color: #991b1b; padding: 8px 12px; border-radius: 10px; font-weight: 600; }
     @media (max-width: 640px) { .template-hero { flex-direction: column; align-items: flex-start; gap: 12px; } }
 </style>
 {% endblock %}

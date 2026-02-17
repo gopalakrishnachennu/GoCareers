@@ -21,6 +21,11 @@ class ConsultantCreateForm(forms.Form):
     # Profile fields
     phone = forms.CharField(max_length=20, required=False)
     bio = forms.CharField(widget=forms.Textarea(attrs={'rows': 3}), required=False)
+    base_resume_text = forms.CharField(
+        widget=forms.Textarea(attrs={'rows': 6}),
+        required=False,
+        help_text="Paste the consultant's base resume text here.",
+    )
     skills = forms.CharField(
         required=False,
         help_text="Comma-separated list, e.g. Python, Django, AWS",
@@ -72,6 +77,7 @@ class ConsultantCreateForm(forms.Form):
         ConsultantProfile.objects.create(
             user=user,
             bio=data.get('bio', ''),
+            base_resume_text=data.get('base_resume_text', ''),
             skills=skills_list,
             hourly_rate=data.get('hourly_rate'),
             phone=data.get('phone', ''),
@@ -203,9 +209,10 @@ class ConsultantProfileEditForm(forms.ModelForm):
 
     class Meta:
         model = ConsultantProfile
-        fields = ['bio', 'hourly_rate', 'phone', 'marketing_roles', 'status']
+        fields = ['bio', 'base_resume_text', 'hourly_rate', 'phone', 'marketing_roles', 'status']
         widgets = {
             'bio': forms.Textarea(attrs={'rows': 3}),
+            'base_resume_text': forms.Textarea(attrs={'rows': 6}),
         }
 
     def __init__(self, *args, **kwargs):

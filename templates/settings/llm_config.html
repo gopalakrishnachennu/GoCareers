@@ -112,7 +112,10 @@
     </div>
 
     <div class="bg-white rounded-lg shadow p-6">
-        <h2 class="text-xl font-bold text-gray-800 mb-4">Recent Usage</h2>
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-xl font-bold text-gray-800">Recent Usage</h2>
+            <a href="{% url 'llm-logs' %}" class="text-sm text-blue-600 hover:underline">View all logs</a>
+        </div>
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">

@@ -1,18 +1,23 @@
 from django.urls import reverse_lazy, reverse
-from django.views.generic import DetailView, View
+from django.db import models
+import json
+from django.views.generic import DetailView, View, ListView, CreateView, UpdateView
 from django.views import View as BaseView
 from django.http import HttpResponse, HttpResponseRedirect
 from django.shortcuts import get_object_or_404, render, redirect
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib import messages
-from .models import ResumeDraft
-from .forms import DraftGenerateForm
-from .services import LLMService, DocxService, build_input_summary, get_system_prompt_text
+from .models import ResumeDraft, LLMInputPreference, ResumeTemplate, ResumeTemplatePack
+from .forms import DraftGenerateForm, ResumeTemplateForm, ResumeTemplatePackForm
+from .services import (
+    LLMService, DocxService, build_input_summary, get_system_prompt_text,
+    build_user_prompt_from_sections, score_ats, validate_resume,
+    extract_section, replace_section, normalize_generated_resume
+)
 from users.models import ConsultantProfile
 from jobs.models import Job
 from core.models import LLMConfig
 from prompts_app.models import Prompt
-
 
 class AdminOrEmployeeMixin(LoginRequiredMixin, UserPassesTestMixin):
     """Only Admins and Employees can access draft features."""
@@ -58,6 +63,16 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
         draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
         draft.llm_user_prompt = user_prompt
         draft.llm_input_summary = build_input_summary(job, consultant_profile)
+        config = LLMConfig.load()
+        draft.llm_request_payload = {
+            "model": config.active_model or "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": draft.llm_system_prompt},
+                {"role": "user", "content": draft.llm_user_prompt},
+            ],
+            "temperature": float(config.temperature),
+            "max_tokens": config.max_output_tokens,
+        }
         draft.save()
 
         # Generate content
@@ -69,9 +84,14 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
             draft.save(skip_version=True)
             messages.error(request, f"Draft generation failed: {error}")
         else:
-            draft.status = ResumeDraft.Status.DRAFT
-            draft.content = content
+            normalized = normalize_generated_resume(content, job, consultant_profile)
+            draft.content = normalized
             draft.tokens_used = tokens
+            errors, warnings = validate_resume(draft.content)
+            draft.validation_errors = errors
+            draft.validation_warnings = warnings
+            draft.ats_score = score_ats(job.description, draft.content)
+            draft.status = ResumeDraft.Status.REVIEW if errors else ResumeDraft.Status.DRAFT
             draft.save(skip_version=True)
             messages.success(
                 request,
@@ -79,6 +99,60 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
             )
 
         return redirect('consultant-detail', pk=pk)
+
+
+class ResumeTemplateListView(AdminOrEmployeeMixin, ListView):
+    model = ResumeTemplate
+    template_name = 'resumes/template_list.html'
+    context_object_name = 'templates'
+
+    def get_queryset(self):
+        qs = ResumeTemplate.objects.all().order_by('name')
+        q = self.request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(name__icontains=q)
+        return qs
+
+
+class ResumeTemplateCreateView(AdminOrEmployeeMixin, CreateView):
+    model = ResumeTemplate
+    form_class = ResumeTemplateForm
+    template_name = 'resumes/template_form.html'
+    success_url = reverse_lazy('resume-template-list')
+
+
+class ResumeTemplateUpdateView(AdminOrEmployeeMixin, UpdateView):
+    model = ResumeTemplate
+    form_class = ResumeTemplateForm
+    template_name = 'resumes/template_form.html'
+    success_url = reverse_lazy('resume-template-list')
+
+
+class ResumeTemplatePackListView(AdminOrEmployeeMixin, ListView):
+    model = ResumeTemplatePack
+    template_name = 'resumes/template_pack_list.html'
+    context_object_name = 'packs'
+
+    def get_queryset(self):
+        qs = ResumeTemplatePack.objects.all().order_by('name')
+        q = self.request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(name__icontains=q)
+        return qs
+
+
+class ResumeTemplatePackCreateView(AdminOrEmployeeMixin, CreateView):
+    model = ResumeTemplatePack
+    form_class = ResumeTemplatePackForm
+    template_name = 'resumes/template_pack_form.html'
+    success_url = reverse_lazy('resume-template-pack-list')
+
+
+class ResumeTemplatePackUpdateView(AdminOrEmployeeMixin, UpdateView):
+    model = ResumeTemplatePack
+    form_class = ResumeTemplatePackForm
+    template_name = 'resumes/template_pack_form.html'
+    success_url = reverse_lazy('resume-template-pack-list')
 
 
 class DraftGenerateAllView(AdminOrEmployeeMixin, BaseView):
@@ -122,6 +196,16 @@ class DraftGenerateAllView(AdminOrEmployeeMixin, BaseView):
             draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
             draft.llm_user_prompt = user_prompt
             draft.llm_input_summary = build_input_summary(job, consultant_profile)
+            config = LLMConfig.load()
+            draft.llm_request_payload = {
+                "model": config.active_model or "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": draft.llm_system_prompt},
+                    {"role": "user", "content": draft.llm_user_prompt},
+                ],
+                "temperature": float(config.temperature),
+                "max_tokens": config.max_output_tokens,
+            }
             draft.save()
 
             content, tokens, error = llm.generate_resume_content(job, consultant_profile, actor=request.user)
@@ -131,9 +215,13 @@ class DraftGenerateAllView(AdminOrEmployeeMixin, BaseView):
                 draft.save(skip_version=True)
                 error_count += 1
             else:
-                draft.status = ResumeDraft.Status.DRAFT
                 draft.content = content
                 draft.tokens_used = tokens
+                errors, warnings = validate_resume(content)
+                draft.validation_errors = errors
+                draft.validation_warnings = warnings
+                draft.ats_score = score_ats(job.description, content)
+                draft.status = ResumeDraft.Status.REVIEW if errors else ResumeDraft.Status.DRAFT
                 draft.save(skip_version=True)
                 created_count += 1
 
@@ -164,7 +252,310 @@ class DraftDetailView(DraftAccessMixin, DetailView):
         context['selected_prompt_id'] = config.active_prompt_id
         context['selected_prompt_name'] = config.active_prompt.name if config.active_prompt else None
         context['llm_input_summary'] = draft.llm_input_summary or build_input_summary(draft.job, draft.consultant)
+        context['llm_request_payload'] = draft.llm_request_payload or {
+            "model": config.active_model or "gpt-4o-mini",
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": float(config.temperature),
+            "max_tokens": config.max_output_tokens,
+        }
+        default_sections = [
+            "name", "email", "phone", "jd_location",
+            "professional_summary", "skills", "base_resume", "experience", "education", "jd_description",
+        ]
+        if self.request.user.is_authenticated:
+            pref = LLMInputPreference.objects.filter(user=self.request.user).first()
+            if pref and pref.sections:
+                default_sections = pref.sections
+        # Always enforce required sections in defaults
+        for required in ("experience", "education", "base_resume"):
+            if required not in default_sections:
+                default_sections.append(required)
+        context['llm_builder_defaults'] = default_sections
+        templates_qs = ResumeTemplate.objects.filter(is_active=True)
+        if hasattr(draft.consultant, 'marketing_roles'):
+            roles = draft.consultant.marketing_roles.all()
+            if roles.exists():
+                packs = ResumeTemplatePack.objects.filter(is_active=True, marketing_roles__in=roles).distinct()
+                pack_templates = ResumeTemplate.objects.filter(packs__in=packs, is_active=True).distinct()
+                if pack_templates.exists():
+                    templates_qs = pack_templates
+                else:
+                    templates_qs = templates_qs.filter(
+                        models.Q(marketing_roles__in=roles) | models.Q(marketing_roles__isnull=True)
+                    ).distinct()
+        context['resume_templates'] = templates_qs.order_by('name')
+        context['llm_builder_data'] = {
+            "name": draft.consultant.user.get_full_name() or draft.consultant.user.username,
+            "email": draft.consultant.user.email or "Not provided.",
+            "phone": draft.consultant.phone or "Not provided.",
+            "jd_location": draft.job.location or "Not provided.",
+            "jd_description": draft.job.description or "Not provided.",
+            "base_resume": draft.consultant.base_resume_text or "",
+            "skills": draft.consultant.skills or [],
+            "has_base_resume": bool(draft.consultant.base_resume_text and draft.consultant.base_resume_text.strip()),
+            "has_jd": bool(draft.job.description and draft.job.description.strip()),
+            "experience_count": draft.consultant.experience.count(),
+            "education_count": draft.consultant.education.count(),
+            "experience": [
+                {
+                    "title": e.title,
+                    "company": e.company,
+                    "start_year": e.start_date.strftime('%Y') if e.start_date else "",
+                    "end_year": "Present" if e.is_current else (e.end_date.strftime('%Y') if e.end_date else ""),
+                    "description": e.description or "",
+                }
+                for e in draft.consultant.experience.all()
+            ],
+            "education": [
+                {
+                    "degree": e.degree,
+                    "field_of_study": e.field_of_study,
+                    "institution": e.institution,
+                    "start_year": e.start_date.strftime('%Y') if e.start_date else "",
+                    "end_year": e.end_date.strftime('%Y') if e.end_date else "Present",
+                }
+                for e in draft.consultant.education.all()
+            ],
+            "system_prompt": system_prompt,
+            "model": config.active_model or "gpt-4o-mini",
+            "temperature": float(config.temperature),
+            "max_tokens": config.max_output_tokens,
+        }
         return context
+
+
+class LLMInputPreferenceSaveView(AdminOrEmployeeMixin, BaseView):
+    """Save LLM input builder defaults for the current user."""
+
+    def post(self, request, pk):
+        sections = request.POST.getlist('sections')
+        if not sections:
+            raw = request.POST.get('sections_json')
+            if raw:
+                try:
+                    sections = json.loads(raw)
+                except Exception:
+                    sections = []
+        if not sections:
+            raw = request.POST.get('sections')
+            if raw:
+                try:
+                    sections = json.loads(raw)
+                except Exception:
+                    sections = []
+        if not sections:
+            messages.error(request, "Please select at least one section.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': pk})}#llm-builder")
+
+        # Enforce required sections
+        required = {"experience", "education", "base_resume"}
+        if not required.issubset(set(sections)):
+            messages.error(request, "Experience, Education, and Base Resume are required defaults.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': pk})}#llm-builder")
+
+        pref, _ = LLMInputPreference.objects.get_or_create(user=request.user)
+        pref.sections = sections
+        pref.save()
+        messages.success(request, "Default selections saved.")
+        return redirect(f"{reverse('draft-detail', kwargs={'pk': pk})}#llm-builder")
+
+
+class DraftRegenerateView(AdminOrEmployeeMixin, BaseView):
+    """Regenerate a draft using explicit selected sections."""
+
+    def post(self, request, pk):
+        existing = get_object_or_404(ResumeDraft, pk=pk)
+        consultant_profile = existing.consultant
+        job = existing.job
+
+        sections = request.POST.getlist('sections')
+        if not sections:
+            sections = [
+                "name", "email", "phone", "jd_location",
+                "professional_summary", "skills", "base_resume", "experience", "education", "jd_description",
+            ]
+
+        missing_required = [s for s in ("experience", "education", "base_resume") if s not in sections]
+        if missing_required:
+            messages.error(request, "Experience, Education, and Base Resume are required to generate a resume.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+        if not consultant_profile.base_resume_text or not consultant_profile.base_resume_text.strip():
+            messages.error(request, "Base Resume is empty. Add it in the consultant profile before generating.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+        if not job.description or not job.description.strip():
+            messages.error(request, "Job Description is empty. Add the JD before generating.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+        if consultant_profile.experience.count() < 1:
+            messages.error(request, "Experience is required. Add at least one experience entry.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+        if consultant_profile.education.count() < 1:
+            messages.error(request, "Education is required. Add at least one education entry.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+
+        # Enforce always-on sections
+        if "jd_description" not in sections:
+            sections.append("jd_description")
+        if "professional_summary" not in sections:
+            sections.append("professional_summary")
+
+        template_id = request.POST.get('template_id') or None
+        if not template_id:
+            messages.error(request, "Please select a resume template before generating.")
+            return redirect(f"{reverse('draft-detail', kwargs={'pk': existing.pk})}#llm-builder")
+        template_layout = None
+        if template_id:
+            tmpl = ResumeTemplate.objects.filter(pk=template_id, is_active=True).first()
+            if tmpl:
+                template_layout = tmpl.layout
+
+        user_prompt = build_user_prompt_from_sections(job, consultant_profile, sections, template_layout=template_layout)
+        system_prompt = get_system_prompt_text(job, consultant_profile)
+
+        config = LLMConfig.load()
+        llm = LLMService()
+
+        draft = ResumeDraft(
+            consultant=consultant_profile,
+            job=job,
+            status=ResumeDraft.Status.PROCESSING,
+            created_by=request.user,
+            llm_system_prompt=system_prompt,
+            llm_user_prompt=user_prompt,
+            llm_input_summary=build_input_summary(job, consultant_profile),
+            llm_request_payload={
+                "model": config.active_model or "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": float(config.temperature),
+                "max_tokens": config.max_output_tokens,
+            },
+        )
+        draft.save()
+
+        content, tokens, error = llm.generate_with_prompts(
+            job, consultant_profile, system_prompt, user_prompt, actor=request.user
+        )
+
+        if error:
+            draft.status = ResumeDraft.Status.ERROR
+            draft.error_message = error
+            draft.save(skip_version=True)
+            messages.error(request, f"Draft generation failed: {error}")
+        else:
+            normalized = normalize_generated_resume(content, job, consultant_profile)
+            draft.content = normalized
+            draft.tokens_used = tokens
+            errors, warnings = validate_resume(draft.content)
+            draft.validation_errors = errors
+            draft.validation_warnings = warnings
+            draft.ats_score = score_ats(job.description, draft.content)
+            draft.status = ResumeDraft.Status.REVIEW if errors else ResumeDraft.Status.DRAFT
+            draft.save(skip_version=True)
+            messages.success(request, f"Resume draft v{draft.version} generated.")
+
+        return redirect('draft-detail', pk=draft.pk)
+
+
+class DraftRegenerateSectionView(AdminOrEmployeeMixin, BaseView):
+    """Regenerate a specific section for a draft."""
+
+    SECTION_HEADINGS = [
+        "Header",
+        "Professional Summary",
+        "Core Skills",
+        "Professional Experience",
+        "Education",
+    ]
+
+    def post(self, request, pk):
+        existing = get_object_or_404(ResumeDraft, pk=pk)
+        section = request.POST.get('section')
+        if section not in {"summary", "skills", "experience", "education", "header"}:
+            messages.error(request, "Invalid section.")
+            return redirect('draft-detail', pk=pk)
+
+        heading_map = {
+            "summary": "Professional Summary",
+            "skills": "Core Skills",
+            "experience": "Professional Experience",
+            "education": "Education",
+            "header": "Header",
+        }
+        heading = heading_map[section]
+
+        base_content = existing.content or ""
+        current_section = extract_section(base_content, heading, self.SECTION_HEADINGS)
+        if not current_section:
+            messages.error(request, f"Section not found: {heading}.")
+            return redirect('draft-detail', pk=pk)
+
+        # Build focused user prompt
+        job = existing.job
+        consultant = existing.consultant
+        system_prompt = existing.llm_system_prompt or get_system_prompt_text(job, consultant)
+        header_note = "Do NOT change names, company names, or dates."
+        if section == "header":
+            header_note = "Do NOT change any personal details; keep name, email, phone, location unchanged."
+
+        user_prompt = (
+            f"Update ONLY the '{heading}' section based on the JD and consultant data.\n"
+            f"{header_note}\n"
+            f"Return the full '{heading}' section only (including the heading line).\n\n"
+            f"--- JOB DESCRIPTION ---\n{job.description or 'Not provided.'}\n\n"
+            f"--- CURRENT SECTION ---\n{current_section}\n\n"
+        )
+
+        llm = LLMService()
+        content, tokens, error = llm.generate_with_prompts(
+            job, consultant, system_prompt, user_prompt, actor=request.user
+        )
+        if error:
+            messages.error(request, f"Section update failed: {error}")
+            return redirect('draft-detail', pk=pk)
+
+        new_section = content.strip()
+        if heading not in new_section:
+            new_section = f"{heading}\n{new_section}"
+
+        updated_content = replace_section(base_content, heading, self.SECTION_HEADINGS, new_section)
+        updated_content = normalize_generated_resume(updated_content, job, consultant)
+
+        draft = ResumeDraft(
+            consultant=consultant,
+            job=job,
+            status=ResumeDraft.Status.PROCESSING,
+            created_by=request.user,
+            llm_system_prompt=system_prompt,
+            llm_user_prompt=user_prompt,
+            llm_input_summary=build_input_summary(job, consultant),
+            llm_request_payload={
+                "model": llm.config.active_model or "gpt-4o-mini",
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": float(llm.config.temperature),
+                "max_tokens": llm.config.max_output_tokens,
+            },
+        )
+        draft.save()
+
+        draft.content = updated_content
+        draft.tokens_used = tokens
+        errors, warnings = validate_resume(updated_content)
+        draft.validation_errors = errors
+        draft.validation_warnings = warnings
+        draft.ats_score = score_ats(job.description, updated_content)
+        draft.status = ResumeDraft.Status.REVIEW if errors else ResumeDraft.Status.DRAFT
+        draft.save(skip_version=True)
+
+        messages.success(request, f"{heading} updated in draft v{draft.version}.")
+        return redirect('draft-detail', pk=draft.pk)
 
 
 class DraftSetPromptView(AdminOrEmployeeMixin, BaseView):

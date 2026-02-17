@@ -44,6 +44,7 @@ class MarketingRole(models.Model):
 class ConsultantProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='consultant_profile')
     bio = models.TextField(blank=True)
+    base_resume_text = models.TextField(blank=True)
     skills = models.JSONField(default=list, blank=True)
     hourly_rate = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     phone = models.CharField(max_length=20, blank=True, default='')

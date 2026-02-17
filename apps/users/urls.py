@@ -9,7 +9,7 @@ from .views import (
     EducationCreateView, EducationUpdateView, EducationDeleteView,
     CertificationCreateView, CertificationUpdateView, CertificationDeleteView,
 )
-from resumes.views import DraftGenerateView, DraftGenerateAllView
+from resumes.views import DraftGenerateView
 from resumes.preview_views import draft_preview_llm
 
 
@@ -63,6 +63,5 @@ urlpatterns = [
 
     # Resume Draft Generation (Admin/Employee only)
     path('<int:pk>/drafts/generate/', DraftGenerateView.as_view(), name='draft-generate'),
-    path('<int:pk>/drafts/generate-all/', DraftGenerateAllView.as_view(), name='draft-generate-all'),
     path('<int:pk>/drafts/preview/', draft_preview_llm, name='draft-preview-llm'),
 ]

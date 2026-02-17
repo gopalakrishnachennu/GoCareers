@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     PromptListView, PromptCreateView, PromptUpdateView, PromptDeleteView,
-    prompt_detail, prompt_test,
+    prompt_detail,
 )
 
 urlpatterns = [
@@ -10,5 +10,4 @@ urlpatterns = [
     path('<int:pk>/', prompt_detail, name='prompt-detail'),
     path('<int:pk>/edit/', PromptUpdateView.as_view(), name='prompt-edit'),
     path('<int:pk>/delete/', PromptDeleteView.as_view(), name='prompt-delete'),
-    path('test/', prompt_test, name='prompt-test'),
 ]

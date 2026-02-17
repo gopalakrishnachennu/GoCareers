@@ -5,9 +5,7 @@ from django.urls import reverse_lazy, reverse
 from django.contrib import messages
 
 from .models import Prompt
-from .forms import PromptForm, PromptTestForm
-from .models import PromptTestRun
-from resumes.services import LLMService
+from .forms import PromptForm
 from users.models import User
 
 
@@ -70,47 +68,3 @@ def prompt_detail(request, pk):
     prompt = get_object_or_404(Prompt, pk=pk)
     return render(request, 'prompts/prompt_detail.html', {'prompt': prompt})
 
-
-def prompt_test(request):
-    if not (request.user.is_superuser or request.user.role == User.Role.ADMIN):
-        return redirect('home')
-
-    test_run = None
-    if request.method == 'POST':
-        form = PromptTestForm(request.POST)
-        if form.is_valid():
-            prompt = form.cleaned_data['prompt']
-            job = form.cleaned_data['job']
-            consultant = form.cleaned_data['consultant']
-
-            # Render prompt
-            rendered = prompt.template_text.format(
-                job_title=job.title,
-                company=job.company,
-                job_description=job.description,
-                consultant_name=consultant.user.get_full_name() or consultant.user.username,
-                consultant_bio=consultant.bio or "Not provided.",
-                consultant_skills=", ".join(consultant.skills) if consultant.skills else "Not provided.",
-                experience_summary="",
-                certifications="",
-            )
-
-            # Generate preview (use current LLM settings)
-            llm = LLMService()
-            output, tokens, error = llm.generate_resume_content(job, consultant, actor=request.user)
-            preview = output if output else (error or "No output")
-
-            test_run = PromptTestRun.objects.create(
-                prompt=prompt,
-                job=job,
-                consultant=consultant,
-                rendered_prompt=rendered,
-                output_preview=preview,
-                tokens_used=tokens or 0,
-                cost=0,
-                created_by=request.user,
-            )
-    else:
-        form = PromptTestForm()
-
-    return render(request, 'prompts/prompt_test.html', {'form': form, 'test_run': test_run})

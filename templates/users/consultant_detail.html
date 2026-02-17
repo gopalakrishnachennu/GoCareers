@@ -42,6 +42,14 @@
                             {% endfor %}
                         </div>
                         <p class="mt-2 text-gray-600">{{ consultant.consultant_profile.bio|linebreaks }}</p>
+                        {% if consultant.consultant_profile.base_resume_text %}
+                        <div class="mt-4">
+                            <h3 class="text-sm font-semibold text-gray-700">Base Resume</h3>
+                            <div class="mt-1 text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 border border-gray-200 rounded p-3">
+                                {{ consultant.consultant_profile.base_resume_text }}
+                            </div>
+                        </div>
+                        {% endif %}
                         {% if consultant.consultant_profile.phone %}
                         <p class="mt-1 text-gray-500 text-sm">
                             <svg class="inline w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -286,7 +294,7 @@
                             {% endfor %}
                         </select>
                     </div>
-                    <button type="submit"
+                    <button type="submit" id="generate-draft-btn"
                         class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg shadow flex items-center gap-2 whitespace-nowrap">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
@@ -295,17 +303,12 @@
                         Generate Draft
                     </button>
                 </form>
-                <form method="post" action="{% url 'draft-generate-all' consultant.pk %}">
-                    {% csrf_token %}
-                    <button type="submit"
-                        class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-6 rounded-lg shadow flex items-center gap-2 whitespace-nowrap">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                d="M4 4v6h6M20 20v-6h-6M20 4l-7 7M4 20l7-7" />
-                        </svg>
-                        Generate All
-                    </button>
-                </form>
+                <div id="generate-progress" class="hidden mt-4">
+                    <div class="text-xs font-semibold text-purple-700 mb-2">Generating draft…</div>
+                    <div class="w-full h-2 rounded-full bg-purple-100 overflow-hidden">
+                        <div id="generate-progress-bar" class="h-2 bg-purple-600 w-0 transition-all duration-300"></div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -341,6 +344,9 @@
                             {% if draft.status == 'FINAL' %}
                             <span class="px-2 py-1 rounded-full text-xs font-semibold bg-green-100 text-green-800">✅
                                 Final</span>
+                            {% elif draft.status == 'REVIEW' %}
+                            <span class="px-2 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">🕵️
+                                Review</span>
                             {% elif draft.status == 'DRAFT' %}
                             <span class="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">📝
                                 Draft</span>
@@ -356,13 +362,17 @@
                         <td class="px-4 py-3 text-sm text-gray-500">{{ draft.created_at|date:"M d, H:i" }}</td>
                         <td class="px-4 py-3 text-sm">
                             <div class="flex items-center gap-2">
-                                {% if draft.status == 'DRAFT' or draft.status == 'FINAL' %}
+                                {% if draft.status == 'DRAFT' or draft.status == 'FINAL' or draft.status == 'REVIEW' %}
                                 <a href="{% url 'draft-detail' draft.pk %}"
                                     class="text-blue-600 hover:underline text-xs font-semibold">View</a>
+                                {% if draft.content %}
                                 <a href="{% url 'draft-download' draft.pk %}"
                                     class="text-green-600 hover:underline text-xs font-semibold">Download</a>
-                                <a href="{% url 'draft-detail' draft.pk %}#llm-input"
-                                    class="text-gray-600 hover:underline text-xs font-semibold">LLM Input</a>
+                                {% endif %}
+                                <a href="{% url 'draft-detail' draft.pk %}#llm-builder"
+                                    class="text-gray-600 hover:underline text-xs font-semibold">LLM Builder</a>
+                                <a href="{% url 'draft-detail' draft.pk %}#llm-debug"
+                                    class="text-indigo-600 hover:underline text-xs font-semibold">Prompt + Payload</a>
                                 {% endif %}
                                 {% if is_admin or is_employee %}
                                 {% if claimed_job_ids and draft.job.id in claimed_job_ids %}
@@ -376,6 +386,12 @@
                                 {% endif %}
                                 {% endif %}
                                 {% if is_admin and draft.status == 'DRAFT' %}
+                                <form method="post" action="{% url 'draft-promote' draft.pk %}" class="inline">
+                                    {% csrf_token %}
+                                    <button type="submit"
+                                        class="text-purple-600 hover:underline text-xs font-semibold">Promote</button>
+                                </form>
+                                {% elif is_admin and draft.status == 'REVIEW' %}
                                 <form method="post" action="{% url 'draft-promote' draft.pk %}" class="inline">
                                     {% csrf_token %}
                                     <button type="submit"
@@ -405,141 +421,41 @@
     {% endif %}
 
     {% if latest_draft %}
-    <div id="llm-input" class="bg-white rounded-lg shadow-lg p-8 mb-8">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-2xl font-bold text-gray-800">LLM Input (System + User)</h2>
-            <button id="copy-llm-input"
-                class="bg-gray-800 hover:bg-gray-900 text-white font-bold py-1.5 px-4 rounded-lg text-sm">
-                Copy All
-            </button>
-        </div>
-        <div class="space-y-4">
-            <form method="post" action="{% url 'draft-set-prompt' latest_draft.pk %}"
-                class="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                {% csrf_token %}
-                <div class="flex flex-col md:flex-row md:items-end gap-3">
-                    <div class="flex-1">
-                        <div class="text-xs font-semibold text-gray-600 mb-1">System Prompt Source</div>
-                        <select name="prompt_id" class="w-full border rounded px-3 py-2 text-xs bg-white">
-                            <option value="">Use default prompt</option>
-                            {% for p in prompt_options %}
-                            <option value="{{ p.id }}" {% if selected_prompt_id == p.id %}selected{% endif %}>
-                                {{ p.name }}
-                            </option>
-                            {% endfor %}
-                        </select>
-                        {% if selected_prompt_name %}
-                        <div class="text-[11px] text-gray-500 mt-1">Active: {{ selected_prompt_name }}</div>
-                        {% endif %}
-                    </div>
-                    <div>
-                        <button type="submit"
-                            class="bg-gray-800 hover:bg-gray-900 text-white font-bold py-2 px-4 rounded-lg text-xs">
-                            Set Prompt
-                        </button>
-                    </div>
-                </div>
-            </form>
-            <div id="llm-input-summary" class="bg-gray-50 border border-gray-200 rounded-lg p-4 text-xs text-gray-700">
-                <div class="font-semibold text-gray-800 mb-2">Input Summary</div>
-                <div><strong>Job:</strong> {{ llm_input_summary.job_title }} @ {{ llm_input_summary.job_company }}</div>
-                <div><strong>Job Location:</strong> {{ llm_input_summary.job_location }}</div>
-                <div class="mt-2"><strong>Job Description:</strong></div>
-                <div class="text-[11px] text-gray-600 whitespace-pre-wrap">{{ llm_input_summary.job_description }}</div>
-                <div><strong>Consultant:</strong> {{ llm_input_summary.consultant_name }}</div>
-                <div><strong>Email:</strong> {{ llm_input_summary.consultant_email }}</div>
-                <div><strong>Phone:</strong> {{ llm_input_summary.consultant_phone }}</div>
-                <div class="mt-2"><strong>Experience:</strong></div>
-                <ul class="list-disc ml-5">
-                    {% for exp in llm_input_summary.experience %}
-                    <li>{{ exp.title }} at {{ exp.company }} ({{ exp.start_year }}–{% if exp.is_current or not exp.end_year %}Present{% else %}{{ exp.end_year }}{% endif %})</li>
-                    {% empty %}
-                    <li>No experience listed.</li>
-                    {% endfor %}
-                </ul>
-                <div class="mt-2"><strong>Education:</strong></div>
-                <ul class="list-disc ml-5">
-                    {% for edu in llm_input_summary.education %}
-                    <li>{{ edu.degree }} in {{ edu.field_of_study }} at {{ edu.institution }} ({{ edu.start_year }}–{{ edu.end_year }})</li>
-                    {% empty %}
-                    <li>No education listed.</li>
-                    {% endfor %}
-                </ul>
-            </div>
+    <div class="bg-white rounded-lg shadow-lg p-6 mb-8">
+        <div class="flex items-center justify-between">
             <div>
-                <div class="text-xs font-semibold text-gray-600 mb-1">System Prompt</div>
-                <textarea id="llm-system" readonly
-                    class="w-full border rounded px-3 py-2 text-xs bg-gray-50 h-36 whitespace-pre-wrap">{{ llm_system_prompt }}</textarea>
+                <h2 class="text-xl font-bold text-gray-800">Configure LLM Inputs</h2>
+                <p class="text-sm text-gray-600">Use the draft page to build inputs and regenerate.</p>
             </div>
-            <div>
-                <!-- User Prompt removed -->
-            </div>
+            <a href="{% url 'draft-detail' latest_draft.pk %}#llm-builder"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg text-sm">
+                Go to LLM Builder
+            </a>
         </div>
     </div>
     {% endif %}
 
-    <script>
-        (function () {
-            const btn = document.getElementById('copy-llm-input');
-            if (!btn) return;
-            btn.addEventListener('click', async () => {
-                const sys = document.getElementById('llm-system')?.value || '';
-            const all = `SYSTEM PROMPT\\n${sys}`.trim();
-                try {
-                    await navigator.clipboard.writeText(all);
-                    btn.textContent = 'Copied';
-                    setTimeout(() => btn.textContent = 'Copy All', 1500);
-                } catch (e) {
-                    alert('Copy failed. Select text manually.');
-                }
-            });
-        })();
-    </script>
-
-    <script>
-        (function () {
-            const select = document.getElementById('draft-job-select');
-            const summaryBox = document.getElementById('llm-input-summary');
-            const sys = document.getElementById('llm-system');
-            if (!select || !summaryBox || !sys) return;
-
-            select.addEventListener('change', async () => {
-                const jobId = select.value;
-                if (!jobId) return;
-                const url = `${select.dataset.previewUrl}?job=${encodeURIComponent(jobId)}`;
-                try {
-                    const res = await fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-                    if (!res.ok) return;
-                    const data = await res.json();
-                    sys.value = data.system_prompt || '';
-                    const s = data.summary || {};
-                    const exp = (s.experience || []).map(e =>
-                        `<li>${e.title} at ${e.company} (${e.start_year}–${e.is_current || !e.end_year ? 'Present' : e.end_year})</li>`
-                    ).join('') || '<li>No experience listed.</li>';
-                    const edu = (s.education || []).map(e =>
-                        `<li>${e.degree} in ${e.field_of_study} at ${e.institution} (${e.start_year}–${e.end_year})</li>`
-                    ).join('') || '<li>No education listed.</li>';
-
-                    summaryBox.innerHTML = `
-                        <div class="font-semibold text-gray-800 mb-2">Input Summary</div>
-                        <div><strong>Job:</strong> ${s.job_title || ''} @ ${s.job_company || ''}</div>
-                        <div><strong>Job Location:</strong> ${s.job_location || ''}</div>
-                        <div class="mt-2"><strong>Job Description:</strong></div>
-                        <div class="text-[11px] text-gray-600 whitespace-pre-wrap">${s.job_description || ''}</div>
-                        <div><strong>Consultant:</strong> ${s.consultant_name || ''}</div>
-                        <div><strong>Email:</strong> ${s.consultant_email || ''}</div>
-                        <div><strong>Phone:</strong> ${s.consultant_phone || ''}</div>
-                        <div class="mt-2"><strong>Experience:</strong></div>
-                        <ul class="list-disc ml-5">${exp}</ul>
-                        <div class="mt-2"><strong>Education:</strong></div>
-                        <ul class="list-disc ml-5">${edu}</ul>
-                    `;
-                } catch (e) {
-                    // ignore
-                }
-            });
-        })();
-    </script>
-
 </div>
+
+<script>
+    (function () {
+        const form = document.querySelector('form[action*="/drafts/generate/"]');
+        const btn = document.getElementById('generate-draft-btn');
+        const progressWrap = document.getElementById('generate-progress');
+        const bar = document.getElementById('generate-progress-bar');
+        if (!form || !btn || !progressWrap || !bar) return;
+
+        form.addEventListener('submit', () => {
+            btn.disabled = true;
+            btn.classList.add('opacity-70', 'cursor-not-allowed');
+            progressWrap.classList.remove('hidden');
+            let width = 0;
+            const timer = setInterval(() => {
+                width = Math.min(width + Math.random() * 18 + 6, 92);
+                bar.style.width = `${Math.floor(width)}%`;
+            }, 300);
+            form.dataset.progressTimer = timer;
+        });
+    })();
+</script>
 {% endblock %}

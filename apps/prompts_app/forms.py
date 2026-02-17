@@ -1,7 +1,6 @@
 from django import forms
+import string
 from .models import Prompt
-from jobs.models import Job
-from users.models import ConsultantProfile
 
 
 class PromptForm(forms.ModelForm):
@@ -14,24 +13,33 @@ class PromptForm(forms.ModelForm):
         widgets = {
             'system_text': forms.Textarea(attrs={'rows': 4}),
             'template_text': forms.Textarea(attrs={'rows': 8}),
+            'is_active': forms.CheckboxInput(),
+            'is_default': forms.CheckboxInput(),
         }
 
     def clean_template_text(self):
         template_text = self.cleaned_data.get('template_text', '')
-        required = [
-            '{job_title}', '{company}', '{job_description}',
-            '{consultant_name}', '{consultant_bio}', '{consultant_skills}',
-            '{experience_summary}', '{certifications}',
-        ]
-        missing = [r for r in required if r not in template_text]
-        if missing:
+        if not template_text:
+            return template_text
+
+        allowed = {
+            'job_title', 'company', 'job_description',
+            'consultant_name', 'consultant_bio', 'consultant_skills',
+            'experience_summary', 'certifications',
+            'base_resume_text', 'input_summary',
+        }
+
+        formatter = string.Formatter()
+        field_names = []
+        for _, field_name, _, _ in formatter.parse(template_text):
+            if not field_name:
+                continue
+            base = field_name.split('.')[0].split('[')[0]
+            field_names.append(base)
+
+        unknown = sorted({name for name in field_names if name not in allowed})
+        if unknown:
             raise forms.ValidationError(
-                "Template missing placeholders: " + ", ".join(missing)
+                "Unknown placeholders: " + ", ".join(unknown)
             )
         return template_text
-
-
-class PromptTestForm(forms.Form):
-    prompt = forms.ModelChoiceField(queryset=Prompt.objects.all())
-    job = forms.ModelChoiceField(queryset=Job.objects.all())
-    consultant = forms.ModelChoiceField(queryset=ConsultantProfile.objects.all())

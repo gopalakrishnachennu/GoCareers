@@ -1,5 +1,5 @@
 from django import forms
-from .models import ResumeDraft
+from .models import ResumeDraft, ResumeTemplate, ResumeTemplatePack
 from users.models import ConsultantProfile
 from jobs.models import Job
 
@@ -21,3 +21,22 @@ class ResumeGenerationForm(forms.ModelForm):
     class Meta:
         model = ResumeDraft
         fields = ['job', 'consultant']
+
+
+class ResumeTemplateForm(forms.ModelForm):
+    class Meta:
+        model = ResumeTemplate
+        fields = ['name', 'description', 'layout', 'is_active', 'marketing_roles']
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 3}),
+            'layout': forms.Textarea(attrs={'rows': 12}),
+        }
+
+
+class ResumeTemplatePackForm(forms.ModelForm):
+    class Meta:
+        model = ResumeTemplatePack
+        fields = ['name', 'description', 'is_active', 'marketing_roles', 'templates']
+        widgets = {
+            'description': forms.Textarea(attrs={'rows': 3}),
+        }

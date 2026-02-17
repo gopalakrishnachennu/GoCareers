@@ -2,7 +2,6 @@ from django.db import models
 from django.core.cache import cache
 from django.conf import settings
 
-from resumes.models import PromptTemplate
 from users.models import User, ConsultantProfile
 from jobs.models import Job
 
@@ -91,10 +90,6 @@ class LLMConfig(models.Model):
     """
     encrypted_api_key = models.TextField(blank=True, help_text="Encrypted OpenAI API key")
     active_model = models.CharField(max_length=100, default="gpt-4o-mini")
-    system_prompt = models.TextField(blank=True)
-    prompt_template = models.ForeignKey(
-        PromptTemplate, on_delete=models.SET_NULL, null=True, blank=True
-    )
     active_prompt = models.ForeignKey(
         'prompts_app.Prompt', on_delete=models.SET_NULL, null=True, blank=True
     )
@@ -120,8 +115,6 @@ class LLMConfig(models.Model):
             LLMConfigVersion.objects.create(
                 config=self,
                 active_model=self.active_model,
-                system_prompt=self.system_prompt,
-                prompt_template=self.prompt_template,
                 temperature=self.temperature,
                 max_output_tokens=self.max_output_tokens,
             )
@@ -142,8 +135,6 @@ class LLMConfig(models.Model):
 class LLMConfigVersion(models.Model):
     config = models.ForeignKey(LLMConfig, on_delete=models.CASCADE, related_name='versions')
     active_model = models.CharField(max_length=100)
-    system_prompt = models.TextField(blank=True)
-    prompt_template = models.ForeignKey(PromptTemplate, on_delete=models.SET_NULL, null=True, blank=True)
     temperature = models.DecimalField(max_digits=3, decimal_places=2)
     max_output_tokens = models.PositiveIntegerField()
     created_at = models.DateTimeField(auto_now_add=True)
@@ -155,6 +146,10 @@ class LLMConfigVersion(models.Model):
 class LLMUsageLog(models.Model):
     request_type = models.CharField(max_length=50, default='resume_generation')
     model_name = models.CharField(max_length=100)
+    system_prompt = models.TextField(blank=True)
+    user_prompt = models.TextField(blank=True)
+    request_payload = models.JSONField(default=dict, blank=True)
+    response_text = models.TextField(blank=True)
     prompt_tokens = models.PositiveIntegerField(default=0)
     completion_tokens = models.PositiveIntegerField(default=0)
     total_tokens = models.PositiveIntegerField(default=0)

@@ -2,76 +2,116 @@
 {% load widget_tweaks %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto px-4 py-8">
-    <div class="bg-white rounded-lg shadow p-6">
-        <h1 class="text-2xl font-bold text-gray-800 mb-4">Prompt</h1>
-        <form method="post" id="prompt-form">
-            {% csrf_token %}
-            {% for field in form.visible_fields %}
-            {% if field.name == "description" %}
-            <div class="mb-4">
-                <label class="block text-sm font-semibold text-gray-700 mb-1">{{ field.label }}</label>
-                <div class="border rounded-lg overflow-hidden shadow-sm">
-                    <div class="editor-toolbar flex flex-wrap gap-2 items-center border-b px-3 py-2 bg-white">
-                        <button type="button" class="editor-btn" data-cmd="bold" title="Bold"><strong>B</strong></button>
-                        <button type="button" class="editor-btn" data-cmd="italic" title="Italic"><em>I</em></button>
-                        <button type="button" class="editor-btn" data-cmd="underline" title="Underline"><u>U</u></button>
-                        <span class="editor-sep"></span>
-                        <button type="button" class="editor-btn" data-cmd="insertUnorderedList" title="Bulleted List">• List</button>
-                        <button type="button" class="editor-btn" data-cmd="insertOrderedList" title="Numbered List">1. List</button>
-                        <span class="editor-sep"></span>
-                        <button type="button" class="editor-btn" data-cmd="createLink" title="Insert Link">Link</button>
-                        <button type="button" class="editor-btn editor-btn-ghost" data-cmd="removeFormat" title="Clear Formatting">Clear</button>
+<div class="template-page">
+    <div class="template-hero">
+        <div>
+            <div class="template-eyebrow">Resume System</div>
+            <h1 class="template-title">Prompt Studio</h1>
+            <p class="template-subtitle">Design system prompts with structured controls.</p>
+        </div>
+    </div>
+
+    <div class="template-grid">
+        <div class="template-card">
+            <h2 class="card-title">Prompt Details</h2>
+            <form method="post" id="prompt-form">
+                {% csrf_token %}
+                {% for field in form.visible_fields %}
+                {% if field.name == "description" %}
+                <div class="form-row">
+                    <label class="label">{{ field.label }}</label>
+                    <div class="border rounded-lg overflow-hidden shadow-sm">
+                        <div class="editor-toolbar flex flex-wrap gap-2 items-center border-b px-3 py-2 bg-white">
+                            <button type="button" class="editor-btn" data-cmd="bold" title="Bold"><strong>B</strong></button>
+                            <button type="button" class="editor-btn" data-cmd="italic" title="Italic"><em>I</em></button>
+                            <button type="button" class="editor-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+                            <span class="editor-sep"></span>
+                            <button type="button" class="editor-btn" data-cmd="insertUnorderedList" title="Bulleted List">• List</button>
+                            <button type="button" class="editor-btn" data-cmd="insertOrderedList" title="Numbered List">1. List</button>
+                            <span class="editor-sep"></span>
+                            <button type="button" class="editor-btn" data-cmd="createLink" title="Insert Link">Link</button>
+                            <button type="button" class="editor-btn editor-btn-ghost" data-cmd="removeFormat" title="Clear Formatting">Clear</button>
+                        </div>
+                        <div id="desc-editor" class="editor-surface" contenteditable="true"
+                            data-initial="{{ form.description.value|default:''|escape }}"></div>
                     </div>
-                    <div id="desc-editor" class="editor-surface" contenteditable="true"
-                        data-initial="{{ form.description.value|default:''|escape }}"></div>
+                    {% render_field field id="id_description_hidden" style="display:none;" %}
+                    {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
                 </div>
-                {% render_field field id="id_description_hidden" style="display:none;" %}
-                {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
+                {% elif field.name == "is_active" or field.name == "is_default" %}
+                <div class="form-row">
+                    <label class="label">{{ field.label }}</label>
+                    <label class="toggle">
+                        {% render_field field class="toggle-input" %}
+                        <span class="toggle-track"></span>
+                        <span class="toggle-label">{% if field.value %}Yes{% else %}No{% endif %}</span>
+                    </label>
+                    {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
+                </div>
+                {% else %}
+                <div class="form-row">
+                    <label class="label">{{ field.label }}</label>
+                    {% render_field field class="input" %}
+                    {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
+                </div>
+                {% endif %}
+                {% endfor %}
+                <div class="actions">
+                    <button class="btn-primary">Save Prompt</button>
+                    <a href="{% url 'prompt-list' %}" class="btn-ghost">Cancel</a>
+                </div>
+            </form>
+        </div>
+
+        <div class="template-card">
+            <h2 class="card-title">System Prompt Guidance</h2>
+            <div class="builder-note">
+                Use clear rules, fixed structure, and avoid ambiguity. Define required sections explicitly.
             </div>
-            {% else %}
-            <div class="mb-4">
-                <label class="block text-sm font-semibold text-gray-700 mb-1">{{ field.label }}</label>
-                {% render_field field class="w-full border rounded px-3 py-2" %}
-                {% if field.errors %}<p class="text-xs text-red-600">{{ field.errors }}</p>{% endif %}
-            </div>
-            {% endif %}
-            {% endfor %}
-            <div class="flex gap-2">
-                <button class="px-4 py-2 rounded bg-teal-600 text-white">Save</button>
-                <a href="{% url 'prompt-list' %}" class="px-4 py-2 rounded border">Cancel</a>
-            </div>
-        </form>
+        </div>
     </div>
 </div>
 
 <style>
-    .editor-toolbar { position: sticky; top: 0; z-index: 2; }
-    .editor-btn {
-        border: 1px solid #e5e7eb;
-        padding: 0.35rem 0.6rem;
-        border-radius: 0.5rem;
-        font-size: 0.85rem;
-        background: #f9fafb;
-        color: #111827;
-        transition: all .15s ease;
+    :root {
+        --ink: #0f172a;
+        --muted: #64748b;
+        --bg: #f4f2ee;
+        --card: #ffffff;
+        --accent: #0b5c9e;
+        --border: #e2e8f0;
     }
+    .template-page { background: var(--bg); min-height: 100vh; padding: 32px 24px 56px; }
+    .template-hero { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .template-eyebrow { text-transform: uppercase; letter-spacing: 0.2em; font-size: 12px; color: var(--muted); }
+    .template-title { font-size: 32px; font-weight: 800; color: var(--ink); margin: 6px 0; }
+    .template-subtitle { color: var(--muted); font-size: 14px; }
+    .template-grid { display: grid; grid-template-columns: 1.2fr 0.8fr; gap: 20px; }
+    .template-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; box-shadow: 0 10px 30px rgba(15,23,42,0.06); }
+    .card-title { font-size: 18px; font-weight: 700; color: var(--ink); margin-bottom: 12px; }
+    .form-row { margin-bottom: 14px; }
+    .label { display: block; font-size: 12px; font-weight: 700; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .08em; }
+    .input, .textarea, select { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+    .actions { display: flex; gap: 10px; margin-top: 12px; }
+    .btn-primary { background: var(--accent); color: #fff; border: 0; padding: 10px 14px; border-radius: 10px; font-weight: 700; cursor: pointer; }
+    .btn-ghost { border: 1px solid var(--border); padding: 10px 14px; border-radius: 10px; color: var(--ink); text-decoration: none; font-weight: 600; }
+    .builder-note { color: var(--muted); font-size: 14px; }
+    @media (max-width: 980px) { .template-grid { grid-template-columns: 1fr; } }
+    .editor-toolbar { position: sticky; top: 0; z-index: 2; }
+    .editor-btn { border: 1px solid #e5e7eb; padding: 0.35rem 0.6rem; border-radius: 0.5rem; font-size: 0.85rem; background: #f9fafb; color: #111827; transition: all .15s ease; }
     .editor-btn:hover { background: #eef2ff; border-color: #c7d2fe; }
     .editor-btn:active { transform: translateY(1px); }
     .editor-btn-ghost { background: transparent; }
     .editor-sep { width: 1px; height: 1.5rem; background: #e5e7eb; margin: 0 0.25rem; }
-    .editor-surface {
-        min-height: 240px;
-        padding: 1rem;
-        outline: none;
-        background: #ffffff;
-        font-size: 0.95rem;
-        line-height: 1.6;
-    }
-    .editor-surface:empty:before {
-        content: "Write the prompt description here...";
-        color: #9ca3af;
-    }
+    .editor-surface { min-height: 240px; padding: 1rem; outline: none; background: #ffffff; font-size: 0.95rem; line-height: 1.6; }
+    .editor-surface:empty:before { content: "Write the prompt description here..."; color: #9ca3af; }
+    .toggle { display: inline-flex; align-items: center; gap: 10px; }
+    .toggle-input { display: none; }
+    .toggle-track { width: 46px; height: 26px; background: #e5e7eb; border-radius: 999px; position: relative; transition: background .2s ease; }
+    .toggle-track::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 999px; background: #ffffff; box-shadow: 0 1px 2px rgba(0,0,0,0.2); transition: transform .2s ease; }
+    .toggle-input:checked + .toggle-track { background: #0b5c9e; }
+    .toggle-input:checked + .toggle-track::after { transform: translateX(20px); }
+    .toggle-label { font-size: 13px; color: var(--muted); font-weight: 600; }
 </style>
 
 <script>
@@ -97,6 +137,15 @@
                 }
                 hidden.value = editor.innerHTML;
             });
+        });
+    })();
+    (function () {
+        document.querySelectorAll('.toggle-input').forEach(input => {
+            const label = input.closest('.toggle')?.querySelector('.toggle-label');
+            if (!label) return;
+            const update = () => { label.textContent = input.checked ? 'Yes' : 'No'; };
+            update();
+            input.addEventListener('change', update);
         });
     })();
 </script>

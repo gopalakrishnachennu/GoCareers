@@ -1,5 +1,5 @@
 from django.shortcuts import render, redirect
-from django.views.generic import TemplateView, UpdateView, View
+from django.views.generic import TemplateView, UpdateView, View, ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Count, Q, Sum
 from django.urls import reverse_lazy
@@ -146,6 +146,33 @@ class LLMConfigView(AdminRequiredMixin, View):
             'calls_month': logs.filter(created_at__gte=start_month).count(),
             'recent_logs': logs.order_by('-created_at')[:20],
         }
+
+
+class LLMLogListView(AdminRequiredMixin, ListView):
+    model = LLMUsageLog
+    template_name = 'settings/llm_logs.html'
+    context_object_name = 'logs'
+    paginate_by = 25
+
+    def get_queryset(self):
+        qs = LLMUsageLog.objects.select_related('job', 'consultant', 'actor').order_by('-created_at')
+        q = self.request.GET.get('q', '').strip()
+        if q:
+            qs = qs.filter(
+                Q(job__title__icontains=q) |
+                Q(job__company__icontains=q) |
+                Q(model_name__icontains=q) |
+                Q(consultant__user__username__icontains=q) |
+                Q(consultant__user__first_name__icontains=q) |
+                Q(consultant__user__last_name__icontains=q)
+            )
+        return qs
+
+
+class LLMLogDetailView(AdminRequiredMixin, DetailView):
+    model = LLMUsageLog
+    template_name = 'settings/llm_log_detail.html'
+    context_object_name = 'log'
 
 
 def home(request):
