@@ -1,0 +1,388 @@
+
+
+Senior Database Administrator
+
+
+Remote - US
+
+
+NetDocuments is committed to providing an excellent candidate experience and will never ask you to engage in recruitment activity without phone, video, and in person meetings and communications from emails using the @netdocuments.com domain. If you have any concerns or questions about communications you have received, please send them to hrgroup@netdocuments.com so our team members can review.
+
+
+NetDocuments is the world’s #1 trusted cloud-based content management and productivity platform that helps legal professionals do their best work. We strive to win together through passionate hard work, exploring new things and recognizing every interaction matters.
+
+
+
+NetDocuments provides rewarding career growth in an inclusive, diverse environment where employees are encouraged to openly contribute creative ideas and innovation, backed by supportive peers and leadership working together to achieve our goals as a unified team.
+
+
+At our core, we are dedicated to empowering our employees to drive successful business outcomes and better user experiences for our customers and partners. Our customer-centric approach and employee enablement has allowed us to enjoy many accolades, including being named among the 2022, 2023, & 2024 list of Inc. Magazine’s 5000 Fastest-Growing Private Companies in America.
+
+
+Other recent awards include:
+
+
+
+Two-time winner (2024, 2023) National Top Workplaces
+
+
+Two-time winner (2024, 2023) Top Workplace innovation
+
+
+Three-time winner (2023, 2022, 2021) Top Workplace in the US by the Salt Lake Tribune
+
+
+Three-time winner (2023, 2022, 2021) Best Companies to Work for by Utah Business magazine
+
+
+Three-time winner (2024, 2023, 2022) Top Workplace Work-Life Flexibility
+
+
+Three-time winner (2024, 2023, 2022) Top Workplace Compensation & Benefits
+
+
+2024 Cultural Excellence
+
+
+2024 Technology Industry
+
+
+2023 Top Workplace Leadership
+
+
+2023 Top Workplace Purpose & Values
+
+
+2022 Top Workplace Employee Appreciation and Employee Well Being
+
+
+
+
+
+NetDocuments is a hybrid, remote-friendly workplace. Come join our team and work inspired each day!
+
+
+
+
+
+
+
+
+What You’ll Do
+
+
+
+
+NetDocuments is seeking an experienced Senior Database Administrator to own the operational excellence, reliability, performance, and security of our global database infrastructure across AWS and Azure. In this role, you will manage mission-critical production systems that support enterprise-scale, multi-region workloads, ensuring databases are resilient, performant, and secure.
+
+
+
+
+This role is ideal for a hands-on DBA who thrives in complex, high-availability environments, enjoys deep technical problem-solving, and is comfortable leading database operations for globally distributed systems. You’ll work closely with Data Engineering, DevOps, and application teams to support both day-to-day operations and large-scale database initiatives.
+
+
+
+
+You will:
+
+
+
+
+Database Operations & Administration
+
+
+
+
+
+Administer, operate, and optimize production databases including Couchbase, PostgreSQL, DynamoDB, DocumentDB, Cosmos DB, and Snowflake.
+
+
+Manage Couchbase clusters, including XDCR replication configuration, monitoring, and troubleshooting.
+
+
+Perform database installations, upgrades, patching, and configuration management across cloud and on-prem environments.
+
+
+Monitor database health, performance, and resource utilization across multi-cloud infrastructure.
+
+
+Optimize query performance through indexing strategies, query tuning, and execution plan analysis.
+
+
+Plan and manage database scaling strategies, including vertical and horizontal scaling, sharding, and capacity planning.
+
+
+Implement and manage database security controls, including access management, encryption, and compliance requirements.
+
+
+
+
+
+Backup, Disaster Recovery & Resilience
+
+
+
+
+
+Design and maintain comprehensive backup strategies with appropriate retention policies.
+
+
+Implement and validate restore procedures to meet defined RTO/RPO objectives.
+
+
+Develop and maintain point-in-time recovery (PITR) capabilities.
+
+
+Execute disaster recovery drills and document outcomes and improvements.
+
+
+Manage AWS Backup, native database backups, and cross-region replication strategies.
+
+
+
+
+
+Incident Response & Production Support
+
+
+
+
+
+Participate in a 24/7 on-call rotation supporting mission-critical database systems.
+
+
+Lead database-related incident response efforts, including outage resolution and performance degradation.
+
+
+Perform root cause analysis and implement corrective and preventative actions.
+
+
+Troubleshoot complex production issues such as replication lag, memory pressure, connection limits, and deadlocks.
+
+
+Coordinate closely with application and infrastructure teams during critical incidents.
+
+
+
+
+
+Monitoring, Observability & Automation
+
+
+
+
+
+Implement and maintain monitoring and alerting using tools such as Datadog, CloudWatch, Azure Monitor, and database-native solutions.
+
+
+Create and manage dashboards for database KPIs and SLAs.
+
+
+Configure intelligent alerting with appropriate thresholds and escalation paths.
+
+
+Automate routine operational tasks using Python, Bash, PowerShell, AWS CLI, and cloud-native tooling.
+
+
+
+
+
+Migrations, Projects & Documentation
+
+
+
+
+
+Lead and support database migration initiatives across cloud providers and platforms.
+
+
+Plan and execute database upgrades and migrations with minimal downtime.
+
+
+Support new database implementations and data architecture initiatives.
+
+
+Validate data integrity and reconciliation during migrations.
+
+
+Develop and maintain runbooks, SOPs, and Architecture Decision Records (ADRs).
+
+
+Document database configurations, schemas, and topology.
+
+
+
+
+
+Security, Compliance & Governance
+
+
+
+
+
+Implement database security best practices including IAM roles, network isolation, secrets management, and encryption.
+
+
+Manage credentials using AWS Secrets Manager and Azure Key Vault.
+
+
+Ensure compliance with data residency, privacy, and regulatory requirements.
+
+
+Participate in security audits, vulnerability assessments, and remediation efforts.
+
+
+
+
+
+Collaboration & Mentorship
+
+
+
+
+
+Partner closely with Data Engineering, DevOps, and application teams.
+
+
+Provide database expertise and guidance across engineering teams.
+
+
+Communicate database status, incidents, and maintenance activities to stakeholders.
+
+
+Mentor junior DBAs and engineers on database best practices.
+
+
+Participate in architecture reviews and technical design discussions.
+
+
+
+
+
+What You’ll Need to Be Successful
+
+
+
+
+
+5+ years of experience as a Database Administrator managing production systems at scale.
+
+
+Strong hands-on experience with AWS database services including RDS/PostgreSQL, DynamoDB, DocumentDB, Aurora, and AWS Backup.
+
+
+Working experience administering Couchbase, including cluster management, XDCR replication, and N1QL optimization.
+
+
+Experience with Azure database services, including Cosmos DB and Azure Database for PostgreSQL.
+
+
+Proven experience supporting multi-region, globally distributed database systems.
+
+
+Deep understanding of database internals, indexing strategies, and query optimization.
+
+
+Strong SQL skills and familiarity with database-specific query languages (e.g., N1QL).
+
+
+Experience designing and testing backup, restore, PITR, and disaster recovery strategies.
+
+
+Hands-on experience with monitoring and observability tools such as Datadog, CloudWatch, and Azure Monitor.
+
+
+Proficiency with scripting and automation using Python, Bash, or PowerShell.
+
+
+Experience with Infrastructure as Code tools such as Terraform or CloudFormation.
+
+
+Strong understanding of database security, encryption, IAM, and compliance requirements.
+
+
+Excellent troubleshooting skills and ability to operate effectively during high-severity incidents.
+
+
+Willingness and ability to participate in a 24/7 on-call rotation.
+
+
+
+
+
+What Will Make You Stand Out
+
+
+
+
+
+Bachelor’s degree in Computer Science, Information Systems, or equivalent experience.
+
+
+Cloud or database certifications (AWS Database Specialty, AWS Solutions Architect, Azure Database Administrator, Couchbase).
+
+
+Experience administering and optimizing Snowflake.
+
+
+Experience with database migration tools such as AWS DMS or Azure Data Migration Service.
+
+
+Familiarity with streaming and CDC technologies (Kafka, Kinesis, Debezium).
+
+
+Experience with containerized environments (ECS, Kubernetes) for database workloads.
+
+
+Background in document management systems, hierarchical data structures, or content platforms.
+
+
+Exposure to vector databases and AI/ML-related database workloads.
+
+
+Experience mentoring or leading other DBAs.
+
+
+
+
+
+What You’ll Love About NetDocuments
+
+
+
+
+
+The People!
+
+
+90% healthcare premiums company covered
+
+
+HSA company contribution
+
+
+401K match at 4% with immediate vesting
+
+
+Flexible PTO (typically 3 to 4 weeks a year)
+
+
+10 paid holidays
+
+
+Monthly contributions for life activities & wellness
+
+
+Access to LinkedIn learning with monthly dedicated time to explore
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,47 @@
+Gopala Krishna Chennu
+New Jersey | +1 347-370-9287 | gopalakrishnachennu@gmail.com
+
+PROFESSIONAL SUMMARY
+DevOps Engineer with 5+ years of experience building and operating AWS-based infrastructure and CI/CD pipelines. Strong in automation, containerization, monitoring, and infrastructure as code. Known for improving deployment speed, reliability, and cost efficiency in production environments.
+
+CORE SKILLS
+Cloud Platforms: AWS (EC2, S3, RDS, VPC, Lambda)
+Operating Systems: Linux, Windows
+Scripting: Python, Bash, PowerShell
+CI/CD: Jenkins, Git, Automation Pipelines
+Containers: Docker, Kubernetes
+Infrastructure as Code: Terraform
+Monitoring: CloudWatch, Prometheus
+Networking: Connectivity, Firewalls, VPC Segmentation
+Documentation: Runbooks, SOPs, Stakeholder Updates
+
+PROFESSIONAL EXPERIENCE
+DevOps Engineer I, Thomson Reuters — Aug 2023 to Present
+- Built Jenkins and Docker pipelines to automate deployments, reducing manual errors and shortening release cycles while improving auditability and repeatability across environments.
+- Optimized EC2 and S3 utilization through right-sizing and lifecycle policies, achieving 30% cost reduction and better resource usage for production workloads.
+- Implemented CloudWatch and Prometheus monitoring with actionable alerts, cutting incident response time by 40% and improving visibility for on-call engineers.
+- Led containerization of legacy applications using Kubernetes, enabling scalable deployments, faster rollouts, and consistent runtime environments across staging and production clusters.
+- Partnered with developers to standardize CI/CD practices, increasing release frequency and reducing configuration drift between development, testing, and production environments.
+- Automated infrastructure provisioning with Terraform modules, ensuring repeatable environments, faster onboarding, and consistent security baselines across AWS accounts.
+- Strengthened security using IAM policies, least-privilege access, and VPC segmentation, reducing risk exposure and aligning with internal compliance standards.
+- Improved operational documentation with runbooks and escalation guides, enabling faster troubleshooting and smoother handoffs across cross-functional teams.
+
+DevOps Engineer, ExxonMobil — Jun 2022 to Aug 2023
+- Managed AWS resources including EC2, S3, RDS, VPC, and Lambda, supporting stable production operations and reliable performance for business-critical applications.
+- Administered Windows and Linux servers with patching, hardening, and access control, improving security posture and reducing unplanned maintenance windows.
+- Developed Python, Bash, and PowerShell automation to reduce repetitive tasks, accelerating response times and improving overall operational efficiency.
+- Built and maintained CI/CD workflows with Jenkins and Git, supporting consistent builds, automated testing, and reliable deployment processes.
+- Supported Docker-based deployments and image lifecycle management, improving application portability and simplifying environment setup for development teams.
+- Assisted with network troubleshooting and firewall updates, resolving connectivity issues and coordinating changes with infrastructure and security teams.
+
+DevOps Engineer, Tiger Analytics — Jul 2020 to Jun 2022
+- Supported AWS environments and core infrastructure services, ensuring uptime and performance for customer-facing applications and internal analytics platforms.
+- Automated routine operations using Python, Bash, and PowerShell, reducing manual effort and standardizing processes for common infrastructure tasks.
+- Worked with Docker and CI/CD tooling to support application delivery, improving build consistency and deployment repeatability across environments.
+- Assisted with monitoring and alerting configuration, enabling faster detection of incidents and improved response coordination during on-call rotations.
+- Collaborated on documentation and knowledge transfer, producing runbooks and troubleshooting guides to improve team efficiency and onboarding.
+- Performed routine system maintenance and updates, ensuring compliance with internal standards and minimizing security vulnerabilities.
+
+EDUCATION
+Master’s in Information Technology, Wilmington University — Aug 2023 to May 2025
+Bachelor’s in Computer Science, SRM University — May 2018 to Sep 2022

@@ -1,0 +1,44 @@
+Gopala Krishna Chennu
+Indianapolis, IN  | chennugopalakrishna2@gmail.com | 347-470-9287
+
+PROFESSIONAL SUMMARY Results-oriented Database Administrator – Epic ODBA with 5+ years of experience managing enterprise-scale SQL Server, Snowflake, and AWS RDS environments. Skilled in Epic ODBA, performance tuning, backup/recovery, encryption, and disaster recovery processes ensuring high reliability, security, and compliance. Adept in Terraform, CI/CD, Python, and PowerShell automation supporting cloud and hybrid architectures. Collaborative communicator with strong teamwork, stakeholder engagement, and Agile delivery expertise optimizing mission-critical healthcare.
+
+CORE SKILLS
+	•	Cloud Platforms: AWS (RDS, CloudWatch), Azure SQL, Snowflake
+	•	Infrastructure as Code (IaC): Terraform, CloudFormation, PowerShell
+	•	CI/CD & DevOps Tools: Jenkins, Azure DevOps, GitHub Actions
+	•	Containers & Orchestration: Docker, Kubernetes
+	•	Scripting & Automation: Python, Bash, PowerShell
+	•	Monitoring & Logging: CloudWatch, SQL Profiler, Performance Monitor, Splunk
+	•	Security & Compliance: IAM, encryption, auditing, access control, HA/DR strategies
+	•	Ops & Governance: change management, troubleshooting, on-call rotation, resource monitoring
+	•	Databases: SQL Server, Epic ODBA, Snowflake, relational data warehouse, T-SQL, SSIS, SSRS
+
+PROFESSIONAL EXPERIENCE
+Database Administrator – Epic ODBA | ExxonMobil | Jul 2025 – Presen
+	•	Administered enterprise SQL Server and Epic ODBA databases ensuring 99.99 percent uptime through advanced tuning, replication, and HA/DR automation supporting mission-critical.
+	•	Configured and optimized Epic ODBA instances improving transaction throughput and query efficiency by 30 percent while maintaining compliance with data-governance and security policies
+	•	Implemented automated backups, patching, and performance baselines via PowerShell and Terraform enhancing reliability and minimizing manual interventions by 40 percent.
+	•	Designed CI/CD pipelines using Azure DevOps integrating schema versioning, validation, and rollback automation ensuring consistent deployments across environments.
+	•	Collaborated with infrastructure teams to modernize database architectures leveraging AWS RDS and Snowflake achieving improved scalability and cost optimization.
+	•	Developed and maintained database monitoring using CloudWatch and SQL Profiler reducing incident response time by 25 percent through proactive alerting and dashboards.
+	•	Implemented encryption, IAM, and auditing controls improving data protection and regulatory compliance in alignment with enterprise security standards.
+	•	Authored documentation and playbooks detailing Epic ODBA configurations, backup procedures, and troubleshooting workflows standardizing operations and supporting 24x7 on-call readiness.
+Database Administrator | Thomson Reuters | Oct 2024 – May 2025
+	•	Supported large-scale SQL Server and Snowflake systems optimizing ETL pipelines and data flows improving analytic performance and reliability across production environments.
+	•	Automated schema changes using Jenkins and GitHub Actions achieving zero-downtime deployments and maintaining synchronization across development, staging, and production databases
+	•	Built real-time monitoring dashboards in Power BI and SQL Profiler providing visibility into database health, resource usage, and query performance metrics.
+	•	Developed and tuned T-SQL and Python scripts improving job execution efficiency and enhancing maintainability for global data processing pipelines.
+	•	Executed backup and recovery strategies aligned with DR policies ensuring seamless failover and minimal recovery point objectives across data centers.
+	•	Documented architecture diagrams, schema mappings, and operational workflows enabling repeatable processes and improving onboarding efficiency for new engineers.
+
+Database Administrator | Tiger Analytics | Sep 2019 – Jul 2023
+	•	Managed enterprise SQL Server and Snowflake databases enhancing uptime, scalability, and compliance through automation and proactive performance tuning.
+	•	Developed stored procedures, triggers, and indexing strategies improving query execution by 25 percent and supporting real-time business intelligence workloads.
+	•	Implemented backup and disaster recovery configurations ensuring uninterrupted database availability during patching and system upgrades.
+	•	Applied encryption, access control, and auditing frameworks maintaining data integrity and compliance with corporate and regulatory policies.
+	•	Collaborated with DevOps teams integrating ETL processes using SSIS and Python optimizing data ingestion and transformation for analytics-ready datasets.
+	•	Maintained documentation detailing database maintenance, DR testing, and escalation procedures ensuring operational continuity and compliance alignment.
+
+EDUCATION Master of Science, Information Technology Management — Wilmington University, USA Bachelor of Computer Science — SRM University, India
+

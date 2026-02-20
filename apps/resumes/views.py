@@ -15,7 +15,6 @@ from .services import (
     extract_section, replace_section, normalize_generated_resume
 )
 from users.models import ConsultantProfile
-from jobs.models import Job
 from core.models import LLMConfig
 from prompts_app.models import Prompt
 
@@ -153,84 +152,6 @@ class ResumeTemplatePackUpdateView(AdminOrEmployeeMixin, UpdateView):
     form_class = ResumeTemplatePackForm
     template_name = 'resumes/template_pack_form.html'
     success_url = reverse_lazy('resume-template-pack-list')
-
-
-class DraftGenerateAllView(AdminOrEmployeeMixin, BaseView):
-    """POST: Generate drafts for all eligible jobs for a consultant."""
-
-    def post(self, request, pk):
-        consultant_profile = get_object_or_404(ConsultantProfile, user__pk=pk)
-        roles = consultant_profile.marketing_roles.all()
-
-        if not roles:
-            messages.error(request, "This consultant has no marketing roles assigned.")
-            return redirect('consultant-detail', pk=pk)
-
-        # Use the same queryset as the dropdown (OPEN + consultant marketing roles)
-        form = DraftGenerateForm()
-        form.fields['job'].queryset = Job.objects.filter(
-            status='OPEN',
-            marketing_roles__in=roles
-        ).distinct()
-        eligible_jobs = form.fields['job'].queryset
-
-        existing_job_ids = ResumeDraft.objects.filter(consultant=consultant_profile).values_list('job_id', flat=True)
-        jobs_to_generate = eligible_jobs.exclude(id__in=existing_job_ids)
-
-        if not jobs_to_generate.exists():
-            messages.info(request, "All eligible jobs already have drafts.")
-            return redirect('consultant-detail', pk=pk)
-
-        llm = LLMService()
-        created_count = 0
-        error_count = 0
-
-        for job in jobs_to_generate:
-            draft = ResumeDraft(
-                consultant=consultant_profile,
-                job=job,
-                status=ResumeDraft.Status.PROCESSING,
-                created_by=request.user,
-            )
-            user_prompt = llm._build_prompt(job, consultant_profile)
-            draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
-            draft.llm_user_prompt = user_prompt
-            draft.llm_input_summary = build_input_summary(job, consultant_profile)
-            config = LLMConfig.load()
-            draft.llm_request_payload = {
-                "model": config.active_model or "gpt-4o-mini",
-                "messages": [
-                    {"role": "system", "content": draft.llm_system_prompt},
-                    {"role": "user", "content": draft.llm_user_prompt},
-                ],
-                "temperature": float(config.temperature),
-                "max_tokens": config.max_output_tokens,
-            }
-            draft.save()
-
-            content, tokens, error = llm.generate_resume_content(job, consultant_profile, actor=request.user)
-            if error:
-                draft.status = ResumeDraft.Status.ERROR
-                draft.error_message = error
-                draft.save(skip_version=True)
-                error_count += 1
-            else:
-                draft.content = content
-                draft.tokens_used = tokens
-                errors, warnings = validate_resume(content)
-                draft.validation_errors = errors
-                draft.validation_warnings = warnings
-                draft.ats_score = score_ats(job.description, content)
-                draft.status = ResumeDraft.Status.REVIEW if errors else ResumeDraft.Status.DRAFT
-                draft.save(skip_version=True)
-                created_count += 1
-
-        if created_count:
-            messages.success(request, f"Generated {created_count} drafts.")
-        if error_count:
-            messages.warning(request, f"{error_count} drafts failed to generate.")
-
-        return redirect('consultant-detail', pk=pk)
 
 
 class DraftDetailView(DraftAccessMixin, DetailView):
@@ -437,8 +358,10 @@ class DraftRegenerateView(AdminOrEmployeeMixin, BaseView):
         )
         draft.save()
 
+        force_new = request.POST.get('force_new') == 'on'
+
         content, tokens, error = llm.generate_with_prompts(
-            job, consultant_profile, system_prompt, user_prompt, actor=request.user
+            job, consultant_profile, system_prompt, user_prompt, actor=request.user, force_new=force_new
         )
 
         if error:
@@ -512,7 +435,7 @@ class DraftRegenerateSectionView(AdminOrEmployeeMixin, BaseView):
 
         llm = LLMService()
         content, tokens, error = llm.generate_with_prompts(
-            job, consultant, system_prompt, user_prompt, actor=request.user
+            job, consultant, system_prompt, user_prompt, actor=request.user, force_new=True
         )
         if error:
             messages.error(request, f"Section update failed: {error}")

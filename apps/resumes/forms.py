@@ -1,6 +1,5 @@
 from django import forms
-from .models import ResumeDraft, ResumeTemplate, ResumeTemplatePack
-from users.models import ConsultantProfile
+from .models import ResumeTemplate, ResumeTemplatePack
 from jobs.models import Job
 
 
@@ -14,15 +13,6 @@ class DraftGenerateForm(forms.Form):
 
 
 # Legacy form kept for backward compat
-class ResumeGenerationForm(forms.ModelForm):
-    job = forms.ModelChoiceField(queryset=Job.objects.filter(status='OPEN'))
-    consultant = forms.ModelChoiceField(queryset=ConsultantProfile.objects.all())
-
-    class Meta:
-        model = ResumeDraft
-        fields = ['job', 'consultant']
-
-
 class ResumeTemplateForm(forms.ModelForm):
     class Meta:
         model = ResumeTemplate

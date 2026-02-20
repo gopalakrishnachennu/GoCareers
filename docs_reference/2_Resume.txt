@@ -1,0 +1,66 @@
+Community
+
+Community Health Network was created by our neighbors, for our neighbors. Over 60 years later, “community” is still the heart of our organization. It means providing our neighbors with the best care possible, backed by state-of-the-art technology. It means getting involved in the communities we serve through volunteer opportunities and benefits initiatives. It means ensuring our dedicated caregivers can learn and grow to stay at the top of their fields and to better serve our patients. And above all, it means exceptional care, simply delivered — and we couldn’t do it without you.
+
+Make a Difference
+
+The Database Administrator (Epic ODBA) is responsible for overseeing all aspects of the enterprise database environments, including the Epic Operational Database Administration. This includes implementation, configuration, maintenance, troubleshooting, security, resource monitoring, and documentation. The role ensures the highest reliability and performance of all enterprise databases while keeping systems up-to-date and aligned with cutting-edge technologies. The DBA works closely with IT staff and internal customers to develop and maintain a complex, state-of-the-art infrastructure that supports the organization’s growth and digital transformation.
+
+Key responsibilities:
+
+Investigate and assess state-of-the-art technologies; evaluate, test, and implement solutions to meet enterprise business requirements.
+
+Maintain, upgrade, and troubleshoot enterprise database environments for optimal reliability and performance.
+
+Design, administer, and manage enterprise databases, including monitoring and tuning systems.
+
+Perform Epic ODBA tasks such as database configuration, optimization, and support for Epic applications.
+
+Participate in 24x7 on-call rotation to maintain system integrity and availability.
+
+Coordinate disaster recovery processes and develop database security policies.
+
+Analyze and resolve complex database problems quickly and efficiently.
+
+Provide technical consultation to applications and operations staff.
+
+Establish and maintain positive working relationships across departments.
+
+Exceptional Skills and Qualifications
+
+Applicants for this position should be able to collaborate with others in a team setting, have excellent communication skills, and a positive attitude toward problem-solving.
+
+
+High School Diploma or GED required.
+
+Bachelor’s degree in computer science or related field preferred.
+
+3–5 years of experience supporting enterprise-scale database environments, with expert-level knowledge of current technologies and performance capabilities required.
+
+Epic Operational Database Administrator (ODBA) is strongly preferred.
+
+SQL Database Administrator (DBA) experience preferred.
+
+Ability to build effective relationships and deliver exceptional customer service.
+
+Strong teamwork and collaboration skills are important.
+
+Expertise in planning and controlling large-scale enterprise systems.
+
+Advanced troubleshooting and problem-solving capabilities.
+
+Knowledge of Epic ODBA, database security, performance tuning, and disaster recovery processes.
+
+This position will allow flexibility to work remotely. Community caregivers performing work remotely are permitted to live in the following states: Indiana, Illinois, Ohio, Michigan, Kentucky, Florida and Texas. Caregivers are not allowed to perform work remotely outside of the above states. Applicants from other states may apply; however, if hired, they will be required to relocate to one of the above states within 60 days of their employment date.
+
+Primary Location
+: Shadeland Station
+Job
+: Professional & Business Support
+Schedule
+: Full-time
+Shift
+: Day Job
+Job Type
+: Standard
+Job Level

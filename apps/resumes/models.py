@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+import uuid
 from jobs.models import Job
 from users.models import ConsultantProfile
 
@@ -32,6 +33,7 @@ class ResumeDraft(models.Model):
     validation_errors = models.JSONField(default=list, blank=True)
     validation_warnings = models.JSONField(default=list, blank=True)
     tokens_used = models.PositiveIntegerField(default=0, help_text="Total tokens consumed")
+    generation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='created_drafts'
