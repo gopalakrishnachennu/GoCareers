@@ -3,6 +3,7 @@ import re
 from django.shortcuts import get_object_or_404, redirect
 from django.views.generic import CreateView, ListView, UpdateView, View, DetailView
 from django.db.models import Q, Count, Max
+from django.db import IntegrityError
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.urls import reverse_lazy, reverse
 from django.contrib import messages
@@ -137,7 +138,15 @@ class SubmissionCreateView(LoginRequiredMixin, CreateView):
         if proof_file and form.instance.status == ApplicationSubmission.Status.IN_PROGRESS:
             form.instance.status = ApplicationSubmission.Status.APPLIED
         messages.success(self.request, MSG_SUBMISSION_SUCCESS)
-        response = super().form_valid(form)
+        try:
+            response = super().form_valid(form)
+        except IntegrityError:
+            messages.error(
+                self.request,
+                "A submission for this consultant and job already exists. "
+                "Please update the existing submission instead of creating a new one."
+            )
+            return self.form_invalid(form)
         record_submission_status_change(form.instance, form.instance.status, from_status=ApplicationSubmission.Status.IN_PROGRESS if proof_file else None)
         return response
 

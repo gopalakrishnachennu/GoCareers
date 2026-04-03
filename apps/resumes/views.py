@@ -60,6 +60,14 @@ class DraftGenerateView(AdminOrEmployeeMixin, BaseView):
             created_by=request.user,
         )
         llm = LLMService()
+        if not llm.client:
+            messages.error(
+                request,
+                "Resume generation is not available. Please configure a valid OpenAI API key "
+                "in Settings \u2192 LLM Config before generating resumes."
+            )
+            return redirect('consultant-detail', pk=pk)
+
         user_prompt = llm._build_prompt(job, consultant_profile)
         draft.llm_system_prompt = get_system_prompt_text(job, consultant_profile)
         draft.llm_user_prompt = user_prompt

@@ -19,7 +19,7 @@ Those are big enough that they need to be broken into smaller phases (and tested
 ## 1. Purpose & Concept
 
 ### 1.1 What the Website Is
-- **Product name (configurable):** Default branding is "EduConsult" / "GoCareers"; the platform name is configurable via **Settings → Platform config** (e.g. "CHENN"). All user-facing strings (login heading, home welcome, nav) use this configured site name.
+- **Product name (configurable):** Default branding is "EduConsult" / "GoCareers"; the platform name is configurable via **Settings → Platform config** (e.g. "GoCareers"). All user-facing strings (login heading, home welcome, nav) use this configured site name.
 - **One-line description:** A full-stack **consulting/talent platform** that connects **employees** (internal recruiters/hiring managers) with **consultants** (candidates). Employees post jobs, generate **AI-powered, ATS-validated resumes** for consultants, submit applications on their behalf, and track submissions and interviews.
 - **Core value:** Centralized job management, AI resume generation with ATS scoring, submission tracking with proof upload, and role-based dashboards (Admin, Employee, Consultant).
 
@@ -141,7 +141,7 @@ Those are big enough that they need to be broken into smaller phases (and tested
 
 ### 5.5 Key Screens
 - **Home:** Landing + login CTA; uses `MSG_HOME_WELCOME` and `SITE_TAGLINE` (from platform config or constants).
-- **Login:** Card with `MSG_LOGIN_HEADING` (e.g. "Login to CHENN"), username/password, Sign In, Forgot Password.
+- **Login:** Card with `MSG_LOGIN_HEADING` (e.g. "Login to GoCareers"), username/password, Sign In, Forgot Password.
 - **Admin dashboard:** KPI cards (jobs, consultants, employees, applications), recent jobs/applications, quick actions (Post Job, Add Consultant, Analytics, Employees).
 - **Employee dashboard:** My jobs, applications for my jobs, quick actions (Post Job, Bulk Upload, All Applications, Analytics).
 - **Consultant dashboard:** Application counts, pipeline snapshot (Draft / In Progress / Submitted), application tracking columns, recent applications, interviews, saved jobs, quick actions.
@@ -229,7 +229,7 @@ This is **not fully implemented yet**, but partial scaffolding exists and the re
     - `resumes.ResumeDraft`
     - `interviews_app.Interview` (and any other core models we want tenant-scoped).
   - Backfill migration:
-    - Create a default `Organisation` (e.g. "CHENN Default").
+    - Create a default `Organisation` (e.g. "GoCareers Default").
     - Set `User.organisation` where empty → default org.
     - Set:
       - `Job.organisation` → `job.posted_by.organisation` or default.
@@ -257,7 +257,7 @@ This is **not fully implemented yet**, but partial scaffolding exists and the re
   - Theming:
     - Use `Organisation.primary_color` / `accent_color` to drive CSS variables or Tailwind utility overrides, so each org has its own brand colors, logo, and title, without changing templates.
 
-This section should be the reference for any future work to turn CHENN into a multi-tenant, white-label SaaS offering. No code today assumes multiple organisations, so the current behavior is still single-tenant until Phase A/B are implemented.
+This section should be the reference for any future work to turn GoCareers into a multi-tenant, white-label SaaS offering. No code today assumes multiple organisations, so the current behavior is still single-tenant until Phase A/B are implemented.
 
 ### 10.2 Future: IMAP Email Parsing & Auto-Status Updates
 
@@ -334,7 +334,7 @@ This is the planned design for integrating a Gmail inbox (or similar IMAP accoun
     - Only apply when confidence ≥ configured threshold; otherwise leave as review-only.
   - This phase is **optional** and can be turned off entirely to keep token usage near-zero.
 
-This section should guide any future implementation of IMAP-based email parsing and auto-status updates, ensuring it is introduced in a **rules-first, low-token** way that matches CHENN’s existing submissions, status history, and analytics. No email parsing code is currently active; all of the above is a design for later phases.
+This section should guide any future implementation of IMAP-based email parsing and auto-status updates, ensuring it is introduced in a **rules-first, low-token** way that matches GoCareers’s existing submissions, status history, and analytics. No email parsing code is currently active; all of the above is a design for later phases.
 
 ---
 

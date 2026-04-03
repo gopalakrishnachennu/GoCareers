@@ -26,7 +26,7 @@ def _check_job_url(url: str) -> bool:
     url = _normalize_url(url)
     try:
         ctx = ssl.create_default_context()
-        req = Request(url, headers={"User-Agent": "CHENN-job-url-checker/1.0"})
+        req = Request(url, headers={"User-Agent": "GoCareers-job-url-checker/1.0"})
         req.get_method = lambda: "HEAD"
         try:
             resp = urlopen(req, context=ctx, timeout=5)

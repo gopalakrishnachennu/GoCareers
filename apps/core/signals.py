@@ -19,7 +19,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # IMAP poller
     task_name = "core.tasks.poll_email_ingest_task"
-    periodic_name = "CHENN: IMAP email ingestion poller"
+    periodic_name = "GoCareers: IMAP email ingestion poller"
 
     enabled = bool(instance.email_ingest_enabled and instance.email_auto_poll_enabled)
     seconds = int(instance.email_poll_interval_seconds or 60)
@@ -39,7 +39,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # Weekly executive report – always configured, can be disabled via PeriodicTask admin if needed.
     weekly_task_name = "core.tasks.send_weekly_executive_report_task"
-    weekly_name = "CHENN: Weekly Executive Report"
+    weekly_name = "GoCareers: Weekly Executive Report"
     # Every Monday at 08:00 (server timezone)
     cron, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
@@ -59,7 +59,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # Company link validator – daily at 03:00
     companies_task_name = "companies.tasks.validate_company_links_task"
-    companies_name = "CHENN: Validate Company Links"
+    companies_name = "GoCareers: Validate Company Links"
     companies_cron, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
         hour="3",
@@ -78,7 +78,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # Job URL validator – daily at 04:00
     jobs_task_name = "jobs.tasks.validate_job_urls_task"
-    jobs_name = "CHENN: Validate Job URLs"
+    jobs_name = "GoCareers: Validate Job URLs"
     jobs_cron, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
         hour="4",
@@ -97,7 +97,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # Re-enrich stale companies – every 30 days (1st of month at 05:00)
     re_enrich_task_name = "companies.tasks.re_enrich_stale_companies_task"
-    re_enrich_name = "CHENN: Re-enrich Stale Companies"
+    re_enrich_name = "GoCareers: Re-enrich Stale Companies"
     re_enrich_cron, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
         hour="5",
@@ -116,7 +116,7 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
 
     # Full re-enrich all companies – every 90 days (1st of Jan, Apr, Jul, Oct at 06:00)
     full_enrich_task_name = "companies.tasks.full_re_enrich_companies_task"
-    full_enrich_name = "CHENN: Full Re-enrich All Companies"
+    full_enrich_name = "GoCareers: Full Re-enrich All Companies"
     full_enrich_cron, _ = CrontabSchedule.objects.get_or_create(
         minute="0",
         hour="6",

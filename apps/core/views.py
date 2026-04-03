@@ -1,6 +1,7 @@
 from django.shortcuts import render, redirect
 from django.views.generic import TemplateView, UpdateView, View, ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.conf import settings
 from django.db.models import Count, Q, Sum
 from django.urls import reverse_lazy
 from django.utils import timezone
@@ -333,6 +334,23 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+
+        # Security warnings for admin
+        warnings = []
+        if not settings.LLM_ENCRYPTION_KEY:
+            warnings.append(
+                "LLM_ENCRYPTION_KEY is not set in .env. API keys and IMAP passwords "
+                "are encrypted with a key derived from SECRET_KEY, which is less secure. "
+                "Set a dedicated Fernet key for production."
+            )
+        llm_config = LLMConfig.load()
+        if not decrypt_value(llm_config.encrypted_api_key):
+            warnings.append(
+                "No OpenAI API key is configured. Resume generation will not work. "
+                "Go to Settings \u2192 LLM Config to set one."
+            )
+        context['admin_warnings'] = warnings
+
         # Top-level KPIs
         context['total_jobs'] = Job.objects.count()
         context['active_jobs'] = Job.objects.filter(status=Job.Status.OPEN).count()

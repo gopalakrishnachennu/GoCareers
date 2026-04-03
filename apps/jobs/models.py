@@ -79,9 +79,15 @@ class Job(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    def save(self, *args, **kwargs):
+        # Auto-sync legacy company name from company_obj FK
+        if self.company_obj_id and self.company_obj:
+            self.company = self.company_obj.name
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.title
-    
+
     class Meta:
         ordering = ['-created_at']
 

@@ -291,7 +291,7 @@ def fetch_unseen_and_process(dry_run: bool = False, max_messages: int = 20) -> d
                 # Optional email notifications (best-effort)
                 try:
                     from django.core.mail import send_mail
-                    subject_line = f"CHENN: Application auto-updated → {detected_status}"
+                    subject_line = f"GoCareers: Application auto-updated → {detected_status}"
                     body_line = (
                         f"Submission #{matched_submission.pk} was auto-updated by email ingestion.\n"
                         f"New status: {detected_status}\n"

@@ -44,7 +44,7 @@ def _check_url(url: str) -> bool:
     url = _normalize_url(url)
     try:
         ctx = ssl.create_default_context()
-        req = Request(url, headers={"User-Agent": "CHENN-link-checker/1.0"})
+        req = Request(url, headers={"User-Agent": "GoCareers-link-checker/1.0"})
         # Use HEAD if possible; fallback to GET
         req.get_method = lambda: "HEAD"
         try:
@@ -262,7 +262,7 @@ def _fetch_clearbit_logo(domain: str) -> str | None:
     url = f"https://logo.clearbit.com/{domain}"
     try:
         ctx = ssl.create_default_context()
-        req = Request(url, headers={"User-Agent": "CHENN-enrichment/1.0"})
+        req = Request(url, headers={"User-Agent": "GoCareers-enrichment/1.0"})
         req.get_method = lambda: "HEAD"
         resp = urlopen(req, context=ctx, timeout=5)
         status = getattr(resp, "status", None) or getattr(resp, "code", None)
@@ -284,7 +284,7 @@ def _fetch_og_meta(page_url: str, max_bytes: int = 100_000) -> dict:
         return out
     try:
         ctx = ssl.create_default_context()
-        req = Request(page_url, headers={"User-Agent": "CHENN-enrichment/1.0"})
+        req = Request(page_url, headers={"User-Agent": "GoCareers-enrichment/1.0"})
         resp = urlopen(req, context=ctx, timeout=10)
         raw = resp.read(max_bytes).decode("utf-8", errors="ignore")
     except Exception:
@@ -323,7 +323,7 @@ def _fetch_google_kg(api_key: str, query: str) -> dict:
     try:
         params = urlencode({"query": query[:100], "key": api_key, "types": "Organization", "limit": 1})
         url = f"https://kgsearch.googleapis.com/v1/entities:search?{params}"
-        req = Request(url, headers={"User-Agent": "CHENN-enrichment/1.0"})
+        req = Request(url, headers={"User-Agent": "GoCareers-enrichment/1.0"})
         resp = urlopen(req, timeout=8)
         data = json.loads(resp.read().decode("utf-8"))
         items = data.get("itemListElement") or []
@@ -355,7 +355,7 @@ def _fetch_hunter(api_key: str, domain: str) -> dict:
     try:
         params = urlencode({"domain": domain, "api_key": api_key})
         url = f"https://api.hunter.io/v2/companies/find?{params}"
-        req = Request(url, headers={"User-Agent": "CHENN-enrichment/1.0"})
+        req = Request(url, headers={"User-Agent": "GoCareers-enrichment/1.0"})
         resp = urlopen(req, timeout=10)
         data = json.loads(resp.read().decode("utf-8"))
         d = data.get("data") or {}
@@ -391,7 +391,7 @@ def _fetch_apollo(api_key: str, domain: str) -> dict:
         req = Request(
             url,
             headers={
-                "User-Agent": "CHENN-enrichment/1.0",
+                "User-Agent": "GoCareers-enrichment/1.0",
                 "x-api-key": api_key,
                 "Content-Type": "application/json",
             },

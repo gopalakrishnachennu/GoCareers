@@ -109,7 +109,7 @@ def send_weekly_executive_report_task():
         p.drawString(40, y, text)
         y -= dy
 
-    line("CHENN Weekly Executive Report", bold=True)
+    line("GoCareers Weekly Executive Report", bold=True)
     line(now.strftime("Generated on %Y-%m-%d %H:%M %Z"))
     y -= 10
 
@@ -149,10 +149,10 @@ def send_weekly_executive_report_task():
     pdf_bytes = buffer.getvalue()
     buffer.close()
 
-    subject = "CHENN Weekly Executive Report"
+    subject = "GoCareers Weekly Executive Report"
     body = (
         "Attached is the weekly executive report summarising placements, pipeline, bench, "
-        "and submission quality. This file was generated automatically by CHENN."
+        "and submission quality. This file was generated automatically by GoCareers."
     )
     email = EmailMessage(subject, body, to=recipients)
     filename = now.strftime("chenn-weekly-report-%Y%m%d.pdf")
