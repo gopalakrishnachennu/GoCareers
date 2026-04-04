@@ -5,14 +5,15 @@ from datetime import date, datetime, timedelta, timezone as dt_timezone
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, CreateView, UpdateView, DetailView, TemplateView, View
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django import forms
 from django.http import HttpResponse
 from django.contrib import messages
 from django.db.models import Count
 
-from .models import Interview
+from .models import Interview, InterviewFeedback
+from .forms import InterviewFeedbackForm
 from submissions.models import ApplicationSubmission
 from users.models import User
 from core.models import PlatformConfig
@@ -82,7 +83,7 @@ class InterviewForm(forms.ModelForm):
         model = Interview
         # Keep only what the consultant really needs to choose.
         # Job title / company / location are always taken from the selected submission's job.
-        fields = ['submission', 'round', 'scheduled_at', 'status', 'notes']
+        fields = ['submission', 'round', 'scheduled_at', 'status', 'notes', 'video_link']
         widgets = {
             'scheduled_at': forms.DateTimeInput(
                 format='%Y-%m-%d %H:%M',
@@ -315,18 +316,139 @@ class InterviewUpdateView(ConsultantOnlyMixin, UpdateView):
         return redirect(self.success_url)
 
 
+def _interview_detail_queryset(request):
+    qs = Interview.objects.select_related('submission', 'consultant', 'consultant__user')
+    config = PlatformConfig.load()
+    if request.user.role == User.Role.CONSULTANT and not config.enable_consultant_global_interview_calendar:
+        qs = qs.filter(consultant=request.user.consultant_profile)
+    return qs
+
+
 class InterviewDetailView(InterviewListAccessMixin, DetailView):
     model = Interview
     template_name = 'interviews/interview_detail.html'
     context_object_name = 'interview'
 
     def get_queryset(self):
-        qs = Interview.objects.select_related('submission', 'consultant', 'consultant__user')
-        config = PlatformConfig.load()
-        # Without the global flag, consultants may only see their own interviews.
-        if self.request.user.role == User.Role.CONSULTANT and not config.enable_consultant_global_interview_calendar:
-            qs = qs.filter(consultant=self.request.user.consultant_profile)
-        return qs
+        return _interview_detail_queryset(self.request)
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        interview = self.object
+        context['interview_feedbacks'] = (
+            interview.feedbacks.select_related('author').order_by('-created_at')[:50]
+        )
+        u = self.request.user
+        if u.is_superuser or u.role in (User.Role.ADMIN, User.Role.EMPLOYEE):
+            context['feedback_form'] = InterviewFeedbackForm()
+        return context
+
+
+class InterviewFeedbackCreateView(LoginRequiredMixin, UserPassesTestMixin, CreateView):
+    """Phase 3: staff scorecard after an interview."""
+
+    model = InterviewFeedback
+    form_class = InterviewFeedbackForm
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or u.role in (User.Role.ADMIN, User.Role.EMPLOYEE)
+
+    def get(self, request, *args, **kwargs):
+        return redirect('interview-detail', pk=kwargs['pk'])
+
+    def form_valid(self, form):
+        interview = get_object_or_404(_interview_detail_queryset(self.request), pk=self.kwargs['pk'])
+        form.instance.interview = interview
+        form.instance.author = self.request.user
+        messages.success(self.request, 'Interview feedback saved.')
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse('interview-detail', kwargs={'pk': self.kwargs['pk']})
+
+
+def _ics_escape(s):
+    if s is None:
+        return ''
+    return (
+        str(s)
+        .replace('\\', '\\\\')
+        .replace(';', '\\;')
+        .replace(',', '\\,')
+        .replace('\r\n', '\n')
+        .replace('\n', '\\n')
+    )
+
+
+def _fmt_utc(dt):
+    if not dt:
+        return ''
+    if timezone.is_naive(dt):
+        dt = timezone.make_aware(dt, timezone.get_default_timezone())
+    dt = dt.astimezone(dt_timezone.utc)
+    return dt.strftime('%Y%m%dT%H%M%SZ')
+
+
+def _build_ics_for_interviews(interviews):
+    lines = [
+        'BEGIN:VCALENDAR',
+        'VERSION:2.0',
+        'PRODID:-//Consulting//Interview//EN',
+        'CALSCALE:GREGORIAN',
+        'METHOD:PUBLISH',
+    ]
+    for inv in interviews:
+        uid = f'interview-{inv.pk}@consulting'
+        dtstart = _fmt_utc(inv.scheduled_at)
+        end_dt = inv.scheduled_at + timedelta(hours=1) if inv.scheduled_at else None
+        dtend = _fmt_utc(end_dt)
+        summary = _ics_escape(f'Interview: {inv.job_title} @ {inv.company}')
+        loc = _ics_escape(inv.location or '')
+        desc = _ics_escape(inv.notes or '')
+        video = (getattr(inv, 'video_link', None) or '').strip()
+        vevent = [
+            'BEGIN:VEVENT',
+            f'UID:{uid}',
+            f'DTSTAMP:{_fmt_utc(timezone.now())}',
+            f'DTSTART:{dtstart}',
+            f'DTEND:{dtend}',
+            f'SUMMARY:{summary}',
+            f'LOCATION:{loc}',
+            f'DESCRIPTION:{desc}',
+        ]
+        if video:
+            # RFC 5545 URL property — many clients open this for video meetings
+            vevent.append(f'URL:{_ics_escape(video)}')
+        vevent.append('END:VEVENT')
+        lines.extend(vevent)
+    lines.append('END:VCALENDAR')
+    return '\r\n'.join(lines)
+
+
+class InterviewICSExportView(InterviewListAccessMixin, View):
+    """Single interview as .ics (Outlook, Google Calendar, Apple Calendar)."""
+
+    def get(self, request, pk):
+        interview = get_object_or_404(_interview_detail_queryset(request), pk=pk)
+        body = _build_ics_for_interviews([interview])
+        resp = HttpResponse(body, content_type='text/calendar; charset=utf-8')
+        resp['Content-Disposition'] = f'attachment; filename="interview-{pk}.ics"'
+        return resp
+
+
+class InterviewCalendarICSFeedView(InterviewListAccessMixin, View):
+    """Upcoming interviews (next ~180 days) as one calendar file."""
+
+    def get(self, request):
+        qs = _get_interview_list_queryset(request)
+        start = timezone.now() - timedelta(days=1)
+        end = timezone.now() + timedelta(days=180)
+        qs = qs.filter(scheduled_at__gte=start, scheduled_at__lte=end).order_by('scheduled_at')
+        body = _build_ics_for_interviews(list(qs[:300]))
+        resp = HttpResponse(body, content_type='text/calendar; charset=utf-8')
+        resp['Content-Disposition'] = 'attachment; filename="interviews.ics"'
+        return resp
 
 
 class InterviewCalendarView(InterviewListAccessMixin, TemplateView):

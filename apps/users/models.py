@@ -38,6 +38,37 @@ class User(AbstractUser):
             self.role = self.Role.ADMIN
         return super().save(*args, **kwargs)
 
+
+class UserEmailNotificationPreferences(models.Model):
+    """Per-user toggles for outbound email (Phase 3). In-app notifications are separate."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='email_notification_preferences',
+    )
+    email_submissions = models.BooleanField(
+        default=True,
+        help_text=_("Email when application status or pipeline events affect you."),
+    )
+    email_interviews = models.BooleanField(
+        default=True,
+        help_text=_("Email about interviews and scheduling."),
+    )
+    email_jobs = models.BooleanField(
+        default=True,
+        help_text=_("Email about job postings and auto-close notices."),
+    )
+    email_system = models.BooleanField(
+        default=True,
+        help_text=_("Email for system and account messages."),
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Email prefs for {self.user_id}"
+
+
 class MarketingRole(models.Model):
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=120, unique=True, blank=True)
@@ -87,6 +118,21 @@ class ConsultantProfile(models.Model):
         null=True,
         blank=True,
         help_text=_("Override global setting for matching the most recent role title to the JD title.")
+    )
+    available_from = models.DateField(
+        null=True,
+        blank=True,
+        help_text=_("Earliest date this consultant can start a new engagement."),
+    )
+    notice_period = models.CharField(
+        max_length=80,
+        blank=True,
+        help_text=_("e.g. 2 weeks, immediate, 30 days."),
+    )
+    onboarding_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=_("Set when the consultant finishes the onboarding wizard."),
     )
 
     def save(self, *args, **kwargs):

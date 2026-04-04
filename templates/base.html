@@ -374,8 +374,31 @@
             </button>
         </div>
         <div class="nav-menu hidden lg:flex flex-1 lg:items-center flex-col lg:flex-row pt-4 lg:pt-0 lg:gap-6 min-w-0 lg:order-2">
-            <div class="flex flex-wrap items-center gap-1 lg:gap-2">
-                {% if user.is_authenticated %}
+            {% if user.is_authenticated %}
+            <!-- Mobile: HTMX search at top of hamburger menu (separate targets from desktop) -->
+            <div class="relative w-full lg:hidden pb-3 mb-2 border-b border-white/15">
+                <input type="search" name="q" id="global-search-input-mobile" autocomplete="off" placeholder="Search jobs, people, companies…" aria-label="Global search"
+                    class="w-full rounded-lg border border-white/25 bg-white/10 px-3 py-2.5 text-sm text-white placeholder:text-blue-200/90 focus:outline-none focus:ring-2 focus:ring-white/40"
+                    hx-get="{% url 'global-search-partial' %}"
+                    hx-trigger="keyup changed delay:450ms"
+                    hx-target="#global-search-results-mobile"
+                    hx-include="this" />
+                <div id="global-search-results-mobile"
+                    class="absolute left-0 right-0 top-full z-[60] mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white text-gray-900 shadow-xl"></div>
+            </div>
+            {% endif %}
+            {% if user.is_authenticated %}
+            <div class="flex flex-wrap items-center gap-1 lg:gap-2 w-full lg:w-auto">
+                <div class="relative hidden lg:block w-full lg:flex-1 lg:min-w-[12rem] lg:max-w-md lg:order-first">
+                    <input type="search" name="q" id="global-search-input" autocomplete="off" placeholder="Search jobs, people, companies…" aria-label="Global search"
+                        class="w-full rounded-lg border border-white/25 bg-white/10 px-3 py-2 text-sm text-white placeholder:text-blue-200/90 focus:outline-none focus:ring-2 focus:ring-white/40"
+                        hx-get="{% url 'global-search-partial' %}"
+                        hx-trigger="keyup changed delay:450ms"
+                        hx-target="#global-search-results"
+                        hx-include="this" />
+                    <div id="global-search-results"
+                        class="absolute left-0 right-0 top-full z-50 mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white text-gray-900 shadow-xl"></div>
+                </div>
                 {% with url_name=request.resolver_match.url_name %}
 
                 {% if user.is_superuser or user.role == 'ADMIN' %}
@@ -388,6 +411,8 @@
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'company-list' or url_name == 'company-detail' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Companies</a>
                 <a href="{% url 'submission-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Applications</a>
+                <a href="{% url 'submission-quick-submit' %}"
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-quick-submit' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Quick submit</a>
                 <a href="{% url 'interview-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'interview-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Interviews</a>
                 <a href="{% url 'interview-calendar' %}"
@@ -395,7 +420,7 @@
                 <a href="{% url 'analytics-dashboard' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'analytics-dashboard' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Analytics</a>
                 <a href="{% url 'inbox' %}"
-                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages</a>
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages{% if unread_message_count %}<span class="inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}</a>
                 <a href="{% url 'consultant-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'consultant-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Consultants</a>
                 <a href="{% url 'employee-list' %}"
@@ -411,12 +436,14 @@
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'job-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Jobs</a>
                 <a href="{% url 'submission-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Applications</a>
+                <a href="{% url 'submission-quick-submit' %}"
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-quick-submit' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Quick submit</a>
                 <a href="{% url 'interview-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'interview-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Interviews</a>
                 <a href="{% url 'interview-calendar' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'interview-calendar' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Calendar</a>
                 <a href="{% url 'inbox' %}"
-                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages</a>
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages{% if unread_message_count %}<span class="inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}</a>
                 <a href="{% url 'consultant-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'consultant-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Consultants</a>
                 <a href="{% url 'analytics-dashboard' %}"
@@ -432,19 +459,28 @@
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'job-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Jobs</a>
                 <a href="{% url 'submission-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Applications</a>
+                <a href="{% url 'submission-quick-submit' %}"
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-quick-submit' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Quick submit</a>
                 <a href="{% url 'interview-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'interview-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Interviews</a>
                 <a href="{% url 'inbox' %}"
-                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages</a>
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition inline-flex items-center gap-1.5 {% if url_name == 'inbox' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Messages{% if unread_message_count %}<span class="inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}</a>
                 <a href="{% url 'consultant-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'consultant-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Consultants</a>
 
                 {% endif %}
                 {% endwith %}
-                {% endif %}
             </div>
-            <div class="flex lg:hidden items-center gap-4 mt-4 pt-4 border-t border-blue-500/50 w-full">
+            {% endif %}
+            <div class="flex lg:hidden items-center gap-4 mt-4 pt-4 border-t border-blue-500/50 w-full flex-wrap">
                 {% if user.is_authenticated %}
+                <a href="{% url 'notification-list' %}"
+                    class="inline-flex items-center gap-1.5 text-blue-100 hover:text-white text-sm font-medium">
+                    Notifications
+                    {% if unread_notification_count %}<span
+                        class="inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_notification_count }}</span>{% endif %}
+                </a>
+                <a href="{% url 'email-notification-preferences' %}" class="text-blue-100 hover:text-white text-sm">Email prefs</a>
                 <a href="{% url 'password_change' %}" class="text-blue-100 hover:text-white text-sm">Change password</a>
                 <form action="{% url 'logout' %}" method="post" class="inline">
                     {% csrf_token %}
@@ -455,8 +491,20 @@
                 {% endif %}
             </div>
         </div>
-        <div class="hidden lg:flex items-center ml-auto flex-shrink-0">
+        <div class="hidden lg:flex items-center ml-auto flex-shrink-0 gap-2">
             {% if user.is_authenticated %}
+            <a href="{% url 'notification-list' %}"
+                class="relative inline-flex items-center justify-center h-10 w-10 rounded-full bg-blue-700/80 text-white border border-blue-500 hover:bg-blue-800 transition"
+                aria-label="Notifications">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                </svg>
+                {% if unread_notification_count %}
+                <span
+                    class="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] flex items-center justify-center rounded-full bg-red-500 text-[10px] font-bold text-white px-0.5">{{ unread_notification_count }}</span>
+                {% endif %}
+            </a>
             <div class="relative" x-data="{ profileOpen: false }" @keydown.escape.window="profileOpen = false">
                 <button type="button"
                     @click="profileOpen = !profileOpen"
@@ -488,6 +536,10 @@
                         </a>
                         {% endif %}
 
+                        <a href="{% url 'email-notification-preferences' %}"
+                            class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                            Email notifications
+                        </a>
                         <a href="{% url 'password_change' %}"
                             class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
                             Change password
@@ -560,6 +612,7 @@
         });
     })();
 </script>
+{% block extra_js %}{% endblock %}
 
 </body>
 

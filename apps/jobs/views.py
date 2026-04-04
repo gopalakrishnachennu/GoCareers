@@ -385,3 +385,33 @@ class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             return redirect('job-list')
         
         return render(request, 'jobs/job_bulk_upload.html', {'form': form})
+
+
+class JobDuplicateCheckView(LoginRequiredMixin, EmployeeRequiredMixin, View):
+    """HTMX: possible duplicate jobs while editing the create/update form."""
+
+    def get(self, request, *args, **kwargs):
+        title = request.GET.get("title", "").strip()
+        company = request.GET.get("company", "").strip()
+        description = request.GET.get("description", "")
+        exclude = request.GET.get("exclude")
+        exclude_id = int(exclude) if exclude and str(exclude).isdigit() else None
+        has_title = bool(title)
+        has_company = bool(company)
+        if not has_title or not has_company:
+            return render(
+                request,
+                "jobs/job_duplicate_fragment.html",
+                {"dups": [], "has_title": has_title, "has_company": has_company},
+            )
+        dups = find_potential_duplicate_jobs(
+            title=title,
+            company=company,
+            description=description,
+            exclude_job_id=exclude_id,
+        )
+        return render(
+            request,
+            "jobs/job_duplicate_fragment.html",
+            {"dups": dups, "has_title": has_title, "has_company": has_company},
+        )

@@ -52,8 +52,11 @@
                 </div>
 
                 <div class="p-8">
-                    <form method="post">
+                    <form method="post" id="job-form">
                         {% csrf_token %}
+                        {% if form.instance.pk %}
+                        <input type="hidden" name="exclude" value="{{ form.instance.pk }}" />
+                        {% endif %}
 
                         {% if form.non_field_errors %}
                         <div class="bg-red-50 text-red-700 p-4 mb-6 rounded border border-red-200">
@@ -137,6 +140,14 @@
                                 {{ form.description|add_class:"form-input form-textarea" }}
                                 <p class="text-sm text-gray-500 mt-1">Full job description text.</p>
                                 {{ form.description.errors }}
+                            </div>
+
+                            <div id="job-duplicate-results" class="rounded-xl border border-gray-200 bg-gray-50/80 p-4 min-h-[3rem]"
+                                hx-get="{% url 'job-duplicate-check' %}"
+                                hx-include="#job-form"
+                                hx-trigger="keyup changed delay:750ms from:#id_title, keyup changed delay:750ms from:#id_company, changed delay:750ms from:#id_description"
+                                hx-swap="innerHTML">
+                                <p class="text-xs text-gray-500">We’ll flag similar jobs here as you type (title, company, description).</p>
                             </div>
 
                             <!-- METADATA -->

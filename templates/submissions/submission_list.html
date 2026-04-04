@@ -28,7 +28,13 @@
                 Track how candidates are progressing from claim to interview, offer, or rejection.
             </p>
         </div>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 flex-wrap">
+            {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' or request.user.role == 'CONSULTANT' %}
+            <a href="{% url 'submission-kanban' %}"
+                class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm">
+                Pipeline board
+            </a>
+            {% endif %}
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
             <a href="{% url 'email-event-list' %}"
                 class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm flex items-center gap-2">

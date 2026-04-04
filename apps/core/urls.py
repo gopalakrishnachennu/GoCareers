@@ -1,6 +1,8 @@
 from django.urls import path
 from .views import (
     home,
+    GlobalSearchView,
+    GlobalSearchPartialView,
     PlatformConfigView,
     DataPipelineDashboardView,
     SystemStatusView,
@@ -11,6 +13,9 @@ from .views import (
     AuditLogListView,
     WarRoomDashboardView,
     HelpCenterView,
+    NotificationListView,
+    NotificationMarkReadView,
+    NotificationMarkAllReadView,
 )
 
 urlpatterns = [
@@ -25,4 +30,9 @@ urlpatterns = [
     path('llm/logs/<int:pk>/', LLMLogDetailView.as_view(), name='llm-log-detail'),
     path('war-room/', WarRoomDashboardView.as_view(), name='war-room'),
     path('help/', HelpCenterView.as_view(), name='settings-help'),
+    path('search/', GlobalSearchView.as_view(), name='global-search'),
+    path('search/partial/', GlobalSearchPartialView.as_view(), name='global-search-partial'),
+    path('notifications/', NotificationListView.as_view(), name='notification-list'),
+    path('notifications/read-all/', NotificationMarkAllReadView.as_view(), name='notification-mark-all-read'),
+    path('notifications/<int:pk>/read/', NotificationMarkReadView.as_view(), name='notification-mark-read'),
 ]

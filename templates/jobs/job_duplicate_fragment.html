@@ -1,0 +1,17 @@
+{% if not has_title or not has_company %}
+<p class="text-xs text-gray-500">Enter both title and company to check for similar postings.</p>
+{% elif not dups %}
+<p class="text-xs text-emerald-700">No close matches found for this title and company.</p>
+{% else %}
+<div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+    <p class="font-semibold text-amber-900 mb-2">Possible duplicates — review before saving</p>
+    <ul class="space-y-2">
+        {% for row in dups %}
+        <li class="flex flex-wrap items-baseline justify-between gap-2">
+            <a href="{% url 'job-detail' pk=row.job.pk %}" class="text-blue-700 hover:underline font-medium">{{ row.job.title }}</a>
+            <span class="text-xs text-amber-800">{{ row.job.company }} · score {{ row.overall_score|floatformat:2 }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}

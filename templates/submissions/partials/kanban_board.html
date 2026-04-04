@@ -1,0 +1,27 @@
+<div id="kanban-root" class="kanban-root" data-move-url="{% url 'submission-kanban-move' %}">
+    {% csrf_token %}
+    <div class="flex gap-3 overflow-x-auto pb-4 items-start">
+        {% for col in kanban_columns %}
+        <div class="kanban-column flex-shrink-0 w-72 rounded-xl bg-gray-100 border border-gray-200 flex flex-col max-h-[75vh]"
+            data-status="{{ col.code }}">
+            <div class="px-3 py-2 border-b border-gray-200 bg-white text-xs font-bold text-gray-600 uppercase tracking-wide shrink-0">
+                {{ col.label }}
+                <span class="text-gray-400 font-normal">({{ col.items|length }})</span>
+            </div>
+            <div class="kanban-list flex-1 overflow-y-auto p-2 space-y-2 min-h-[140px]">
+                {% for s in col.items %}
+                <div class="kanban-card bg-white rounded-lg border border-gray-200 p-3 shadow-sm cursor-grab active:cursor-grabbing"
+                    data-submission-id="{{ s.pk }}">
+                    <a href="{% url 'submission-detail' pk=s.pk %}"
+                        class="font-semibold text-indigo-700 hover:underline text-sm">{{ s.job.title }}</a>
+                    <p class="text-xs text-gray-500 mt-1">{{ s.job.company }}</p>
+                    <p class="text-xs text-gray-600 mt-1">{{ s.consultant.user.get_full_name|default:s.consultant.user.username }}</p>
+                </div>
+                {% empty %}
+                <p class="text-xs text-gray-400 px-1 py-2">Drop cards here</p>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>

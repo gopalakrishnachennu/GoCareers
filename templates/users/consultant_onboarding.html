@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-lg mx-auto px-4 py-10">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-8">
+        <h1 class="text-2xl font-bold text-gray-900 mb-1">Welcome — set up your profile</h1>
+        <p class="text-sm text-gray-500 mb-8">Step {{ step }} of 3</p>
+
+        {% if step == 1 %}
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="1" />
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="{{ form1.bio.id_for_label }}">{{ form1.bio.label }}</label>
+                {{ form1.bio }}
+                {% if form1.bio.errors %}<p class="text-red-600 text-sm mt-1">{{ form1.bio.errors.0 }}</p>{% endif %}
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="{{ form1.skills_text.id_for_label }}">{{ form1.skills_text.label }}</label>
+                {{ form1.skills_text }}
+                {% if form1.skills_text.help_text %}<p class="text-xs text-gray-500 mt-1">{{ form1.skills_text.help_text }}</p>{% endif %}
+                {% if form1.skills_text.errors %}<p class="text-red-600 text-sm mt-1">{{ form1.skills_text.errors.0 }}</p>{% endif %}
+            </div>
+            <button type="submit" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continue</button>
+        </form>
+        {% elif step == 2 %}
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="2" />
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="{{ form2.available_from.id_for_label }}">Available from</label>
+                {{ form2.available_from }}
+                {% if form2.available_from.errors %}<p class="text-red-600 text-sm mt-1">{{ form2.available_from.errors.0 }}</p>{% endif %}
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1" for="{{ form2.notice_period.id_for_label }}">Notice period</label>
+                {{ form2.notice_period }}
+                {% if form2.notice_period.help_text %}<p class="text-xs text-gray-500 mt-1">{{ form2.notice_period.help_text }}</p>{% endif %}
+            </div>
+            <button type="submit" class="w-full py-3 rounded-xl bg-blue-600 text-white font-semibold hover:bg-blue-700 transition">Continue</button>
+        </form>
+        {% elif step == 3 %}
+        <p class="text-gray-700 mb-6">You’re ready to use the platform. You can change these details anytime from your profile.</p>
+        <form method="post">
+            {% csrf_token %}
+            <input type="hidden" name="step" value="3" />
+            <button type="submit" class="w-full py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 transition">Finish</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

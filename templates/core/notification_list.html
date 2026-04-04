@@ -1,0 +1,49 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <h1 class="text-2xl font-bold text-gray-900">Notifications</h1>
+        {% if notifications %}
+        <form method="post" action="{% url 'notification-mark-all-read' %}">
+            {% csrf_token %}
+            <button type="submit" class="text-sm font-semibold text-blue-600 hover:text-blue-800">Mark all read</button>
+        </form>
+        {% endif %}
+    </div>
+
+    <div class="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100">
+        {% for n in notifications %}
+        <div class="p-4 flex flex-wrap gap-3 {% if not n.read_at %}bg-blue-50/40{% endif %}">
+            <div class="flex-1 min-w-0">
+                <p class="font-semibold text-gray-900">{{ n.title }}</p>
+                {% if n.body %}<p class="text-sm text-gray-600 mt-1">{{ n.body }}</p>{% endif %}
+                <p class="text-xs text-gray-400 mt-2">{{ n.created_at|date:"M j, Y g:i A" }}</p>
+                {% if n.link %}
+                <a href="{{ n.link }}" class="inline-block mt-2 text-sm font-medium text-blue-600 hover:underline">Open</a>
+                {% endif %}
+            </div>
+            {% if not n.read_at %}
+            <form method="post" action="{% url 'notification-mark-read' pk=n.pk %}">
+                {% csrf_token %}
+                <button type="submit" class="text-xs font-semibold text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg px-3 py-1.5">Mark read</button>
+            </form>
+            {% endif %}
+        </div>
+        {% empty %}
+        <div class="p-8 text-center text-gray-500">No notifications yet.</div>
+        {% endfor %}
+    </div>
+
+    {% if is_paginated %}
+    <div class="mt-6 flex justify-center gap-2">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}" class="text-sm text-blue-600">Previous</a>
+        {% endif %}
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}" class="text-sm text-blue-600">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

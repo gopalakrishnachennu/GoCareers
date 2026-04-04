@@ -140,6 +140,17 @@ class PlatformConfig(models.Model):
         help_text="When enabled, new companies are automatically queued for enrichment (Clearbit, OG, optional APIs).",
     )
 
+    # Jobs pipeline (Phase 3)
+    job_auto_close_after_days = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        help_text="If set, OPEN jobs older than this many days are closed automatically (daily task). Leave empty to disable.",
+    )
+    job_auto_close_when_link_dead = models.BooleanField(
+        default=False,
+        help_text="If enabled, OPEN jobs whose original posting URL is no longer live are closed automatically.",
+    )
+
     # Social Media
     twitter_url = models.URLField(blank=True)
     linkedin_url = models.URLField(blank=True)
@@ -185,6 +196,34 @@ class PipelineRunLog(models.Model):
 
     def __str__(self):
         return f"{self.task_name} @ {self.last_run_at}"
+
+
+class Notification(models.Model):
+    """In-app notification (Phase 3 notification center)."""
+
+    class Kind(models.TextChoices):
+        SUBMISSION = 'SUBMISSION', 'Submission'
+        INTERVIEW = 'INTERVIEW', 'Interview'
+        JOB = 'JOB', 'Job'
+        SYSTEM = 'SYSTEM', 'System'
+
+    user = models.ForeignKey('users.User', on_delete=models.CASCADE, related_name='notifications')
+    kind = models.CharField(max_length=20, choices=Kind.choices, default=Kind.SYSTEM)
+    title = models.CharField(max_length=200)
+    body = models.TextField(blank=True)
+    link = models.CharField(max_length=500, blank=True, help_text="Relative path, e.g. /submissions/12/")
+    read_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['user', 'read_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.title} → {self.user_id}"
 
 
 class AuditLog(models.Model):

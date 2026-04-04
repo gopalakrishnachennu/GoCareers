@@ -1,6 +1,15 @@
 from django import forms
 from django.contrib.auth import get_user_model
-from .models import Experience, Education, Certification, ConsultantProfile, EmployeeProfile, MarketingRole, Department
+from .models import (
+    Experience,
+    Education,
+    Certification,
+    ConsultantProfile,
+    EmployeeProfile,
+    MarketingRole,
+    Department,
+    UserEmailNotificationPreferences,
+)
 
 User = get_user_model()
 
@@ -232,10 +241,21 @@ class ConsultantProfileEditForm(forms.ModelForm):
 
     class Meta:
         model = ConsultantProfile
-        fields = ['bio', 'base_resume_text', 'hourly_rate', 'phone', 'match_jd_title_override', 'marketing_roles', 'status']
+        fields = [
+            'bio',
+            'base_resume_text',
+            'hourly_rate',
+            'phone',
+            'match_jd_title_override',
+            'marketing_roles',
+            'status',
+            'available_from',
+            'notice_period',
+        ]
         widgets = {
             'bio': forms.Textarea(attrs={'rows': 3}),
             'base_resume_text': forms.Textarea(attrs={'rows': 6}),
+            'available_from': forms.DateInput(attrs={'type': 'date'}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -264,6 +284,56 @@ class ConsultantProfileEditForm(forms.ModelForm):
             instance.save()
             self.save_m2m()
         return instance
+
+
+_ONBOARD_CTRL = (
+    'w-full border border-gray-300 rounded-lg px-3 py-2 text-gray-900 '
+    'focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500'
+)
+
+
+class ConsultantOnboardingStep1Form(forms.Form):
+    bio = forms.CharField(
+        required=False,
+        label='Bio',
+        widget=forms.Textarea(attrs={'rows': 4, 'class': _ONBOARD_CTRL}),
+    )
+    skills_text = forms.CharField(
+        required=False,
+        label='Skills',
+        help_text='Comma-separated list, e.g. Python, Django, AWS',
+        widget=forms.TextInput(attrs={'class': _ONBOARD_CTRL}),
+    )
+
+
+class ConsultantOnboardingStep2Form(forms.ModelForm):
+    class Meta:
+        model = ConsultantProfile
+        fields = ['available_from', 'notice_period']
+        widgets = {
+            'available_from': forms.DateInput(attrs={'type': 'date', 'class': _ONBOARD_CTRL}),
+            'notice_period': forms.TextInput(
+                attrs={'class': _ONBOARD_CTRL, 'placeholder': 'e.g. 2 weeks'}
+            ),
+        }
+
+
+class UserEmailNotificationPreferencesForm(forms.ModelForm):
+    class Meta:
+        model = UserEmailNotificationPreferences
+        fields = ['email_submissions', 'email_interviews', 'email_jobs', 'email_system']
+        labels = {
+            'email_submissions': 'Applications & pipeline',
+            'email_interviews': 'Interviews & scheduling',
+            'email_jobs': 'Jobs & postings',
+            'email_system': 'System & account',
+        }
+        widgets = {
+            'email_submissions': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 rounded border-gray-300'}),
+            'email_interviews': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 rounded border-gray-300'}),
+            'email_jobs': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 rounded border-gray-300'}),
+            'email_system': forms.CheckboxInput(attrs={'class': 'h-4 w-4 text-blue-600 rounded border-gray-300'}),
+        }
 
 
 class MarketingRoleForm(forms.ModelForm):

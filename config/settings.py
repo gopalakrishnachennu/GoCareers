@@ -75,6 +75,8 @@ TEMPLATES = [
                 'django.contrib.messages.context_processors.messages',
                 'core.context_processors.platform_settings',  # Added Platform Config
                 'config.context_processors.site_config',
+                'messaging.context_processors.unread_messages_count',
+                'core.context_processors.unread_notifications_count',
             ],
         },
     },
@@ -134,6 +136,21 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
+
+# Public site base URL for absolute links in emails (no trailing slash). Set in production.
+SITE_URL = config('SITE_URL', default='').rstrip('/')
+
+# Email — defaults suit local/dev (console). In production set EMAIL_* and typically SMTP.
+EMAIL_BACKEND = config(
+    'EMAIL_BACKEND',
+    default='django.core.mail.backends.console.EmailBackend',
+)
+EMAIL_HOST = config('EMAIL_HOST', default='')
+EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
+EMAIL_USE_TLS = config('EMAIL_USE_TLS', default=True, cast=bool)
+EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
+EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')
+DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@localhost')
 
 # --- Advanced Logging ---
 from config.logging_config import get_logging_config

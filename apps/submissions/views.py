@@ -1,7 +1,7 @@
 import csv
 import re
-from django.shortcuts import get_object_or_404, redirect
-from django.views.generic import CreateView, ListView, UpdateView, View, DetailView
+from django.shortcuts import get_object_or_404, redirect, render
+from django.views.generic import CreateView, ListView, UpdateView, View, DetailView, TemplateView
 from django.db.models import Q, Count, Max
 from django.db import IntegrityError
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
@@ -26,13 +26,14 @@ from .forms import (
     CommissionForm,
 )
 from resumes.models import Resume, ResumeDraft
-from users.models import User
+from users.models import User, ConsultantProfile
 from jobs.services import ensure_parsed_jd
 from companies.models import Company, CompanyDoNotSubmit
 from config.constants import (
     PAGINATION_SUBMISSIONS, MAX_UPLOAD_SIZE, MAX_UPLOAD_SIZE_MB,
     MSG_SUBMISSION_SUCCESS, MSG_SUBMISSION_MISMATCH, MSG_SUBMISSION_SELF_ONLY, MSG_FILE_TOO_LARGE,
 )
+from core.notification_utils import notify_submission_pipeline_event
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
@@ -157,6 +158,67 @@ class SubmissionCreateView(LoginRequiredMixin, CreateView):
         record_submission_status_change(form.instance, form.instance.status, from_status=ApplicationSubmission.Status.IN_PROGRESS if proof_file else None)
         return response
 
+
+class SubmissionQuickSubmitView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """Pick consultant + job, then jump to submission create with the latest resume draft."""
+
+    template_name = 'submissions/quick_submit.html'
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or u.role in (User.Role.ADMIN, User.Role.EMPLOYEE, User.Role.CONSULTANT)
+
+    def get(self, request):
+        from jobs.models import Job
+
+        jobs = Job.objects.filter(status=Job.Status.OPEN).order_by('-created_at')[:500]
+        if request.user.role == User.Role.CONSULTANT:
+            consultants = ConsultantProfile.objects.filter(
+                pk=request.user.consultant_profile.pk
+            ).select_related('user')
+        else:
+            consultants = (
+                ConsultantProfile.objects.filter(status=ConsultantProfile.Status.ACTIVE)
+                .select_related('user')
+                .order_by('user__first_name', 'user__last_name')[:500]
+            )
+        return render(
+            request,
+            self.template_name,
+            {'jobs': jobs, 'consultants': consultants},
+        )
+
+    def post(self, request):
+        from jobs.models import Job
+
+        job_id = request.POST.get('job_id')
+        consultant_id = request.POST.get('consultant_id')
+        if not job_id or not consultant_id:
+            messages.error(request, "Choose both a job and a consultant.")
+            return redirect('submission-quick-submit')
+        job = get_object_or_404(Job, pk=job_id)
+        if request.user.role == User.Role.CONSULTANT:
+            consultant = request.user.consultant_profile
+            if str(consultant.pk) != str(consultant_id):
+                messages.error(request, MSG_SUBMISSION_SELF_ONLY)
+                return redirect('submission-quick-submit')
+        else:
+            consultant = get_object_or_404(ConsultantProfile, pk=consultant_id)
+        draft = (
+            ResumeDraft.objects.filter(consultant=consultant, job=job)
+            .exclude(status=ResumeDraft.Status.ERROR)
+            .order_by('-version')
+            .first()
+        )
+        if not draft or not (draft.content or '').strip():
+            messages.error(
+                request,
+                "No resume draft with content found for this job. Generate a draft from the consultant profile first.",
+            )
+            return redirect('consultant-detail', pk=consultant.user.pk)
+        return redirect(f"{reverse('submission-create')}?resume_id={draft.pk}")
+
+
 class SubmissionListView(LoginRequiredMixin, ListView):
     model = ApplicationSubmission
     template_name = 'submissions/submission_list.html'
@@ -277,6 +339,12 @@ class SubmissionBulkStatusView(LoginRequiredMixin, UserPassesTestMixin, View):
             sub.status = new_status
             sub.save(update_fields=['status', 'updated_at'])
             record_submission_status_change(sub, new_status, from_status=old)
+            notify_submission_pipeline_event(
+                sub,
+                actor=request.user,
+                old_status=old,
+                new_status=new_status,
+            )
         status_label = dict(ApplicationSubmission.Status.choices).get(new_status, new_status)
         messages.success(request, f'Updated {len(ids)} application(s) to {status_label}.')
         return redirect_back()
@@ -304,6 +372,12 @@ class SubmissionInlineStatusView(LoginRequiredMixin, UserPassesTestMixin, View):
         submission.status = new_status
         submission.save(update_fields=['status', 'updated_at'])
         record_submission_status_change(submission, new_status, from_status=old_status)
+        notify_submission_pipeline_event(
+            submission,
+            actor=request.user,
+            old_status=old_status,
+            new_status=new_status,
+        )
         label = submission.get_status_display()
         messages.success(request, f'Updated status to {label}.')
         return JsonResponse({'ok': True, 'status': new_status, 'label': label})
@@ -335,6 +409,12 @@ class SubmissionUpdateView(LoginRequiredMixin, UserPassesTestMixin, UpdateView):
         response = super().form_valid(form)
         if old_status is not None and old_status != form.instance.status:
             record_submission_status_change(form.instance, form.instance.status, from_status=old_status)
+            notify_submission_pipeline_event(
+                form.instance,
+                actor=self.request.user,
+                old_status=old_status,
+                new_status=form.instance.status,
+            )
         return response
 
 
@@ -1013,3 +1093,91 @@ class CommissionUpdateView(_StaffRequiredMixin, UpdateView):
 
     def get_success_url(self):
         return reverse('commission-list')
+
+
+def _kanban_queryset(request):
+    qs = ApplicationSubmission.objects.select_related('job', 'consultant__user')
+    user = request.user
+    if user.role == User.Role.CONSULTANT:
+        qs = qs.filter(consultant=user.consultant_profile)
+    elif user.role not in (User.Role.EMPLOYEE, User.Role.ADMIN) and not user.is_superuser:
+        return ApplicationSubmission.objects.none()
+    return qs.order_by('-updated_at')
+
+
+def _kanban_context(request):
+    qs = _kanban_queryset(request)
+    kanban_columns = []
+    for code, label in ApplicationSubmission.Status.choices:
+        kanban_columns.append(
+            {
+                'code': code,
+                'label': label,
+                'items': list(qs.filter(status=code)[:200]),
+            }
+        )
+    return {'kanban_columns': kanban_columns}
+
+
+def _user_can_move_submission(user, submission):
+    if user.is_superuser or user.role in (User.Role.EMPLOYEE, User.Role.ADMIN):
+        return True
+    if user.role == User.Role.CONSULTANT and getattr(user, 'consultant_profile', None):
+        return submission.consultant_id == user.consultant_profile.pk
+    return False
+
+
+class SubmissionKanbanView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
+    template_name = 'submissions/submission_kanban.html'
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or u.role in (User.Role.CONSULTANT, User.Role.EMPLOYEE, User.Role.ADMIN)
+
+    def get_template_names(self):
+        if self.request.headers.get('HX-Request'):
+            return ['submissions/partials/kanban_board.html']
+        return [self.template_name]
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context.update(_kanban_context(self.request))
+        return context
+
+
+class SubmissionKanbanMoveView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """POST: move a submission to a new status (drag-and-drop target)."""
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or u.role in (User.Role.CONSULTANT, User.Role.EMPLOYEE, User.Role.ADMIN)
+
+    def post(self, request, *args, **kwargs):
+        pk = request.POST.get('submission_id')
+        new_status = (request.POST.get('status') or '').strip()
+        if not pk:
+            return JsonResponse({'ok': False, 'error': 'Missing submission.'}, status=400)
+        submission = get_object_or_404(ApplicationSubmission, pk=pk)
+        if not _user_can_move_submission(request.user, submission):
+            return JsonResponse({'ok': False, 'error': 'Permission denied.'}, status=403)
+        valid = {c[0] for c in ApplicationSubmission.Status.choices}
+        if new_status not in valid:
+            return JsonResponse({'ok': False, 'error': 'Invalid status.'}, status=400)
+        old = submission.status
+        if old == new_status:
+            if request.headers.get('HX-Request'):
+                return render(request, 'submissions/partials/kanban_board.html', _kanban_context(request))
+            return redirect('submission-kanban')
+        submission.status = new_status
+        submission.save(update_fields=['status', 'updated_at'])
+        record_submission_status_change(submission, new_status, from_status=old)
+        notify_submission_pipeline_event(
+            submission,
+            actor=request.user,
+            old_status=old,
+            new_status=new_status,
+        )
+        messages.success(request, f"Moved to {submission.get_status_display()}.")
+        if request.headers.get('HX-Request'):
+            return render(request, 'submissions/partials/kanban_board.html', _kanban_context(request))
+        return redirect('submission-kanban')

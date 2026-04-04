@@ -1,0 +1,72 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-[100vw] mx-auto px-4 py-6">
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900">Pipeline board</h1>
+            <p class="text-sm text-gray-500 mt-1">Drag cards between columns to update status. Changes notify the consultant when relevant.</p>
+        </div>
+        <a href="{% url 'submission-list' %}"
+            class="inline-flex items-center px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50">List view</a>
+    </div>
+    {% include 'submissions/partials/kanban_board.html' %}
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+<script>
+(function () {
+    function csrfToken() {
+        var el = document.querySelector('#kanban-root [name=csrfmiddlewaretoken]');
+        return el ? el.value : '';
+    }
+    function initKanban() {
+        var root = document.getElementById('kanban-root');
+        if (!root || typeof Sortable === 'undefined') return;
+        var moveUrl = root.dataset.moveUrl;
+        root.querySelectorAll('.kanban-list').forEach(function (el) {
+            if (el._sortableInstance) {
+                el._sortableInstance.destroy();
+            }
+            el._sortableInstance = new Sortable(el, {
+                group: 'kanban',
+                animation: 150,
+                draggable: '.kanban-card',
+                onEnd: function (evt) {
+                    var item = evt.item;
+                    var submissionId = item.dataset.submissionId;
+                    var toCol = evt.to.closest('[data-status]');
+                    if (!toCol || !submissionId) return;
+                    var newStatus = toCol.getAttribute('data-status');
+                    var fd = new FormData();
+                    fd.append('submission_id', submissionId);
+                    fd.append('status', newStatus);
+                    fd.append('csrfmiddlewaretoken', csrfToken());
+                    fetch(moveUrl, {
+                        method: 'POST',
+                        headers: { 'HX-Request': 'true' },
+                        body: fd,
+                        credentials: 'same-origin'
+                    }).then(function (r) { return r.text(); }).then(function (html) {
+                        var d = document.createElement('div');
+                        d.innerHTML = html.trim();
+                        var nw = d.querySelector('#kanban-root');
+                        if (nw && root.parentNode) {
+                            root.parentNode.replaceChild(nw, root);
+                            initKanban();
+                        }
+                    });
+                }
+            });
+        });
+    }
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initKanban);
+    } else {
+        initKanban();
+    }
+})();
+</script>
+{% endblock %}

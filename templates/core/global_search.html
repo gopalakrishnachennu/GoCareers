@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-6">
+    <h1 class="text-2xl font-bold text-gray-900 mb-4">Search</h1>
+
+    <!-- Search Form -->
+    <form method="get" class="mb-6">
+        <div class="flex gap-2">
+            <input type="text" name="q" value="{{ query }}" placeholder="Search jobs, consultants, companies, submissions..."
+                   class="flex-1 border border-gray-300 rounded-xl px-4 py-3 text-gray-900 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm"
+                   autofocus>
+            <button type="submit" class="px-6 py-3 bg-blue-600 text-white rounded-xl text-sm font-bold hover:bg-blue-700 transition">Search</button>
+        </div>
+    </form>
+
+    {% if query %}
+    <p class="text-sm text-gray-500 mb-6">
+        {% if total_results %}{{ total_results }} result{{ total_results|pluralize }} for "<strong>{{ query }}</strong>"{% else %}No results for "<strong>{{ query }}</strong>"{% endif %}
+    </p>
+
+    {% if jobs %}
+    <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Jobs ({{ jobs|length }})</h2>
+        <div class="divide-y divide-gray-100">
+            {% for job in jobs %}
+            <a href="{% url 'job-detail' pk=job.pk %}" class="flex justify-between items-center py-3 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition">
+                <div class="min-w-0">
+                    <p class="font-medium text-gray-900 truncate">{{ job.title }}</p>
+                    <p class="text-sm text-gray-500">{{ job.company }} · {{ job.location }}</p>
+                </div>
+                <span class="shrink-0 ml-2 px-2.5 py-0.5 text-xs font-medium rounded-full
+                    {% if job.status == 'OPEN' %}bg-emerald-50 text-emerald-700{% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ job.get_status_display }}
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if consultants %}
+    <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Consultants ({{ consultants|length }})</h2>
+        <div class="divide-y divide-gray-100">
+            {% for cp in consultants %}
+            <a href="{% url 'consultant-detail' pk=cp.user.pk %}" class="flex justify-between items-center py-3 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition">
+                <div class="min-w-0">
+                    <p class="font-medium text-gray-900">{{ cp.user.get_full_name|default:cp.user.username }}</p>
+                    <p class="text-sm text-gray-500 truncate">{{ cp.bio|truncatewords:15 }}</p>
+                </div>
+                <span class="shrink-0 ml-2 px-2.5 py-0.5 text-xs font-medium rounded-full
+                    {% if cp.status == 'ACTIVE' %}bg-emerald-50 text-emerald-700
+                    {% elif cp.status == 'PLACED' %}bg-blue-50 text-blue-700
+                    {% elif cp.status == 'BENCH' %}bg-amber-50 text-amber-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ cp.get_status_display }}
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if companies %}
+    <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Companies ({{ companies|length }})</h2>
+        <div class="divide-y divide-gray-100">
+            {% for c in companies %}
+            <a href="{% url 'company-detail' pk=c.pk %}" class="flex justify-between items-center py-3 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition">
+                <div class="min-w-0">
+                    <p class="font-medium text-gray-900">{{ c.name }}</p>
+                    <p class="text-sm text-gray-500">{{ c.industry|default:"" }} {{ c.domain|default:"" }}</p>
+                </div>
+                {% if c.is_blacklisted %}
+                <span class="shrink-0 ml-2 px-2.5 py-0.5 text-xs font-medium rounded-full bg-red-50 text-red-700">Blacklisted</span>
+                {% endif %}
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if submissions %}
+    <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
+        <h2 class="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">Submissions ({{ submissions|length }})</h2>
+        <div class="divide-y divide-gray-100">
+            {% for sub in submissions %}
+            <a href="{% url 'submission-detail' pk=sub.pk %}" class="flex justify-between items-center py-3 hover:bg-gray-50 -mx-2 px-2 rounded-lg transition">
+                <div class="min-w-0">
+                    <p class="font-medium text-gray-900">{{ sub.job.title }}</p>
+                    <p class="text-sm text-gray-500">{{ sub.consultant.user.get_full_name }} · {{ sub.job.company }}</p>
+                </div>
+                <span class="shrink-0 ml-2 px-2.5 py-0.5 text-xs font-medium rounded-full
+                    {% if sub.status == 'APPLIED' %}bg-blue-50 text-blue-700
+                    {% elif sub.status == 'INTERVIEW' %}bg-purple-50 text-purple-700
+                    {% elif sub.status == 'OFFER' %}bg-green-50 text-green-700
+                    {% elif sub.status == 'PLACED' %}bg-emerald-50 text-emerald-700
+                    {% elif sub.status == 'REJECTED' %}bg-red-50 text-red-700
+                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                    {{ sub.get_status_display }}
+                </span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if not total_results and query|length >= 2 %}
+    <div class="text-center py-12">
+        <p class="text-gray-500">No results found. Try a different search term.</p>
+    </div>
+    {% endif %}
+
+    {% elif query and query|length < 2 %}
+    <p class="text-sm text-gray-500">Please enter at least 2 characters to search.</p>
+    {% endif %}
+</div>
+{% endblock %}

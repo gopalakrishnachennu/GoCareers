@@ -5,6 +5,7 @@ from django.test import TestCase, Client
 from django.urls import reverse
 from users.models import User, ConsultantProfile, EmployeeProfile
 from jobs.models import Job
+from core.models import Notification
 from .models import ApplicationSubmission, Placement, Timesheet, Commission
 
 
@@ -373,3 +374,128 @@ class CommissionViewTests(_Phase1TestBase):
         }, follow=True)
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(Commission.objects.count(), 1)
+
+
+# ─────────────────────────────────────────────────────────────
+# Phase 3: Kanban pipeline (permissions + notifications)
+# ─────────────────────────────────────────────────────────────
+
+
+class KanbanPipelineSmokeTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.employee = User.objects.create_user(
+            username='emp1', password='testpass', role=User.Role.EMPLOYEE
+        )
+        self.consultant_user = User.objects.create_user(
+            username='con1',
+            password='testpass',
+            role=User.Role.CONSULTANT,
+            email='consultant@test.com',
+        )
+        self.consultant_user2 = User.objects.create_user(
+            username='con2', password='testpass', role=User.Role.CONSULTANT
+        )
+        self.profile = ConsultantProfile.objects.create(user=self.consultant_user, bio='Test')
+        self.profile2 = ConsultantProfile.objects.create(user=self.consultant_user2, bio='Test2')
+        self.job = Job.objects.create(
+            title='Dev',
+            company='Co',
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description='Work',
+            original_link='https://example.com/j',
+        )
+        self.sub = ApplicationSubmission.objects.create(
+            job=self.job,
+            consultant=self.profile,
+            status=ApplicationSubmission.Status.APPLIED,
+            submitted_by=self.employee,
+        )
+        self.sub_other = ApplicationSubmission.objects.create(
+            job=self.job,
+            consultant=self.profile2,
+            status=ApplicationSubmission.Status.APPLIED,
+            submitted_by=self.employee,
+        )
+
+    def test_kanban_employee_and_consultant_can_view_board(self):
+        self.client.login(username='emp1', password='testpass')
+        self.assertEqual(self.client.get(reverse('submission-kanban')).status_code, 200)
+        self.client.logout()
+        self.client.login(username='con1', password='testpass')
+        self.assertEqual(self.client.get(reverse('submission-kanban')).status_code, 200)
+
+    def test_kanban_move_employee_updates_status(self):
+        self.client.login(username='emp1', password='testpass')
+        resp = self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'INTERVIEW'},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.sub.refresh_from_db()
+        self.assertEqual(self.sub.status, ApplicationSubmission.Status.INTERVIEW)
+
+    def test_kanban_move_consultant_can_move_own_submission(self):
+        self.client.login(username='con1', password='testpass')
+        resp = self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'INTERVIEW'},
+        )
+        self.assertEqual(resp.status_code, 302)
+        self.sub.refresh_from_db()
+        self.assertEqual(self.sub.status, ApplicationSubmission.Status.INTERVIEW)
+
+    def test_kanban_move_consultant_cannot_move_peer_submission(self):
+        self.client.login(username='con1', password='testpass')
+        resp = self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub_other.pk, 'status': 'INTERVIEW'},
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.sub_other.refresh_from_db()
+        self.assertEqual(self.sub_other.status, ApplicationSubmission.Status.APPLIED)
+
+    def test_kanban_move_invalid_status_returns_400(self):
+        self.client.login(username='emp1', password='testpass')
+        resp = self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'NOT_A_STATUS'},
+        )
+        self.assertEqual(resp.status_code, 400)
+
+    def test_kanban_move_staff_creates_in_app_notification_for_consultant(self):
+        Notification.objects.filter(user=self.consultant_user).delete()
+        self.client.login(username='emp1', password='testpass')
+        self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'INTERVIEW'},
+        )
+        self.assertEqual(
+            Notification.objects.filter(user=self.consultant_user).count(),
+            1,
+        )
+        note = Notification.objects.get(user=self.consultant_user)
+        self.assertEqual(note.kind, Notification.Kind.SUBMISSION)
+        self.assertIn(str(self.sub.pk), note.link)
+
+    def test_kanban_move_consultant_own_card_does_not_notify_self(self):
+        Notification.objects.filter(user=self.consultant_user).delete()
+        self.client.login(username='con1', password='testpass')
+        self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'INTERVIEW'},
+        )
+        self.assertFalse(
+            Notification.objects.filter(user=self.consultant_user).exists(),
+        )
+
+    def test_kanban_move_hx_returns_board_partial(self):
+        self.client.login(username='emp1', password='testpass')
+        resp = self.client.post(
+            reverse('submission-kanban-move'),
+            {'submission_id': self.sub.pk, 'status': 'IN_PROGRESS'},
+            HTTP_HX_REQUEST='true',
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'kanban-root')

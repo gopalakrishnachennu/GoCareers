@@ -1,12 +1,13 @@
 from django.urls import path
 from .views import (
     JobListView, JobDetailView, JobCreateView, JobUpdateView, JobDeleteView,
-    JobBulkUploadView, JobParseJDView, JobExportCSVView,
+    JobBulkUploadView, JobParseJDView, JobExportCSVView, JobDuplicateCheckView,
 )
 
 urlpatterns = [
     path('', JobListView.as_view(), name='job-list'),
     path('export/', JobExportCSVView.as_view(), name='job-export-csv'),
+    path('duplicate-check/', JobDuplicateCheckView.as_view(), name='job-duplicate-check'),
     path('new/', JobCreateView.as_view(), name='job-create'),
     path('bulk-upload/', JobBulkUploadView.as_view(), name='job-bulk-upload'),
     path('<int:pk>/', JobDetailView.as_view(), name='job-detail'),

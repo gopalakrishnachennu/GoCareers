@@ -39,6 +39,10 @@
                class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm">
                 Calendar
             </a>
+            <a href="{% url 'interview-ics-feed' %}"
+               class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm">
+                Export .ics
+            </a>
             {% if request.user.role == 'CONSULTANT' %}
             <a href="{% url 'interview-add' %}"
                class="bg-white text-indigo-700 font-bold py-2.5 px-6 rounded-xl shadow-lg hover:shadow-xl transition flex items-center gap-2 btn-glow">

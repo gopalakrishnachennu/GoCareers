@@ -40,7 +40,55 @@
         </div>
         {% endif %}
 
-        <div class="px-6 pb-6 flex gap-3">
+        {% if interview.video_link %}
+        <div class="px-6 pb-6">
+            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-2">Video link</h2>
+            <a href="{{ interview.video_link }}" target="_blank" rel="noopener noreferrer" class="text-sm text-blue-600 font-medium hover:underline break-all">{{ interview.video_link }}</a>
+        </div>
+        {% endif %}
+
+        {% if feedback_form %}
+        <div class="px-6 pb-6 border-t border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Add feedback</h2>
+            <form method="post" action="{% url 'interview-feedback-add' interview.pk %}" class="space-y-3">
+                {% csrf_token %}
+                {% for field in feedback_form %}
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 mb-1" for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {{ field }}
+                    {% if field.errors %}<p class="text-red-600 text-xs mt-1">{{ field.errors.0 }}</p>{% endif %}
+                </div>
+                {% endfor %}
+                <button type="submit"
+                    class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700">Save feedback</button>
+            </form>
+        </div>
+        {% endif %}
+
+        {% if interview_feedbacks %}
+        <div class="px-6 pb-6 border-t border-gray-100">
+            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">Feedback history</h2>
+            <ul class="space-y-4">
+                {% for fb in interview_feedbacks %}
+                <li class="rounded-lg border border-gray-200 bg-gray-50 p-4 text-sm">
+                    <div class="flex flex-wrap justify-between gap-2 text-xs text-gray-500 mb-2">
+                        <span>{{ fb.author.get_full_name|default:fb.author.username }}</span>
+                        <span>{{ fb.created_at|date:"M j, Y g:i A" }}</span>
+                    </div>
+                    <p class="text-gray-800"><span class="font-medium">Overall:</span> {{ fb.overall_rating }}/5
+                        {% if fb.technical_rating %}· Tech {{ fb.technical_rating }}/5{% endif %}
+                        {% if fb.communication_rating %}· Comm {{ fb.communication_rating }}/5{% endif %}
+                        · <span class="font-medium">{{ fb.get_recommendation_display }}</span></p>
+                    {% if fb.strengths %}<p class="mt-2 text-gray-700"><span class="font-medium text-gray-600">Strengths:</span> {{ fb.strengths }}</p>{% endif %}
+                    {% if fb.concerns %}<p class="mt-1 text-gray-700"><span class="font-medium text-gray-600">Concerns:</span> {{ fb.concerns }}</p>{% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+
+        <div class="px-6 pb-6 flex flex-wrap gap-3">
+            <a href="{% url 'interview-ics' interview.pk %}" class="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 text-sm font-medium hover:bg-gray-50">Add to calendar (.ics)</a>
             {% if request.user.role == 'CONSULTANT' and interview.consultant.user_id == request.user.id %}
             <a href="{% url 'interview-edit' interview.pk %}" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Edit</a>
             {% endif %}

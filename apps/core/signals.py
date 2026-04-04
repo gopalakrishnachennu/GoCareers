@@ -95,6 +95,25 @@ def sync_periodic_tasks(sender, instance: PlatformConfig, **kwargs):
         },
     )
 
+    # Auto-close stale / dead-link jobs – daily at 04:30 (after URL validation)
+    auto_close_task_name = "jobs.tasks.auto_close_jobs_task"
+    auto_close_name = "GoCareers: Auto-close stale jobs"
+    auto_close_cron, _ = CrontabSchedule.objects.get_or_create(
+        minute="30",
+        hour="4",
+        day_of_week="*",
+        day_of_month="*",
+        month_of_year="*",
+    )
+    PeriodicTask.objects.update_or_create(
+        name=auto_close_name,
+        defaults={
+            "task": auto_close_task_name,
+            "crontab": auto_close_cron,
+            "enabled": True,
+        },
+    )
+
     # Re-enrich stale companies – every 30 days (1st of month at 05:00)
     re_enrich_task_name = "companies.tasks.re_enrich_stale_companies_task"
     re_enrich_name = "GoCareers: Re-enrich Stale Companies"

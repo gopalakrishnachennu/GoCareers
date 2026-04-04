@@ -82,3 +82,47 @@ def validate_job_urls_task(batch_size: int = 50):
         pass
     return result
 
+
+@shared_task
+def auto_close_jobs_task():
+    """
+    Close stale OPEN jobs per PlatformConfig:
+    - Optional: age in days (job_auto_close_after_days)
+    - Optional: dead original link (job_auto_close_when_link_dead)
+    """
+    from core.models import PlatformConfig, PipelineRunLog
+
+    config = PlatformConfig.load()
+    now = timezone.now()
+    closed_age = 0
+    closed_dead = 0
+
+    days = getattr(config, "job_auto_close_after_days", None)
+    if days and days > 0:
+        cutoff = now - timezone.timedelta(days=days)
+        qs = Job.objects.filter(status=Job.Status.OPEN, created_at__lt=cutoff)
+        for job in qs.iterator():
+            job.status = Job.Status.CLOSED
+            job.save(update_fields=["status", "updated_at"])
+            closed_age += 1
+
+    if getattr(config, "job_auto_close_when_link_dead", False):
+        qs = Job.objects.filter(
+            status=Job.Status.OPEN,
+            original_link_is_live=False,
+        )
+        for job in qs.iterator():
+            job.status = Job.Status.CLOSED
+            job.save(update_fields=["status", "updated_at"])
+            closed_dead += 1
+
+    result = {"closed_stale_days": closed_age, "closed_dead_link": closed_dead}
+    try:
+        PipelineRunLog.objects.update_or_create(
+            task_name="auto_close_jobs",
+            defaults={"last_run_at": timezone.now(), "last_run_result": result},
+        )
+    except Exception:
+        pass
+    return result
+

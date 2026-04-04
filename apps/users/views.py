@@ -3,14 +3,25 @@ from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, TemplateView, View
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Q, Avg, Count
-from django.urls import reverse_lazy
+from django.urls import reverse_lazy, reverse
+from django.utils import timezone
 from django.contrib import messages
 from django.views import View as BaseView
 from django.http import HttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 import json
 
-from .models import User, ConsultantProfile, Experience, Education, Certification, SavedJob, MarketingRole, EmployeeProfile
+from .models import (
+    User,
+    ConsultantProfile,
+    Experience,
+    Education,
+    Certification,
+    SavedJob,
+    MarketingRole,
+    EmployeeProfile,
+    UserEmailNotificationPreferences,
+)
 from .forms import (
     ExperienceForm,
     EducationForm,
@@ -21,6 +32,9 @@ from .forms import (
     ConsultantProfileEditForm,
     MarketingRoleForm,
     EmployeeCreateForm,
+    ConsultantOnboardingStep1Form,
+    ConsultantOnboardingStep2Form,
+    UserEmailNotificationPreferencesForm,
 )
 from jobs.models import Job
 from jobs.services import match_jobs_for_consultant
@@ -404,6 +418,9 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
         context['is_admin'] = self.request.user.is_superuser or self.request.user.role == 'ADMIN'
         context['is_employee'] = self.request.user.role == 'EMPLOYEE'
         context['consultant_pk'] = self.object.pk
+        context['matched_jobs'] = (
+            match_jobs_for_consultant(profile, limit=8) if profile else []
+        )
 
         # Resume Drafts (Admin/Employee only)
         if context['is_admin'] or context['is_employee']:
@@ -693,8 +710,86 @@ class ConsultantDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateV
         context['count_rejected'] = my_submissions.filter(status=ApplicationSubmission.Status.REJECTED).count()
         context['count_responses'] = SubmissionResponse.objects.filter(submission__consultant=profile).count()
         context['recent_interviews'] = Interview.objects.filter(consultant=profile).order_by('-scheduled_at')[:5]
+        context['needs_onboarding'] = bool(profile and not profile.onboarding_completed_at)
 
         return context
+
+
+class ConsultantOnboardingView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """Three-step wizard: bio/skills → availability → finish."""
+
+    template_name = 'users/consultant_onboarding.html'
+
+    def test_func(self):
+        return self.request.user.role == User.Role.CONSULTANT
+
+    def get(self, request):
+        profile = request.user.consultant_profile
+        if profile.onboarding_completed_at:
+            messages.info(request, "You’ve already completed onboarding.")
+            return redirect('consultant-dashboard')
+        try:
+            step = int(request.GET.get('step', 1))
+        except ValueError:
+            step = 1
+        step = max(1, min(3, step))
+        form1 = ConsultantOnboardingStep1Form(
+            initial={
+                'bio': profile.bio,
+                'skills_text': ', '.join(profile.skills or []),
+            }
+        )
+        form2 = ConsultantOnboardingStep2Form(instance=profile)
+        return render(
+            request,
+            self.template_name,
+            {'step': step, 'form1': form1, 'form2': form2},
+        )
+
+    def post(self, request):
+        profile = request.user.consultant_profile
+        if profile.onboarding_completed_at:
+            return redirect('consultant-dashboard')
+        try:
+            step = int(request.POST.get('step', 1))
+        except ValueError:
+            step = 1
+        if step == 1:
+            form = ConsultantOnboardingStep1Form(request.POST)
+            if form.is_valid():
+                profile.bio = form.cleaned_data.get('bio') or ''
+                raw = form.cleaned_data.get('skills_text', '')
+                profile.skills = [s.strip() for s in raw.split(',') if s.strip()]
+                profile.save()
+                return redirect(f"{reverse('consultant-onboarding')}?step=2")
+            form2 = ConsultantOnboardingStep2Form(instance=profile)
+            return render(
+                request,
+                self.template_name,
+                {'step': 1, 'form1': form, 'form2': form2},
+            )
+        if step == 2:
+            form = ConsultantOnboardingStep2Form(request.POST, instance=profile)
+            if form.is_valid():
+                form.save()
+                return redirect(f"{reverse('consultant-onboarding')}?step=3")
+            form1 = ConsultantOnboardingStep1Form(
+                initial={
+                    'bio': profile.bio,
+                    'skills_text': ', '.join(profile.skills or []),
+                }
+            )
+            return render(
+                request,
+                self.template_name,
+                {'step': 2, 'form1': form1, 'form2': form},
+            )
+        if step == 3:
+            profile.onboarding_completed_at = timezone.now()
+            profile.save(update_fields=['onboarding_completed_at'])
+            messages.success(request, "Your profile setup is complete.")
+            return redirect('consultant-dashboard')
+        return redirect('consultant-onboarding')
 
 
 # --- Saved Jobs ---
@@ -796,6 +891,23 @@ class MarketingRoleDeleteView(AdminRequiredMixin, DeleteView):
 
     def form_valid(self, form):
         messages.success(self.request, f'Marketing role "{self.object.name}" deleted!')
+        return super().form_valid(form)
+
+
+class EmailNotificationPreferencesView(LoginRequiredMixin, UpdateView):
+    """Phase 3: per-user outbound email toggles (in-app notifications are separate)."""
+
+    model = UserEmailNotificationPreferences
+    form_class = UserEmailNotificationPreferencesForm
+    template_name = 'users/email_notification_preferences.html'
+    success_url = reverse_lazy('email-notification-preferences')
+
+    def get_object(self, queryset=None):
+        obj, _ = UserEmailNotificationPreferences.objects.get_or_create(user=self.request.user)
+        return obj
+
+    def form_valid(self, form):
+        messages.success(self.request, 'Email notification preferences saved.')
         return super().form_valid(form)
 
 

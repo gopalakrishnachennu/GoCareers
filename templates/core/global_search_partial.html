@@ -1,0 +1,44 @@
+{# HTMX fragment — no base layout #}
+{% if not query or query|length < 2 %}
+<p class="text-xs text-gray-500 px-3 py-2">Type at least 2 characters…</p>
+{% elif total_results == 0 %}
+<p class="text-xs text-gray-600 px-3 py-2">No results for “{{ query }}”.</p>
+{% else %}
+<div class="max-h-80 overflow-y-auto divide-y divide-gray-100">
+    {% if jobs %}
+    <div class="px-3 py-2">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Jobs</p>
+        {% for job in jobs %}
+        <a href="{% url 'job-detail' pk=job.pk %}" class="block py-1.5 text-sm text-gray-900 hover:text-blue-600 truncate">{{ job.title }} <span class="text-gray-500">· {{ job.company }}</span></a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if consultants %}
+    <div class="px-3 py-2">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Consultants</p>
+        {% for cp in consultants %}
+        <a href="{% url 'consultant-detail' pk=cp.user.pk %}" class="block py-1.5 text-sm text-gray-900 hover:text-blue-600 truncate">{{ cp.user.get_full_name|default:cp.user.username }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if companies %}
+    <div class="px-3 py-2">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Companies</p>
+        {% for c in companies %}
+        <a href="{% url 'company-detail' pk=c.pk %}" class="block py-1.5 text-sm text-gray-900 hover:text-blue-600 truncate">{{ c.name }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% if submissions %}
+    <div class="px-3 py-2">
+        <p class="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-1">Submissions</p>
+        {% for sub in submissions %}
+        <a href="{% url 'submission-detail' pk=sub.pk %}" class="block py-1.5 text-sm text-gray-900 hover:text-blue-600 truncate">{{ sub.job.title }} <span class="text-gray-500">· {{ sub.consultant.user.get_full_name|default:sub.consultant.user.username }}</span></a>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+<p class="border-t border-gray-100 px-3 py-2 text-center">
+    <a href="{% url 'global-search' %}?q={{ query|urlencode }}" class="text-xs font-semibold text-blue-600 hover:underline">View all results</a>
+</p>
+{% endif %}

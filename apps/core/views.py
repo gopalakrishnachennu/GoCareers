@@ -1,9 +1,9 @@
-from django.shortcuts import render, redirect
+from django.shortcuts import render, redirect, get_object_or_404
 from django.views.generic import TemplateView, UpdateView, View, ListView, DetailView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.conf import settings
 from django.db.models import Count, Q, Sum
-from django.urls import reverse_lazy
+from django.urls import reverse_lazy, reverse
 from django.utils import timezone
 from datetime import timedelta
 from django.contrib import messages
@@ -15,7 +15,7 @@ from users.models import User, ConsultantProfile
 from jobs.models import Job
 from submissions.models import ApplicationSubmission, Placement, Timesheet, Commission
 from resumes.models import ResumeDraft
-from .models import PlatformConfig, LLMConfig, LLMUsageLog, AuditLog, PipelineRunLog
+from .models import PlatformConfig, LLMConfig, LLMUsageLog, AuditLog, PipelineRunLog, Notification
 from .forms import PlatformConfigForm, LLMConfigForm
 from .monitor import SystemMonitor
 from .security import decrypt_value
@@ -309,6 +309,30 @@ class HelpCenterView(AdminRequiredMixin, TemplateView):
     """
 
     template_name = 'settings/help.html'
+
+
+class GlobalSearchView(LoginRequiredMixin, TemplateView):
+    """Phase 2: Search across jobs, consultants, companies, and submissions."""
+    template_name = 'core/global_search.html'
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        from .search_utils import build_global_search_context
+
+        q = self.request.GET.get('q', '').strip()
+        context.update(build_global_search_context(self.request, q))
+        return context
+
+
+class GlobalSearchPartialView(LoginRequiredMixin, View):
+    """HTMX: return search result fragment for nav dropdown."""
+
+    def get(self, request, *args, **kwargs):
+        from .search_utils import build_global_search_context
+
+        q = request.GET.get('q', '').strip()
+        ctx = build_global_search_context(request, q)
+        return render(request, 'core/global_search_partial.html', ctx)
 
 
 def home(request):
@@ -1289,3 +1313,32 @@ class EmployeeDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateVie
             cls=DjangoJSONEncoder,
         )
         return context
+
+
+class NotificationListView(LoginRequiredMixin, ListView):
+    model = Notification
+    template_name = 'core/notification_list.html'
+    context_object_name = 'notifications'
+    paginate_by = 30
+
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+
+
+class NotificationMarkReadView(LoginRequiredMixin, View):
+    def post(self, request, pk, *args, **kwargs):
+        n = get_object_or_404(Notification, pk=pk, user=request.user)
+        if not n.read_at:
+            n.read_at = timezone.now()
+            n.save(update_fields=['read_at'])
+        next_url = request.POST.get('next') or reverse('notification-list')
+        return redirect(next_url)
+
+
+class NotificationMarkAllReadView(LoginRequiredMixin, View):
+    def post(self, request, *args, **kwargs):
+        Notification.objects.filter(user=request.user, read_at__isnull=True).update(
+            read_at=timezone.now()
+        )
+        messages.success(request, 'All notifications marked as read.')
+        return redirect('notification-list')

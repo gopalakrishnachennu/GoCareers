@@ -3,6 +3,8 @@ from .views import (
     ConsultantListView, ConsultantExportCSVView,
     EmployeeListView, EmployeeExportCSVView, EmployeeDetailView, EmployeeCreateView,
     EmployeeEditView, ConsultantEditView, ConsultantDetailView, ConsultantDashboardView,
+    ConsultantOnboardingView,
+    EmailNotificationPreferencesView,
     SaveJobView, SavedJobListView, ConsultantCreateView,
     MarketingRoleListView, MarketingRoleCreateView, MarketingRoleUpdateView, MarketingRoleDeleteView,
     SettingsView,
@@ -19,11 +21,13 @@ urlpatterns = [
     path('employees/', EmployeeListView.as_view(), name='employee-list'),
     path('employees/create/', EmployeeCreateView.as_view(), name='employee-create'),
     
+    path('account/email-notifications/', EmailNotificationPreferencesView.as_view(), name='email-notification-preferences'),
     path('settings/', SettingsView.as_view(), name='settings-dashboard'),
     
     path('', ConsultantListView.as_view(), name='consultant-list'),
     path('export/', ConsultantExportCSVView.as_view(), name='consultant-export-csv'),
     path('add/', ConsultantCreateView.as_view(), name='consultant-add'),
+    path('onboarding/', ConsultantOnboardingView.as_view(), name='consultant-onboarding'),
     path('<int:pk>/', ConsultantDetailView.as_view(), name='consultant-detail'),
     path('<int:pk>/edit/', ConsultantEditView.as_view(), name='consultant-edit'),
     path('dashboard/', ConsultantDashboardView.as_view(), name='consultant-dashboard'),
