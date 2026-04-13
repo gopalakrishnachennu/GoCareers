@@ -877,3 +877,33 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             parts.append(f"{skipped} skipped (blacklisted or not in pool)")
         messages.success(request, ". ".join(parts) + ".")
         return redirect('job-pool')
+
+
+class JobPoolRefreshLinksView(LoginRequiredMixin, EmployeeRequiredMixin, View):
+    """Manual trigger from UI: refresh posting URL health in batch."""
+
+    def post(self, request):
+        try:
+            # Force recheck by clearing the "last checked" timestamp for all pool/open jobs.
+            Job.objects.filter(
+                status__in=[Job.Status.POOL, Job.Status.OPEN],
+                is_archived=False,
+                original_link__isnull=False,
+            ).exclude(original_link="").update(original_link_last_checked_at=None)
+
+            from .tasks import validate_job_urls_task
+
+            # Run async when Celery is up; fallback inline when queue unavailable.
+            try:
+                validate_job_urls_task.delay(5000)
+                messages.success(request, "Started link status refresh in background. Reload in 30-60 seconds.")
+            except Exception:
+                result = validate_job_urls_task(5000)
+                messages.success(
+                    request,
+                    f"Link status refresh completed now. Checked {result.get('processed', 0)} jobs.",
+                )
+        except Exception:
+            logger.exception("Manual pool link refresh failed")
+            messages.error(request, "Could not refresh link statuses right now. Please try again.")
+        return redirect('job-pool')

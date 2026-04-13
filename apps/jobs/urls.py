@@ -6,7 +6,7 @@ from .views import (
     # Phase 5
     JobArchiveView, JobRestoreView, ArchivedJobsView,
     # Job Pool / Validation Pipeline
-    JobPoolView, JobPoolRevalidateView, JobApproveView, JobRejectView, JobBulkApproveView,
+    JobPoolView, JobPoolRevalidateView, JobApproveView, JobRejectView, JobBulkApproveView, JobPoolRefreshLinksView,
 )
 
 urlpatterns = [
@@ -20,6 +20,7 @@ urlpatterns = [
     # Job Pool
     path('pool/', JobPoolView.as_view(), name='job-pool'),
     path('pool/bulk-approve/', JobBulkApproveView.as_view(), name='job-bulk-approve'),
+    path('pool/refresh-links/', JobPoolRefreshLinksView.as_view(), name='job-pool-refresh-links'),
     path('<int:pk>/', JobDetailView.as_view(), name='job-detail'),
     path('<int:pk>/parse-jd/', JobParseJDView.as_view(), name='job-parse-jd'),
     path('<int:pk>/edit/', JobUpdateView.as_view(), name='job-update'),

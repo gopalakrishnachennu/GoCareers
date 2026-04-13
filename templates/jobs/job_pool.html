@@ -20,6 +20,14 @@
         </div>
 
         <div class="flex items-center gap-3">
+            <form method="post" action="{% url 'job-pool-refresh-links' %}">
+                {% csrf_token %}
+                <button type="submit"
+                    class="bg-white/15 border border-white/30 text-white font-semibold py-2.5 px-4 rounded-xl hover:bg-white/25 transition flex items-center gap-2"
+                    title="Recheck original job links for Active/No Longer Available status">
+                    ↻ Refresh Link Statuses
+                </button>
+            </form>
             <a href="{% url 'job-create' %}"
                 class="bg-white text-indigo-700 font-bold py-2.5 px-6 rounded-xl shadow-lg hover:shadow-xl transition flex items-center gap-2">
                 <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
