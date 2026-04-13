@@ -38,6 +38,7 @@ from .forms import (
 )
 from jobs.models import Job
 from jobs.services import match_jobs_for_consultant
+from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
 from submissions.models import ApplicationSubmission, SubmissionResponse
 from resumes.models import ResumeDraft
 from interviews_app.models import Interview
@@ -70,8 +71,10 @@ class ConsultantListView(LoginRequiredMixin, ListView):
     model = User
     template_name = 'users/consultant_list.html'
     context_object_name = 'consultants'
-    paginate_by = PAGINATION_CONSULTANTS
     ordering = ['-date_joined']
+
+    def get_paginate_by(self, queryset):
+        return get_page_size(self.request, default=PAGINATION_CONSULTANTS)
 
     def get_queryset(self):
         qs = User.objects.filter(role=User.Role.CONSULTANT, consultant_profile__isnull=False)
@@ -108,6 +111,10 @@ class ConsultantListView(LoginRequiredMixin, ListView):
         qd = self.request.GET.copy()
         qd.pop('page', None)
         context['pagination_query'] = qd.urlencode()
+        context['page_size'] = get_page_size(self.request, default=PAGINATION_CONSULTANTS)
+        context['page_size_options'] = PAGE_SIZE_OPTIONS
+        if context.get('is_paginated'):
+            context['pagination_pages'] = build_pagination_window(context['page_obj'])
         # Status summary for header chips (Active / Bench / Placed / Inactive)
         status_counts = {
             'ACTIVE': 0,

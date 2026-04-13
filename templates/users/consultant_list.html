@@ -64,7 +64,7 @@
         <!-- Role filter -->
         <div class="relative w-full md:w-auto">
             <select
-                onchange="var p=new URLSearchParams(window.location.search);p.set('role',this.value);window.location.search=p.toString();"
+                onchange="var p=new URLSearchParams(window.location.search);if(this.value){p.set('role',this.value)}else{p.delete('role')}p.delete('page');window.location.search=p.toString();"
                 class="w-full md:w-48 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
                 <option value="">All Roles</option>
                 {% for role in marketing_roles %}
@@ -81,13 +81,29 @@
         <!-- Status filter -->
         <div class="relative w-full md:w-auto">
             <select
-                onchange="var q=new URLSearchParams(window.location.search);q.set('status',this.value);window.location.search=q.toString();"
+                onchange="var q=new URLSearchParams(window.location.search);if(this.value){q.set('status',this.value)}else{q.delete('status')}q.delete('page');window.location.search=q.toString();"
                 class="w-full md:w-44 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
                 <option value="">All Statuses</option>
                 <option value="ACTIVE" {% if selected_status == 'ACTIVE' %}selected{% endif %}>Active</option>
                 <option value="BENCH" {% if selected_status == 'BENCH' %}selected{% endif %}>Bench</option>
                 <option value="PLACED" {% if selected_status == 'PLACED' %}selected{% endif %}>Placed</option>
                 <option value="INACTIVE" {% if selected_status == 'INACTIVE' %}selected{% endif %}>Inactive</option>
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </div>
+        </div>
+
+        <!-- Records per page -->
+        <div class="relative w-full md:w-auto">
+            <select
+                onchange="var q=new URLSearchParams(window.location.search);q.set('page_size',this.value);q.delete('page');window.location.search=q.toString();"
+                class="w-full md:w-36 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
+                {% for s in page_size_options %}
+                <option value="{{ s }}" {% if page_size == s %}selected{% endif %}>{{ s }}/page</option>
+                {% endfor %}
             </select>
             <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
                 <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -108,7 +124,7 @@
                 class="w-full pl-11 pr-4 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition"
                 value="{{ request.GET.search }}"
                 hx-get="{% url 'consultant-list' %}"
-                hx-include="[name='role'], [name='status']"
+                hx-include="[name='role'], [name='status'], [name='page_size']"
                 hx-push-url="true"
                 hx-trigger="keyup changed delay:500ms"
                 hx-target="#consultant-list-results"

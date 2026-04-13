@@ -169,6 +169,21 @@
             </div>
         </div>
 
+        <!-- Records per page -->
+        <div class="relative w-full md:w-auto">
+            <select name="page_size" onchange="var p=new URLSearchParams(window.location.search);if(this.value)p.set('page_size',this.value);else p.delete('page_size');p.delete('page');window.location.search=p.toString();"
+                class="w-full md:w-36 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
+                {% for s in page_size_options %}
+                <option value="{{ s }}" {% if page_size == s %}selected{% endif %}>{{ s }}/page</option>
+                {% endfor %}
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                </svg>
+            </div>
+        </div>
+
         <!-- Search -->
         <div class="relative flex-grow w-full md:w-auto">
             <span class="absolute inset-y-0 left-0 pl-4 flex items-center text-gray-400">
@@ -182,7 +197,7 @@
                 placeholder="Search title, company, description…"
                 value="{{ request.GET.search }}"
                 hx-get="{% url 'job-list' %}"
-                hx-include="[name='location'], [name='role'], [name='status'], [name='job_type'], [name='possibly_filled'], [name='link_live']"
+                hx-include="[name='location'], [name='role'], [name='status'], [name='job_type'], [name='possibly_filled'], [name='link_live'], [name='page_size']"
                 hx-push-url="true"
                 hx-trigger="keyup changed delay:500ms"
                 hx-target="#job-list-results"

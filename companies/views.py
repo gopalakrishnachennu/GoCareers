@@ -25,6 +25,7 @@ from .tasks import (
 )
 from users.models import User
 from submissions.models import ApplicationSubmission, SubmissionStatusHistory, EmailEvent, Offer
+from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
 
 
 class AdminOrEmployeeRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -73,7 +74,9 @@ class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
     model = Company
     template_name = "companies/company_list.html"
     context_object_name = "companies"
-    paginate_by = 25
+
+    def get_paginate_by(self, queryset):
+        return get_page_size(self.request, default=100)
 
     def get_queryset(self):
         return _get_company_list_queryset(self.request)
@@ -83,6 +86,10 @@ class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
         qd = self.request.GET.copy()
         qd.pop("page", None)
         context["pagination_query"] = qd.urlencode()
+        context["page_size"] = get_page_size(self.request, default=100)
+        context["page_size_options"] = PAGE_SIZE_OPTIONS
+        if context.get("is_paginated"):
+            context["pagination_pages"] = build_pagination_window(context["page_obj"])
         context["selected_sort"] = self.request.GET.get("sort", "name")
         context["selected_status"] = self.request.GET.get("status", "")
         context["selected_blacklisted"] = self.request.GET.get("blacklisted", "")

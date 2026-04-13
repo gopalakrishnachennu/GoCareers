@@ -15,6 +15,7 @@ import io
 import logging
 
 from .models import Job
+from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
 
 logger = logging.getLogger(__name__)
 from .forms import JobForm, JobBulkUploadForm
@@ -86,8 +87,10 @@ class JobListView(LoginRequiredMixin, ListView):
     model = Job
     template_name = 'jobs/job_list.html'
     context_object_name = 'jobs'
-    paginate_by = 10
     ordering = ['-created_at']
+
+    def get_paginate_by(self, queryset):
+        return get_page_size(self.request, default=100)
 
     def get_queryset(self):
         qs = apply_job_list_filters(super().get_queryset(), self.request)
@@ -120,6 +123,10 @@ class JobListView(LoginRequiredMixin, ListView):
         qd = self.request.GET.copy()
         qd.pop('page', None)
         context['pagination_query'] = qd.urlencode()
+        context['page_size'] = get_page_size(self.request, default=100)
+        context['page_size_options'] = PAGE_SIZE_OPTIONS
+        if context.get('is_paginated'):
+            context['pagination_pages'] = build_pagination_window(context['page_obj'])
         return context
 
     def get_template_names(self):
@@ -672,20 +679,12 @@ class JobPoolView(LoginRequiredMixin, EmployeeRequiredMixin, ListView):
     """Dashboard for jobs awaiting vetting before going live."""
     template_name = 'jobs/job_pool.html'
     context_object_name = 'jobs'
-    paginate_by = 20
+    
+    def get_paginate_by(self, queryset):
+        return get_page_size(self.request, default=100)
 
-    def get_queryset(self):
-        qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
-        tab = self.request.GET.get('tab', 'all')
-        if tab == 'high':
-            qs = qs.filter(validation_score__gte=80)
-        elif tab == 'review':
-            qs = qs.filter(validation_score__gte=50, validation_score__lt=80)
-        elif tab == 'flagged':
-            qs = qs.filter(validation_score__lt=50)
-        elif tab == 'unscored':
-            qs = qs.filter(validation_score__isnull=True)
-
+    def _apply_pool_filters(self, qs):
+        """Apply shared non-tab filters for pool listing and counts."""
         req = self.request.GET
         q = (req.get('q') or '').strip()
         if q:
@@ -713,12 +712,26 @@ class JobPoolView(LoginRequiredMixin, EmployeeRequiredMixin, ListView):
         dt = parse_date(req.get('date_to') or '')
         if dt:
             qs = qs.filter(created_at__date__lte=dt)
+        return qs
+
+    def get_queryset(self):
+        qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
+        qs = self._apply_pool_filters(qs)
+        tab = self.request.GET.get('tab', 'all')
+        if tab == 'high':
+            qs = qs.filter(validation_score__gte=80)
+        elif tab == 'review':
+            qs = qs.filter(validation_score__gte=50, validation_score__lt=80)
+        elif tab == 'flagged':
+            qs = qs.filter(validation_score__lt=50)
+        elif tab == 'unscored':
+            qs = qs.filter(validation_score__isnull=True)
 
         return qs.select_related('posted_by', 'company_obj').prefetch_related('marketing_roles').order_by('-created_at')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        pool_qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
+        pool_qs = self._apply_pool_filters(Job.objects.filter(status=Job.Status.POOL, is_archived=False))
         context['tab'] = self.request.GET.get('tab', 'all')
         context['count_all'] = pool_qs.count()
         context['count_high'] = pool_qs.filter(validation_score__gte=80).count()
@@ -751,6 +764,10 @@ class JobPoolView(LoginRequiredMixin, EmployeeRequiredMixin, ListView):
             'first_name', 'last_name', 'username'
         )
         context['job_type_choices'] = Job.JobType.choices
+        context['page_size'] = get_page_size(self.request, default=100)
+        context['page_size_options'] = PAGE_SIZE_OPTIONS
+        if context.get('is_paginated'):
+            context['pagination_pages'] = build_pagination_window(context['page_obj'])
         return context
 
 

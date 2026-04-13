@@ -86,25 +86,41 @@
 <div class="mt-10 flex justify-center animate-slide-up">
     <nav class="inline-flex items-center gap-2" aria-label="Pagination">
         {% if page_obj.has_previous %}
+        <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page=1"
+            class="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition shadow-sm">
+            First
+        </a>
         <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.previous_page_number }}"
             class="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition shadow-sm">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-            </svg>
-            Previous
+            Prev
         </a>
         {% endif %}
-        <span
-            class="inline-flex items-center px-5 py-2 rounded-xl bg-indigo-600 text-sm font-bold text-white shadow-sm">
-            {{ page_obj.number }} / {{ page_obj.paginator.num_pages }}
-        </span>
+        {% for p in pagination_pages %}
+            {% if p %}
+                {% if p == page_obj.number %}
+                <span class="inline-flex items-center px-4 py-2 rounded-xl bg-indigo-600 text-sm font-bold text-white shadow-sm">
+                    {{ p }}
+                </span>
+                {% else %}
+                <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ p }}"
+                    class="inline-flex items-center px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition shadow-sm">
+                    {{ p }}
+                </a>
+                {% endif %}
+            {% else %}
+            <span class="inline-flex items-center px-3 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-400 shadow-sm">
+                …
+            </span>
+            {% endif %}
+        {% endfor %}
         {% if page_obj.has_next %}
         <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.next_page_number }}"
             class="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition shadow-sm">
             Next
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-            </svg>
+        </a>
+        <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.paginator.num_pages }}"
+            class="inline-flex items-center gap-1 px-4 py-2 rounded-xl bg-white border border-gray-200 text-sm font-medium text-gray-700 hover:bg-indigo-50 hover:border-indigo-300 hover:text-indigo-700 transition shadow-sm">
+            Last
         </a>
         {% endif %}
     </nav>

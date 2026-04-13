@@ -136,14 +136,14 @@
 {# Status filter tabs (All / by status) #}
 <div class="mb-3 flex flex-wrap items-center gap-2 text-xs font-medium">
     {% with current_status=request.GET.status %}
-    <a href="{% if request.GET.search %}?search={{ request.GET.search|urlencode }}{% else %}?{% endif %}"
+    <a href="{% if request.GET.search %}?search={{ request.GET.search|urlencode }}{% else %}?{% endif %}{% if page_size %}{% if request.GET.search %}&{% endif %}page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if not current_status %} bg-blue-600 text-white border-blue-600
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
         <span>All</span>
         <span class="font-mono text-[11px] opacity-80">{{ total_submissions }}</span>
     </a>
-    <a href="?status=IN_PROGRESS{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=IN_PROGRESS{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'IN_PROGRESS' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -152,7 +152,7 @@
             {{ status_summary.IN_PROGRESS|default:0 }}
         </span>
     </a>
-    <a href="?status=APPLIED{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=APPLIED{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'APPLIED' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -161,7 +161,7 @@
             {{ status_summary.APPLIED|default:0 }}
         </span>
     </a>
-    <a href="?status=INTERVIEW{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=INTERVIEW{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'INTERVIEW' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -170,7 +170,7 @@
             {{ status_summary.INTERVIEW|default:0 }}
         </span>
     </a>
-    <a href="?status=OFFER{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=OFFER{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'OFFER' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -179,7 +179,7 @@
             {{ status_summary.OFFER|default:0 }}
         </span>
     </a>
-    <a href="?status=REJECTED{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=REJECTED{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'REJECTED' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -188,7 +188,7 @@
             {{ status_summary.REJECTED|default:0 }}
         </span>
     </a>
-    <a href="?status=WITHDRAWN{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}"
+    <a href="?status=WITHDRAWN{% if request.GET.search %}&search={{ request.GET.search|urlencode }}{% endif %}{% if page_size %}&page_size={{ page_size }}{% endif %}"
         class="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border
         {% if current_status == 'WITHDRAWN' %} bg-blue-50 text-blue-700 border-blue-300
         {% else %} bg-white text-gray-700 border-gray-200 hover:border-blue-300 hover:text-blue-700 {% endif %}">
@@ -212,6 +212,14 @@
             <option value="">All</option>
             {% for key, label in status_choices %}
             <option value="{{ key }}" {% if request.GET.status == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div>
+        <label class="block text-xs text-gray-500 mb-1">Records</label>
+        <select name="page_size" class="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 text-sm">
+            {% for s in page_size_options %}
+            <option value="{{ s }}" {% if page_size == s %}selected{% endif %}>{{ s }}/page</option>
             {% endfor %}
         </select>
     </div>
@@ -541,13 +549,28 @@
 <div class="mt-8 flex justify-center">
     <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
         {% if page_obj.has_previous %}
+        <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page=1"
+            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">First</a>
         <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.previous_page_number }}"
-            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Previous</a>
+            class="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Prev</a>
         {% endif %}
-        <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% for p in pagination_pages %}
+            {% if p %}
+                {% if p == page_obj.number %}
+                <span class="relative inline-flex items-center px-4 py-2 border border-blue-500 bg-blue-50 text-sm font-medium text-blue-700">{{ p }}</span>
+                {% else %}
+                <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ p }}"
+                    class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700 hover:bg-gray-50">{{ p }}</a>
+                {% endif %}
+            {% else %}
+            <span class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-400">…</span>
+            {% endif %}
+        {% endfor %}
         {% if page_obj.has_next %}
         <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.next_page_number }}"
-            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Next</a>
+            class="relative inline-flex items-center px-2 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Next</a>
+        <a href="?{% if pagination_query %}{{ pagination_query }}&{% endif %}page={{ page_obj.paginator.num_pages }}"
+            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">Last</a>
         {% endif %}
     </nav>
 </div>

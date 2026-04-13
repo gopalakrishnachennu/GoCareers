@@ -36,6 +36,7 @@ from config.constants import (
     MSG_SUBMISSION_SUCCESS, MSG_SUBMISSION_MISMATCH, MSG_SUBMISSION_SELF_ONLY, MSG_FILE_TOO_LARGE,
 )
 from core.notification_utils import notify_submission_pipeline_event
+from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip().lower())
@@ -225,7 +226,9 @@ class SubmissionListView(LoginRequiredMixin, ListView):
     model = ApplicationSubmission
     template_name = 'submissions/submission_list.html'
     context_object_name = 'submissions'
-    paginate_by = 10
+
+    def get_paginate_by(self, queryset):
+        return get_page_size(self.request, default=PAGINATION_SUBMISSIONS)
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -243,6 +246,10 @@ class SubmissionListView(LoginRequiredMixin, ListView):
         qd = self.request.GET.copy()
         qd.pop('page', None)
         context['pagination_query'] = qd.urlencode()
+        context['page_size'] = get_page_size(self.request, default=PAGINATION_SUBMISSIONS)
+        context['page_size_options'] = PAGE_SIZE_OPTIONS
+        if context.get('is_paginated'):
+            context['pagination_pages'] = build_pagination_window(context['page_obj'])
         return context
 
     def get_queryset(self):

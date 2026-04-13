@@ -81,6 +81,14 @@
                     <option value="0" {% if selected_website_valid == '0' %}selected{% endif %}>Invalid</option>
                 </select>
             </div>
+            <div class="w-36">
+                <label class="block text-xs text-gray-500 mb-1">Records</label>
+                <select name="page_size" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    {% for s in page_size_options %}
+                    <option value="{{ s }}" {% if page_size == s %}selected{% endif %}>{{ s }}/page</option>
+                    {% endfor %}
+                </select>
+            </div>
             <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Search</button>
         </div>
         <input type="hidden" name="sort" value="{{ selected_sort }}">
@@ -223,12 +231,25 @@
         <p class="text-sm text-gray-500">
             Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }} ({{ page_obj.paginator.count }} total)
         </p>
-        <div class="flex gap-2">
+        <div class="flex gap-2 items-center">
             {% if page_obj.has_previous %}
-            <a href="?{{ pagination_query }}&page={{ page_obj.previous_page_number }}" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Previous</a>
+            <a href="?{{ pagination_query }}&page=1" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">First</a>
+            <a href="?{{ pagination_query }}&page={{ page_obj.previous_page_number }}" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Prev</a>
             {% endif %}
+            {% for p in pagination_pages %}
+                {% if p %}
+                    {% if p == page_obj.number %}
+                    <span class="px-3 py-1.5 rounded border border-blue-500 bg-blue-50 text-sm font-semibold text-blue-700">{{ p }}</span>
+                    {% else %}
+                    <a href="?{{ pagination_query }}&page={{ p }}" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">{{ p }}</a>
+                    {% endif %}
+                {% else %}
+                <span class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-400">…</span>
+                {% endif %}
+            {% endfor %}
             {% if page_obj.has_next %}
             <a href="?{{ pagination_query }}&page={{ page_obj.next_page_number }}" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Next</a>
+            <a href="?{{ pagination_query }}&page={{ page_obj.paginator.num_pages }}" class="px-3 py-1.5 rounded border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Last</a>
             {% endif %}
         </div>
     </div>
