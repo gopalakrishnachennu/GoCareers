@@ -1,13 +1,16 @@
 """
 Management command: seed_master_prompt
 
-Creates (or updates) the Master Prompt record using the proven
-Master_Resume_Prompt.md content — split correctly into system_prompt
-(the SYSTEM ROLE) and generation_rules (the full processing pipeline).
+Creates (or updates) the Master Prompt record — system_prompt (identity + laws)
+and generation_rules (full pipeline). v2.0 tightens authenticity (verb choice),
+unknown-tech honesty, bullet count flexibility, and domain-truth rules.
 
 Usage:
     python manage.py seed_master_prompt
-    python manage.py seed_master_prompt --force   # overwrites even if one already exists
+    python manage.py seed_master_prompt --force   # overwrites active prompt — use after pulling prompt updates
+
+After deploy, run --force once so the DB active MasterPrompt matches this file.
+(core seed_data only inserts a short prompt if none exists; full rules live here.)
 """
 from django.core.management.base import BaseCommand
 from django.contrib.auth import get_user_model
@@ -31,6 +34,8 @@ REMINDER: You are generating a weapon-grade, ATS-crushing, recruiter-impressing 
 - NEVER fabricate employers, companies, certifications, or technologies the candidate does not have.
 - NEVER inflate experience beyond actual years + 1.
 - The goal: when a hiring manager reads this resume, they think "This is exactly the person we are looking for."
+
+AUTHENTICITY (recruiters flag AI resumes): Prefer plain, concrete verbs — Built, Led, Implemented, Deployed, Automated, Configured, Improved, Reduced — over flashy resume clichés (e.g. overusing "Architected", "Spearheaded", "Leveraged", "Orchestrated"). At most one elevated verb in the entire document for genuinely senior work.
 """
 
 
@@ -67,10 +72,10 @@ HARD STOP RULE: If fewer than 40% of required technologies match the candidate M
 ### PHASE 2: COMPATIBILITY CHECK
 
 Compare JD requirements against the Candidate Base Profile. Resolve:
-- Direct match -> use exact technology and claim the experience
-- Partial match -> contextual mention or adjacent language
-- No match (required) -> include in Core Skills after stronger skills; write 1 contextual bullet using adjacent technology
-- No match (preferred) -> Core Skills only, no bullet needed
+- Direct match -> use exact technology and describe real work in bullets
+- Partial match -> contextual mention or adjacent language tied to real projects
+- No match (required tech NOT in candidate pool) -> NEVER invent hands-on experience with that tool. Options: (a) omit from experience bullets; (b) if honestly adjacent (e.g. similar database, same cloud family), ONE bullet may describe transferable work without claiming false certification; (c) still mirror the keyword in Core Skills ONLY if the candidate can defend adjacent exposure in an interview — otherwise omit and flag in NOTES
+- No match (preferred) -> Core Skills optional honest mention; bullet optional
 
 If overlap is below 30%, warn: "This JD has limited overlap with the candidate profile. The resume will emphasize transferable skills."
 
@@ -161,12 +166,13 @@ CORRECT APPROACH:
   Cloud DevOps Engineer | Thomson Reuters | Oct 2024 – May 2025
   DevOps / Database Administrator | Tiger Analytics | Sep 2019 – Jul 2023
 
-Bullet count per role — EXACT, NON-NEGOTIABLE:
-- Most recent / current role: EXACTLY 7 bullets. Not 6, not 8, not 9. Exactly 7.
-- Every other role (2nd, 3rd, 4th...): EXACTLY 6 bullets each. Not 5, not 7. Exactly 6.
-- Count your bullets before outputting. If any role has the wrong count, fix it before generating the final output.
+Bullet count per role — TARGET RANGES (quality over padding):
+- Most recent / current role: TARGET 7 bullets; acceptable 6–8. Every bullet must add a distinct fact or outcome — no filler.
+- Second role: TARGET 6 bullets; acceptable 5–7.
+- Third and older roles: TARGET 5–6 bullets; acceptable 4–6.
+- Count bullets before outputting. Prefer one fewer strong bullet over a vague extra bullet.
 
-If resume exceeds 2 pages: Tighten bullet wording (shorter sentences) — do NOT reduce the bullet count below the required numbers above.
+If resume exceeds 2 pages: shorten bullets in older roles first; keep current role dense and JD-aligned.
 
 ### 4B. JOB TITLE TAILORING
 
@@ -207,10 +213,10 @@ ABSOLUTE RULES — VIOLATIONS WILL RUIN THE CANDIDATE'S CAREER:
 Every single bullet point MUST follow this exact structure:
 [Action Verb] + [Specific Technical Activity] + [using/leveraging/with Technology] + [Business Impact or Measurable Result]
 
-CORRECT bullets:
-- Architected fault-tolerant PostgreSQL clusters across 3 AWS regions using Terraform, achieving 99.99% uptime and reducing failover time from 15 minutes to under 60 seconds.
+CORRECT bullets (human tone, named tech, metric):
+- Built fault-tolerant PostgreSQL clusters across 3 AWS regions using Terraform, achieving 99.99% uptime and reducing failover time from 15 minutes to under 60 seconds.
 - Optimized T-SQL stored procedures and indexing strategies on SQL Server 2019, reducing average query execution time by 35% for critical reporting workloads.
-- Automated infrastructure provisioning using Ansible and Terraform, eliminating 60% of manual configuration tasks and reducing deployment errors across 12 environments.
+- Automated infrastructure provisioning using Ansible and Terraform, cutting manual configuration work by 60% and reducing deployment errors across 12 environments.
 
 NEVER generate these:
 - "Responsible for database management." (no verb, no tech, no impact)
@@ -225,18 +231,20 @@ NEVER generate these:
 - NEVER use the same action verb more than 3 times across the entire resume
 - PRESENT TENSE for current role; PAST TENSE for all previous roles
 
-Verb Bank by tier:
-Leadership (current role): Architected, Spearheaded, Pioneered, Established, Championed, Directed, Mentored, Defined
-Execution (current + mid): Designed, Engineered, Implemented, Developed, Deployed, Automated, Integrated, Built, Configured, Optimized, Modernized, Migrated
-Collaboration (any role): Collaborated, Partnered, Coordinated, Aligned, Engaged
-Operations (mid + junior): Administered, Managed, Maintained, Monitored, Supported, Executed, Conducted
-Growth (junior): Assisted, Contributed, Participated, Facilitated
-Documentation (any role): Authored, Documented, Standardized, Created, Published
+Verb bank (prefer natural frequency — most bullets should use everyday verbs):
+Primary (use often): Built, Led, Implemented, Deployed, Automated, Configured, Improved, Reduced, Designed, Developed, Integrated, Migrated, Optimized, Managed, Maintained, Monitored, Supported, Administered, Documented, Created, Ran, Fixed, Cut, Added, Standardized, Established
+Use sparingly (max 1–2 in entire resume for senior scope): Engineered, Directed, Modernized, Defined
+Avoid as default (recruiters associate with AI resume spam): Architected, Spearheaded, Championed, Pioneered, Leveraged, Orchestrated, Synergized — if a JD literally uses one of these words, you may mirror it once in Core Skills or a quote, not as every bullet opener.
+
+Collaboration (any role): Partnered, Coordinated, Aligned, Worked with, Supported cross-functional teams
+Operations: Administered, Maintained, Monitored, Resolved, Handled
+Growth (junior): Assisted, Contributed, Participated in
+Documentation: Documented, Authored, Published, Wrote
 
 Progression Pattern:
-- Oldest role: mostly Operations + Growth verbs
-- Middle role(s): mostly Execution + Collaboration verbs
-- Current role: mostly Leadership + Execution verbs
+- Oldest role: mostly Operations + supporting verbs
+- Middle role(s): Execution + Collaboration
+- Current role: Led/Built/Implemented + measurable outcomes
 
 ### 4E. METRICS AND QUANTIFICATION CONTROL
 
@@ -274,7 +282,9 @@ Technology Recency:
 
 ### 4G. DOMAIN ALIGNMENT CONTROL
 
-Weave in domain-specific language based on the JD industry:
+ETHICAL RULE: Experience bullets must stay truthful to what each employer actually does. If the JD industry differs from a past employer's industry, put industry-specific JD language in Professional Summary and Core Skills; in experience bullets use transferable technical outcomes (scale, reliability, security, compliance patterns) without pretending the candidate shipped that industry's product at a company where they did not.
+
+Weave in domain-specific language based on the JD industry (where honest):
 - Healthcare: patient data, clinical systems, EHR/EMR, HIPAA, HITECH, HL7, FHIR, PHI
 - Finance/Banking: trading platforms, transaction processing, SOC2, PCI-DSS, SOX, FINRA
 - Government/Defense: classified systems, FedRAMP, NIST 800-53, FISMA, IL4/IL5
@@ -352,7 +362,7 @@ LANGUAGE RULES:
 - Every bullet starts with an action verb — no exceptions
 - Present tense for current role, past tense for all previous roles
 - No passive voice — "Deployed monitoring solutions" NOT "Monitoring solutions were deployed"
-- No articles starting bullets — "Architected..." NOT "The team architected..."
+- No articles starting bullets — "Built..." NOT "The team built..."
 - No redundancy — no two bullets across the resume should say essentially the same thing
 
 LENGTH CONTROL:
@@ -366,9 +376,9 @@ LENGTH CONTROL:
 ## PHASE 5: EDGE CASE HANDLING
 
 EC-01 JD requires tech candidate does not know:
-- If REQUIRED: include in Core Skills + write 1 contextual bullet using adjacent language
-- If PREFERRED: Core Skills only. No bullet.
-- If 3+ required techs are unknown: warn the user.
+- If REQUIRED: do NOT claim false projects. Optional: honest adjacent bullet ONLY if defensible; else NOTES warning + omit from bullets
+- If PREFERRED: Core Skills only if honest; otherwise omit
+- If 3+ required techs are unknown: warn prominently in NOTES
 
 EC-02 JD role significantly different from candidate background:
 - Find overlap zone (cloud, databases, automation, CI/CD, scripting, monitoring bridge most roles)
@@ -390,9 +400,9 @@ EC-05 JD is vague/generic:
 - Bullets showcase most impressive achievements
 
 EC-06 JD emphasizes leadership/management:
-- Add 2-3 leadership bullets: mentorship, architectural review, cross-functional leadership
-- Use Leadership-tier verbs: Championed, Directed, Established, Pioneered
-- Upgrade Professional Summary with "engineering leader" or "technical lead" language
+- Add 2-3 leadership bullets: mentorship, standards, cross-functional delivery
+- Use: Led, Drove, Established, Defined, Mentored — not "Championed" or "Pioneered" unless unavoidable
+- Upgrade Professional Summary with "technical lead" or "led initiatives" only if supported by profile
 
 EC-08 JD has compliance/regulatory requirements:
 - Include compliance language in at least 2 experience bullets and 1 Core Skills category
@@ -463,7 +473,7 @@ PROFESSIONAL EXPERIENCE
 - [Bullet 4]
 - [Bullet 5]
 - [Bullet 6]
-- [Bullet 7]  <- current/most recent role gets exactly 7 bullets
+- [Bullet 7]  <- current/most recent role: target 7 bullets (6–8 acceptable)
 
 [Second role — title, company, dates only — NO location]
 [EXACT Company Name] | [EXACT Start Date] - [EXACT End Date]
@@ -472,9 +482,9 @@ PROFESSIONAL EXPERIENCE
 - [Bullet 3]
 - [Bullet 4]
 - [Bullet 5]
-- [Bullet 6]  <- all other roles get exactly 6 bullets
+- [Bullet 6]  <- second+ roles: target 6 bullets (5–7 acceptable)
 
-[Continue for each role — same format, 6 bullets each]
+[Continue for each role — same format]
 
 EDUCATION
 [Degree] — [University], [Country]
@@ -523,7 +533,7 @@ class Command(BaseCommand):
         }
 
         if existing and options['force']:
-            existing.name = "v1.0 — Master Resume Engine (ATS-Optimized)"
+            existing.name = "v2.0 — Master Resume Engine (authentic + ATS)"
             existing.system_prompt = SYSTEM_PROMPT.strip()
             existing.generation_rules = GENERATION_RULES.strip()
             existing.default_input_sections = default_sections
@@ -535,7 +545,7 @@ class Command(BaseCommand):
             # Deactivate any existing ones first
             MasterPrompt.objects.all().update(is_active=False)
             mp = MasterPrompt.objects.create(
-                name="v1.0 — Master Resume Engine (ATS-Optimized)",
+                name="v2.0 — Master Resume Engine (authentic + ATS)",
                 system_prompt=SYSTEM_PROMPT.strip(),
                 generation_rules=GENERATION_RULES.strip(),
                 default_input_sections=default_sections,

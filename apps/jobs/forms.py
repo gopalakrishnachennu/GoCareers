@@ -85,4 +85,11 @@ class JobForm(forms.ModelForm):
         return url
 
 class JobBulkUploadForm(forms.Form):
-    csv_file = forms.FileField(label="Upload CSV File", help_text="Upload a CSV file with columns: title, company, location, description, requirements, salary_range")
+    csv_file = forms.FileField(
+        label="Upload CSV File",
+        help_text=(
+            "UTF-8 CSV. Required columns (or scrape aliases): title or job.title; company, "
+            "job.company_name, or company.name; location or job.location; description or job.description. "
+            "Optional: original_link or job.url; salary_range or job.salary; requirements (not stored)."
+        ),
+    )

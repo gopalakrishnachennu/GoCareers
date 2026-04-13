@@ -10,7 +10,30 @@ sys.path.append(str(BASE_DIR / 'apps'))
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-change-me-in-production')
 DEBUG = config('DEBUG', default=False, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='127.0.0.1,localhost').split(',')
+
+
+def _csv_list(value: str) -> list[str]:
+    return [x.strip() for x in (value or '').split(',') if x.strip()]
+
+
+# Production domain (Namecheap). Override ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS / SITE_URL in .env for staging.
+_PUBLIC_DOMAIN = 'chennu.co'
+_PUBLIC_DOMAIN_WWW = 'www.chennu.co'
+
+ALLOWED_HOSTS = _csv_list(
+    config(
+        'ALLOWED_HOSTS',
+        default=f'127.0.0.1,localhost,{_PUBLIC_DOMAIN},{_PUBLIC_DOMAIN_WWW}',
+    )
+)
+
+# Django 4+: required for HTTPS POSTs / admin when Origin differs; includes local dev ports.
+_CSRF_DEFAULT = (
+    f'https://{_PUBLIC_DOMAIN},https://{_PUBLIC_DOMAIN_WWW},'
+    'http://127.0.0.1:8000,http://localhost:8000'
+)
+CSRF_TRUSTED_ORIGINS = _csv_list(config('CSRF_TRUSTED_ORIGINS', default=_CSRF_DEFAULT))
+
 LLM_ENCRYPTION_KEY = config('LLM_ENCRYPTION_KEY', default='')
 
 INSTALLED_APPS = [
@@ -115,6 +138,17 @@ USE_TZ = True
 # Consultant workflow dashboard: flag sidebar rows when assigned/drafting work is older than N days
 WORKFLOW_STALE_DAYS = int(config('WORKFLOW_STALE_DAYS', default='7'))
 
+# Job CSV bulk upload: max uploaded file size (MB). Replaces an old check that rejected files > 64KB.
+JOB_BULK_UPLOAD_MAX_MB = max(1, int(config('JOB_BULK_UPLOAD_MAX_MB', default='50')))
+# Multipart job CSVs must fit in memory for DictReader path; align with bulk limit unless overridden.
+_bulk_upload_bytes = JOB_BULK_UPLOAD_MAX_MB * 1024 * 1024
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(
+    config('DATA_UPLOAD_MAX_MEMORY_SIZE', default=str(_bulk_upload_bytes))
+)
+FILE_UPLOAD_MAX_MEMORY_SIZE = int(
+    config('FILE_UPLOAD_MAX_MEMORY_SIZE', default=str(_bulk_upload_bytes))
+)
+
 # Optional: Google Knowledge Graph Search API key for company enrichment (used when Platform Config field is empty)
 GOOGLE_KG_API_KEY = config('GOOGLE_KG_API_KEY', default='').strip()
 
@@ -152,8 +186,8 @@ CACHES = {
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/'
 
-# Public site base URL for absolute links in emails (no trailing slash). Set in production.
-SITE_URL = config('SITE_URL', default='').rstrip('/')
+# Public site base URL for absolute links in emails (no trailing slash). Local: set SITE_URL=http://127.0.0.1:8000 in .env
+SITE_URL = config('SITE_URL', default=f'https://{_PUBLIC_DOMAIN}').rstrip('/')
 
 # Email — defaults suit local/dev (console). In production set EMAIL_* and typically SMTP.
 EMAIL_BACKEND = config(

@@ -1,0 +1,75 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-consulting}
+      POSTGRES_USER: ${POSTGRES_USER:-consulting}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  web:
+    build: .
+    # If you publish images (recommended), set IMAGE in Coolify and remove build.
+    image: ${IMAGE:-consulting-web:local}
+    environment:
+      DEBUG: "0"
+      SECRET_KEY: ${SECRET_KEY:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-chennu.co,www.chennu.co}
+      CSRF_TRUSTED_ORIGINS: ${CSRF_TRUSTED_ORIGINS:-https://chennu.co,https://www.chennu.co}
+      SITE_URL: ${SITE_URL:-https://chennu.co}
+      DATABASE_URL: ${DATABASE_URL:-postgres://consulting:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-consulting}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: "0"
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
+      WEB_TIMEOUT: ${WEB_TIMEOUT:-120}
+    depends_on:
+      - db
+      - redis
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  celery_worker:
+    build: .
+    image: ${IMAGE_WORKER:-consulting-worker:local}
+    command: celery -A config worker -l info
+    environment:
+      DEBUG: "0"
+      SECRET_KEY: ${SECRET_KEY:-}
+      DATABASE_URL: ${DATABASE_URL:-postgres://consulting:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-consulting}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: "0"
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  celery_beat:
+    build: .
+    image: ${IMAGE_BEAT:-consulting-beat:local}
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      DEBUG: "0"
+      SECRET_KEY: ${SECRET_KEY:-}
+      DATABASE_URL: ${DATABASE_URL:-postgres://consulting:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-consulting}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: "0"
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+

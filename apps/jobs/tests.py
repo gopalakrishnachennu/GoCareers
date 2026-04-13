@@ -1,7 +1,10 @@
+import csv
+import io
 from unittest.mock import patch
 
 from django.test import TestCase, Client
 from django.urls import reverse
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
 from users.models import User
@@ -61,6 +64,102 @@ class JobListUrlHealthFilterTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Dead posting')
         self.assertNotContains(resp, 'Live role')
+
+
+@patch("jobs.tasks.run_job_validation.delay")
+@patch("jobs.views.ensure_parsed_jd")
+class JobBulkUploadViewTests(TestCase):
+    """Bulk CSV: size limit, posting URL column, scrape-style headers."""
+
+    def setUp(self):
+        self.client = Client()
+        self.employee = User.objects.create_user(
+            username="emp_bulk", password="testpass", role=User.Role.EMPLOYEE
+        )
+
+    def test_accepts_csv_larger_than_legacy_chunk_threshold(self, _ensure, _delay):
+        """Previously any file >64KB was rejected via multiple_chunks()."""
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf, fieldnames=["title", "company", "location", "description"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "title": "Big desc row",
+                "company": "Co",
+                "location": "Remote",
+                "description": "x" * 70000,
+            }
+        )
+        csv_bytes = buf.getvalue().encode("utf-8")
+        self.assertGreater(len(csv_bytes), 65536)
+        up = SimpleUploadedFile("jobs.csv", csv_bytes, content_type="text/csv")
+        self.client.login(username="emp_bulk", password="testpass")
+        resp = self.client.post(reverse("job-bulk-upload"), {"csv_file": up})
+        self.assertEqual(resp.status_code, 302)
+        job = Job.objects.get(title="Big desc row")
+        self.assertEqual(job.company, "Co")
+        self.assertEqual(len(job.description), 70000)
+
+    def test_original_link_from_job_url_alias(self, _ensure, _delay):
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf,
+            fieldnames=[
+                "job.title",
+                "job.company_name",
+                "job.location",
+                "job.description",
+                "job.url",
+            ],
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "job.title": "SRE",
+                "job.company_name": "Nova",
+                "job.location": "US",
+                "job.description": "Run prod",
+                "job.url": "https://example.com/scraped/1",
+            }
+        )
+        up = SimpleUploadedFile("scrape.csv", buf.getvalue().encode("utf-8"), content_type="text/csv")
+        self.client.login(username="emp_bulk", password="testpass")
+        resp = self.client.post(reverse("job-bulk-upload"), {"csv_file": up})
+        self.assertEqual(resp.status_code, 302)
+        job = Job.objects.get(title="SRE")
+        self.assertEqual(job.original_link, "https://example.com/scraped/1")
+
+    def test_skips_row_when_posting_url_already_exists(self, _ensure, _delay):
+        Job.objects.create(
+            title="Existing",
+            company="X",
+            location="",
+            description="D",
+            original_link="https://example.com/dup",
+            posted_by=self.employee,
+            status=Job.Status.POOL,
+        )
+        buf = io.StringIO()
+        writer = csv.DictWriter(
+            buf, fieldnames=["title", "company", "location", "description", "original_link"]
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "title": "New title",
+                "company": "Y",
+                "location": "EU",
+                "description": "Other",
+                "original_link": "https://example.com/dup",
+            }
+        )
+        up = SimpleUploadedFile("d.csv", buf.getvalue().encode("utf-8"), content_type="text/csv")
+        self.client.login(username="emp_bulk", password="testpass")
+        resp = self.client.post(reverse("job-bulk-upload"), {"csv_file": up})
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(Job.objects.filter(title="New title").exists())
 
 
 class JobExportCSVTests(TestCase):

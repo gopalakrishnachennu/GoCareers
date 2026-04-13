@@ -7,6 +7,7 @@ from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.db.models import Q, Count
 from django.http import HttpResponse
+from django.conf import settings
 import re
 import json
 import csv
@@ -366,6 +367,54 @@ class JobDeleteView(LoginRequiredMixin, EmployeeRequiredMixin, DeleteView):
 from django.db import transaction
 
 
+def _bulk_upload_max_bytes() -> int:
+    mb = getattr(settings, "JOB_BULK_UPLOAD_MAX_MB", 50)
+    try:
+        mb = int(mb)
+    except (TypeError, ValueError):
+        mb = 50
+    return max(1, mb) * 1024 * 1024
+
+
+def _bulk_cell(row: dict, *keys: str) -> str:
+    """First non-empty stripped value among candidate CSV column names."""
+    for key in keys:
+        if key not in row:
+            continue
+        raw = row.get(key)
+        if raw is None:
+            continue
+        s = str(raw).strip()
+        if s:
+            return s
+    return ""
+
+
+def _bulk_csv_headers_ok(fieldnames) -> bool:
+    if not fieldnames:
+        return False
+    fn = {str(h).strip() for h in fieldnames if h is not None and str(h).strip()}
+    if not fn:
+        return False
+    title_ok = bool(fn & {"title", "job.title"})
+    company_ok = bool(fn & {"company", "job.company_name", "company.name"})
+    loc_ok = bool(fn & {"location", "job.location"})
+    desc_ok = bool(fn & {"description", "job.description"})
+    return title_ok and company_ok and loc_ok and desc_ok
+
+
+def _bulk_existing_job_for_posting_url(url: str):
+    url_norm = (url or "").strip().rstrip("/")
+    if not url_norm:
+        return None
+    return (
+        Job.objects.filter(
+            Q(original_link__iexact=url_norm) | Q(original_link__iexact=url_norm + "/")
+        )
+        .first()
+    )
+
+
 class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     def get(self, request):
         form = JobBulkUploadForm()
@@ -380,10 +429,15 @@ class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             if not csv_file.name.endswith('.csv'):
                 messages.error(request, "Please upload a CSV file.")
                 return render(request, 'jobs/job_bulk_upload.html', {'form': form})
-            
-            if csv_file.multiple_chunks():
-                 messages.error(request, "Uploaded file is too large (%.2f MB)." % (csv_file.size / (1000 * 1000),))
-                 return render(request, 'jobs/job_bulk_upload.html', {'form': form})
+
+            max_bytes = _bulk_upload_max_bytes()
+            if csv_file.size > max_bytes:
+                messages.error(
+                    request,
+                    f"Uploaded file is too large ({csv_file.size / (1024 * 1024):.1f} MB). "
+                    f"Maximum is {max_bytes // (1024 * 1024)} MB (JOB_BULK_UPLOAD_MAX_MB).",
+                )
+                return render(request, 'jobs/job_bulk_upload.html', {'form': form})
 
             try:
                 decoded_file = csv_file.read().decode('utf-8')
@@ -402,54 +456,79 @@ class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             except Exception:
                 bulk_target_status = Job.Status.POOL
 
-            # 2. Header validation
-            required_headers = {'title', 'company', 'location', 'description'}
-            if not reader.fieldnames or not required_headers.issubset(set(reader.fieldnames)):
-                messages.error(request, f"Missing required columns. Found: {reader.fieldnames}. Required: {required_headers}")
+            # 2. Header validation (supports scrape-style column names)
+            if not _bulk_csv_headers_ok(reader.fieldnames):
+                messages.error(
+                    request,
+                    "Missing required columns. Need title or job.title; company, job.company_name, or "
+                    "company.name; location or job.location; description or job.description. "
+                    f"Found headers: {list(reader.fieldnames)[:40]}{'…' if len(reader.fieldnames or []) > 40 else ''}",
+                )
                 return render(request, 'jobs/job_bulk_upload.html', {'form': form})
 
             jobs_created = 0
             errors = []
-            
+
             try:
-                with transaction.atomic():
-                    for i, row in enumerate(reader, start=1):
-                        title = row.get('title', '').strip()
-                        company = row.get('company', '').strip()
-                        
-                        if not title or not company:
-                            errors.append(f"Row {i}: Missing title or company.")
-                            continue
-                            
-                        description = row.get('description', '').strip()
-                        dups = find_potential_duplicate_jobs(
-                            title=title,
-                            company=company,
-                            description=description,
-                        )
-                        if dups:
+                for i, row in enumerate(reader, start=1):
+                    title = _bulk_cell(row, "title", "job.title")
+                    company = _bulk_cell(row, "company", "job.company_name", "company.name")
+                    if not title or not company:
+                        errors.append(f"Row {i}: Missing title or company.")
+                        continue
+
+                    description = _bulk_cell(row, "description", "job.description")
+                    location = _bulk_cell(row, "location", "job.location")
+                    salary_range = _bulk_cell(row, "salary_range", "job.salary")
+                    original_link = _bulk_cell(row, "original_link", "job.url")
+
+                    if original_link:
+                        url_hit = _bulk_existing_job_for_posting_url(original_link)
+                        if url_hit:
                             errors.append(
-                                f"Row {i}: Possible duplicate of job #{dups[0]['job'].id} ({dups[0]['job'].title} at {dups[0]['job'].company}). Skipped."
+                                f"Row {i}: Duplicate posting URL (existing job #{url_hit.pk} "
+                                f"\"{url_hit.title}\"). Skipped."
                             )
                             continue
 
-                        job = Job.objects.create(
-                            title=title,
-                            company=company,
-                            location=row.get('location', '').strip(),
-                            description=description,
-                            salary_range=row.get('salary_range', ''),
-                            posted_by=request.user,
-                            status=bulk_target_status,
+                    dups = find_potential_duplicate_jobs(
+                        title=title,
+                        company=company,
+                        description=description,
+                    )
+                    if dups:
+                        errors.append(
+                            f"Row {i}: Possible duplicate of job #{dups[0]['job'].id} "
+                            f"({dups[0]['job'].title} at {dups[0]['job'].company}). Skipped."
                         )
-                        ensure_parsed_jd(job, actor=request.user)
-                        # Async validation scoring
-                        try:
-                            from .tasks import run_job_validation
-                            run_job_validation.delay(job.pk)
-                        except Exception:
-                            logger.exception("run_job_validation task dispatch failed for bulk job %s", job.pk)
-                        jobs_created += 1
+                        continue
+
+                    try:
+                        with transaction.atomic():
+                            job = Job.objects.create(
+                                title=title,
+                                company=company,
+                                location=location,
+                                description=description,
+                                salary_range=salary_range,
+                                original_link=original_link,
+                                posted_by=request.user,
+                                status=bulk_target_status,
+                            )
+                            ensure_parsed_jd(job, actor=request.user)
+                            try:
+                                from .tasks import run_job_validation
+
+                                run_job_validation.delay(job.pk)
+                            except Exception:
+                                logger.exception(
+                                    "run_job_validation task dispatch failed for bulk job %s",
+                                    job.pk,
+                                )
+                            jobs_created += 1
+                    except Exception as row_exc:
+                        logger.exception("Bulk upload row %s failed", i)
+                        errors.append(f"Row {i}: {row_exc}")
 
             except Exception as e:
                 logger.error(f"Bulk upload error: {e}")
@@ -460,7 +539,9 @@ class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 messages.success(request, f"Successfully uploaded {jobs_created} jobs!")
             
             if errors:
-                messages.warning(request, f"Some rows were skipped: {'; '.join(errors[:5])}...")
+                head = "; ".join(errors[:5])
+                tail = f" …and {len(errors) - 5} more" if len(errors) > 5 else ""
+                messages.warning(request, f"Some rows were skipped: {head}{tail}")
 
             return redirect('job-list')
         
