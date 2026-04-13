@@ -1,12 +1,16 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.views.generic import RedirectView
+from django.http import HttpResponse
 
 from core.views import home, AdminDashboardView, EmployeeDashboardView
 from config.impersonate_views import start_impersonate, stop_impersonate
 from users.views import PublicConsultantProfileView
 
 urlpatterns = [
+    # Leapcell health probes (observed typos in platform paths)
+    path("kaithhealthcheck", lambda request: HttpResponse("ok", content_type="text/plain")),
+    path("kaithheathcheck", lambda request: HttpResponse("ok", content_type="text/plain")),
     path('admin/', admin.site.urls),
     path('c/<slug:slug>/', PublicConsultantProfileView.as_view(), name='consultant-public-profile'),
     path('consultants/consultants/', RedirectView.as_view(url='/consultants/', permanent=True)),
