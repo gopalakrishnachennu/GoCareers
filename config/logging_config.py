@@ -17,9 +17,50 @@ Console output in development shows colored, structured logs.
 import os
 from pathlib import Path
 
-# Base directory for logs
-LOG_DIR = Path(__file__).resolve().parent.parent / 'logs'
-LOG_DIR.mkdir(exist_ok=True)
+
+def _resolve_log_dir() -> Path | None:
+    """
+    Pick a writable log directory.
+    Prefer project ./logs, then /tmp/consulting-logs (for readonly platforms).
+    """
+    candidates = [
+        Path(__file__).resolve().parent.parent / 'logs',
+        Path(os.getenv("TMPDIR", "/tmp")) / "consulting-logs",
+    ]
+    for path in candidates:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            return path
+        except OSError:
+            continue
+    return None
+
+
+LOG_DIR = _resolve_log_dir()
+
+
+def _file_handler(filename: str, level: str, formatter: str, max_bytes: int, backup_count: int, *, filters=None):
+    """
+    Build a rotating file handler when filesystem is writable.
+    Fallback to NullHandler on read-only platforms.
+    """
+    if LOG_DIR is None:
+        return {
+            'level': level,
+            'class': 'logging.NullHandler',
+        }
+    cfg = {
+        'level': level,
+        'class': 'logging.handlers.RotatingFileHandler',
+        'filename': str(LOG_DIR / filename),
+        'maxBytes': max_bytes,
+        'backupCount': backup_count,
+        'formatter': formatter,
+        'encoding': 'utf-8',
+    }
+    if filters:
+        cfg['filters'] = filters
+    return cfg
 
 
 def get_logging_config(debug=True):
@@ -67,60 +108,30 @@ def get_logging_config(debug=True):
             },
 
             # App log — all application activity
-            'app_file': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': str(LOG_DIR / 'app.log'),
-                'maxBytes': 5 * 1024 * 1024,   # 5MB
-                'backupCount': 5,
-                'formatter': 'verbose',
-                'encoding': 'utf-8',
-            },
+            'app_file': _file_handler(
+                'app.log', 'INFO', 'verbose', 5 * 1024 * 1024, 5
+            ),
 
             # Error log — ERROR + CRITICAL only
-            'error_file': {
-                'level': 'ERROR',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': str(LOG_DIR / 'errors.log'),
-                'maxBytes': 5 * 1024 * 1024,
-                'backupCount': 10,
-                'formatter': 'verbose',
-                'encoding': 'utf-8',
-            },
+            'error_file': _file_handler(
+                'errors.log', 'ERROR', 'verbose', 5 * 1024 * 1024, 10
+            ),
 
             # Request log — HTTP traffic
-            'request_file': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': str(LOG_DIR / 'requests.log'),
-                'maxBytes': 5 * 1024 * 1024,
-                'backupCount': 3,
-                'formatter': 'verbose',
-                'encoding': 'utf-8',
-            },
+            'request_file': _file_handler(
+                'requests.log', 'INFO', 'verbose', 5 * 1024 * 1024, 3
+            ),
 
             # Security log — auth events
-            'security_file': {
-                'level': 'INFO',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': str(LOG_DIR / 'security.log'),
-                'maxBytes': 5 * 1024 * 1024,
-                'backupCount': 5,
-                'formatter': 'verbose',
-                'encoding': 'utf-8',
-            },
+            'security_file': _file_handler(
+                'security.log', 'INFO', 'verbose', 5 * 1024 * 1024, 5
+            ),
 
             # Debug log — everything (dev only)
-            'debug_file': {
-                'level': 'DEBUG',
-                'class': 'logging.handlers.RotatingFileHandler',
-                'filename': str(LOG_DIR / 'debug.log'),
-                'maxBytes': 10 * 1024 * 1024,
-                'backupCount': 2,
-                'formatter': 'verbose',
-                'filters': ['require_debug_true'],
-                'encoding': 'utf-8',
-            },
+            'debug_file': _file_handler(
+                'debug.log', 'DEBUG', 'verbose', 10 * 1024 * 1024, 2,
+                filters=['require_debug_true']
+            ),
         },
 
         # --- Loggers ---
