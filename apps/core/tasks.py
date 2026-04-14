@@ -2,13 +2,16 @@ from celery import shared_task
 from datetime import timedelta
 from io import BytesIO
 
+from django.db.models import Q, Count
 from django.utils import timezone
-from django.core.mail import EmailMessage
+from django.core.mail import EmailMessage, send_mail
+from django.conf import settings
+from django.urls import reverse
 
 from core.email_ingest import fetch_unseen_and_process
 from core.models import PlatformConfig
 from submissions.models import ApplicationSubmission
-from users.models import User
+from users.models import User, UserEmailNotificationPreferences
 
 
 @shared_task
@@ -29,7 +32,7 @@ def send_weekly_executive_report_task():
     recipient_qs = User.objects.filter(
         is_active=True,
     ).filter(
-        (timezone.Q(is_superuser=True) | timezone.Q(role=User.Role.ADMIN))
+        (Q(is_superuser=True) | Q(role=User.Role.ADMIN))
     )
     recipients = [u.email for u in recipient_qs if u.email]
     if not recipients:
@@ -167,5 +170,60 @@ def send_weekly_executive_report_task():
         "interviews_scheduled": interviews_scheduled,
         "offers_pending": offers_pending,
     }
+
+
+@shared_task
+def send_weekly_consultant_pipeline_digest_task():
+    """
+    Weekly email to consultants: counts by pipeline stage (last 7 days + active).
+    Respects UserEmailNotificationPreferences.email_submissions.
+    """
+    AS = ApplicationSubmission
+    now = timezone.now()
+    week_ago = now - timedelta(days=7)
+    base = getattr(settings, "SITE_URL", "").rstrip("/")
+
+    consultants = User.objects.filter(
+        role=User.Role.CONSULTANT,
+        is_active=True,
+        consultant_profile__isnull=False,
+    ).select_related("consultant_profile")
+
+    sent = 0
+    for user in consultants:
+        prefs, _ = UserEmailNotificationPreferences.objects.get_or_create(user=user)
+        if not prefs.email_submissions or not user.email:
+            continue
+        cp = user.consultant_profile
+        active = AS.objects.filter(consultant=cp, is_archived=False)
+        recent = active.filter(updated_at__gte=week_ago)
+        lines = [
+            f"Pipeline snapshot for {user.get_full_name() or user.username}",
+            "",
+            f"Active submissions (total): {active.count()}",
+            f"Updated in the last 7 days: {recent.count()}",
+        ]
+        by_status = active.values("status").order_by("status").annotate(n=Count("id"))
+
+        for row in by_status:
+            label = dict(AS.Status.choices).get(row["status"], row["status"])
+            lines.append(f"  {label}: {row['n']}")
+
+        path = reverse("submission-list")
+        lines.extend(["", f"Open submissions: {base}{path}"])
+
+        try:
+            send_mail(
+                subject="Your weekly pipeline summary",
+                message="\n".join(lines),
+                from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None) or "noreply@localhost",
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+            sent += 1
+        except Exception:
+            continue
+
+    return {"sent_count": sent}
 
 

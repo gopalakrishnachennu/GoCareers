@@ -8,6 +8,23 @@
         <p class="text-gray-600">{{ submission.consultant.user.get_full_name|default:submission.consultant.user.username }} → {{ submission.job.title }} ({{ submission.job.company }})</p>
     </div>
 
+    <div class="bg-indigo-50 border border-indigo-100 rounded-xl p-6 mb-6">
+        <h2 class="text-lg font-semibold text-indigo-900">What to improve next</h2>
+        <p class="text-sm text-indigo-900 mt-2 leading-relaxed">{{ coaching_headline }}</p>
+        {% if latest_draft %}
+        <form method="post" action="{% url 'draft-regenerate' latest_draft.pk %}" class="mt-4 space-y-2">
+            {% csrf_token %}
+            <input type="hidden" name="coaching_keywords" value="{{ coaching_keywords_csv }}" />
+            <button type="submit" class="inline-flex items-center px-4 py-2.5 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition">
+                Regenerate resume with JD keyword hints
+            </button>
+            <p class="text-xs text-indigo-800 max-w-xl">Passes missing JD terms into the resume generator so new Skills/Experience bullets emphasize them (where truthful). Uses draft for this job (v{{ latest_draft.version }}).</p>
+        </form>
+        {% else %}
+        <p class="text-sm text-indigo-800 mt-3">Create a resume draft for this job first (Resumes → generate). Then open this page again to regenerate with coaching hints.</p>
+        {% endif %}
+    </div>
+
     <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
         <div class="flex flex-wrap items-start justify-between gap-4">
             <div>

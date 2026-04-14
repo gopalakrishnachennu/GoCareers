@@ -18,6 +18,7 @@ urlpatterns = [
     path("__reload__/", include("django_browser_reload.urls")),
     path("accounts/", include("django.contrib.auth.urls")),
     path("jobs/", include("jobs.urls")),
+    path("careers/", include("jobs.public_urls")),
     path("resumes/", include("resumes.urls")),
     path("submissions/", include("submissions.urls")),
     path("interviews/", include("interviews_app.urls")),

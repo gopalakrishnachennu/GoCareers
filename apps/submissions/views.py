@@ -672,6 +672,31 @@ class RejectionAnalysisView(LoginRequiredMixin, UserPassesTestMixin, DetailView)
             "Avoid graphics/tables; keep formatting simple for ATS.",
         ]
         context["rewrite_steps"] = rewrite_steps
+
+        latest = (
+            Resume.objects.filter(consultant=consultant, job=job).order_by("-version").first()
+        )
+        context["latest_draft"] = latest
+        missing_kw = context.get("skills_missing") or []
+        context["coaching_keywords_csv"] = ",".join(missing_kw[:24])
+
+        headline_parts = []
+        if coverage_pct is not None and coverage_pct < 75:
+            headline_parts.append(
+                f"Raise ATS keyword coverage from {coverage_pct}% toward 75%+ by adding the missing JD terms to Skills and Experience."
+            )
+        if context.get("skills_missing_but_in_profile"):
+            headline_parts.append(
+                "Surface skills you already have in your profile but did not emphasize in the resume."
+            )
+        if checks.get("too_short"):
+            headline_parts.append("Lengthen impact bullets with metrics and tools.")
+        context["coaching_headline"] = (
+            " ".join(headline_parts)
+            if headline_parts
+            else "Align your resume bullets with the JD: add missing keywords where truthful, and keep formatting ATS-simple."
+        )
+
         return context
 
 
@@ -949,6 +974,12 @@ class PlacementCreateView(_StaffRequiredMixin, CreateView):
             record_submission_status_change(self.submission, ApplicationSubmission.Status.PLACED, from_status=old, note='Placement created.')
         messages.success(self.request, "Placement created successfully!")
         response = super().form_valid(form)
+        try:
+            from core.notification_utils import email_consultant_placement_confirmed
+
+            email_consultant_placement_confirmed(self.object)
+        except Exception:
+            pass
         return response
 
     def get_success_url(self):

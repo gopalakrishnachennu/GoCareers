@@ -5,7 +5,7 @@ import hashlib
 from django.urls import reverse
 
 from core.models import Notification
-from core.notification_utils import create_notification
+from core.notification_utils import create_notification, email_consultant_interview_saved
 from users.models import User
 
 
@@ -37,6 +37,11 @@ def notify_interview_scheduled(interview) -> None:
             link=path,
             dedupe_key=f"interview_sched:{interview.pk}",
         )
+
+    try:
+        email_consultant_interview_saved(interview)
+    except Exception:
+        pass
 
 
 def notify_interview_updated(interview, *, old_status: str, old_scheduled_at) -> None:

@@ -1,6 +1,10 @@
+from __future__ import annotations
+
 import json
 import logging
 import re
+from typing import List
+
 from django.utils import timezone
 
 from .models import Job
@@ -236,6 +240,64 @@ def _normalize_list(values):
     return out
 
 
+def consultant_job_match_detail(job: Job, consultant: ConsultantProfile) -> dict:
+    """
+    Heuristic match for UI: raw score, 0–100% coverage, and skill overlap counts.
+    """
+    raw_score = _score_job_for_consultant(job, consultant)
+    skills = set(_normalize_list(consultant.skills))
+    parsed = job.parsed_jd or {}
+    required = _normalize_list(parsed.get("required_skills") or [])
+    if required:
+        req_set = set(required)
+        overlap = skills & req_set
+        match_pct = min(100, round(100 * len(overlap) / len(required)))
+        return {
+            "raw_score": raw_score,
+            "match_pct": match_pct,
+            "matched_required": len(overlap),
+            "total_required": len(required),
+            "required_skills": required,
+        }
+    # No parsed requirements: estimate from skills appearing in JD text
+    desc = (job.description or "").lower()
+    if skills and desc:
+        hits = sum(1 for s in skills if s and len(s) >= 2 and s in desc)
+        match_pct = min(100, round(100 * hits / max(1, len(skills))))
+    else:
+        match_pct = min(100, raw_score) if raw_score else 0
+    return {
+        "raw_score": raw_score,
+        "match_pct": match_pct,
+        "matched_required": 0,
+        "total_required": 0,
+        "required_skills": [],
+    }
+
+
+def ranked_consultants_for_job(job: Job, limit: int = 25) -> List[dict]:
+    """
+    All active consultants with a match % and raw score, sorted best-first.
+    """
+    qs = ConsultantProfile.objects.filter(status=ConsultantProfile.Status.ACTIVE).prefetch_related(
+        "marketing_roles", "user"
+    )
+    rows = []
+    for consultant in qs:
+        detail = consultant_job_match_detail(job, consultant)
+        rows.append(
+            {
+                "consultant": consultant,
+                "match_pct": detail["match_pct"],
+                "raw_score": detail["raw_score"],
+                "matched_required": detail["matched_required"],
+                "total_required": detail["total_required"],
+            }
+        )
+    rows.sort(key=lambda r: (-r["match_pct"], -r["raw_score"], r["consultant"].user.get_full_name() or r["consultant"].user.username))
+    return rows[:limit]
+
+
 def _score_job_for_consultant(job: Job, consultant: ConsultantProfile) -> int:
     """
     Heuristic score:
@@ -421,19 +483,18 @@ def match_consultants_for_job(
     job: Job, limit: int = 10
 ):
     """
-    Return a list of best matching consultants for a given job.
+    Return a list of best matching consultants for a given job (backward compatible).
+    Uses ranked match % then raw score.
     """
-    # Simple filter to narrow down candidates
-    qs = ConsultantProfile.objects.filter(
-        status=ConsultantProfile.Status.ACTIVE
-    ).prefetch_related("marketing_roles", "user")
-
-    results = []
-    for consultant in qs:
-        s = _score_job_for_consultant(job, consultant)
-        if s > 0:
-            results.append((s, consultant))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-    return [c for _, c in results[:limit]]
+    ranked = ranked_consultants_for_job(job, limit=limit * 3)
+    out = []
+    for row in ranked:
+        if row["match_pct"] > 0 or row["raw_score"] > 0:
+            out.append(row["consultant"])
+        if len(out) >= limit:
+            break
+    # If nobody scored >0, still show top few by match_pct (even 0) for visibility
+    if not out and ranked:
+        out = [row["consultant"] for row in ranked[:limit]]
+    return out
 

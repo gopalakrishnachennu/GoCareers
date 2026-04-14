@@ -12,9 +12,17 @@ from users.models import User, MarketingRole
 import json
 from django.core.serializers.json import DjangoJSONEncoder
 
+from core.dashboard_metrics import (
+    get_submission_funnel_metrics,
+    get_time_to_hire_metrics,
+    get_employee_leaderboard_metrics,
+    get_consultant_performance_metrics,
+)
+
 class EmployeeRequiredMixin(UserPassesTestMixin):
     def test_func(self):
-        return self.request.user.role == User.Role.EMPLOYEE or self.request.user.is_superuser
+        u = self.request.user
+        return u.is_superuser or u.role in (User.Role.EMPLOYEE, User.Role.ADMIN)
 
 class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, TemplateView):
     template_name = 'analytics/dashboard.html'
@@ -209,6 +217,36 @@ class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, Template
                 )
         context['role_funnel'] = role_funnel
 
+        # Same metrics as Admin Dashboard (no duplicate business logic)
+        context.update(get_submission_funnel_metrics())
+        context.update(get_time_to_hire_metrics())
+        context.update(get_employee_leaderboard_metrics())
+        context.update(get_consultant_performance_metrics())
+
+        fg = context.get("funnel_global") or {}
+        context["funnel_global_json"] = json.dumps(
+            {
+                "labels": ["Resumes generated", "Submitted", "Interview+", "Offers", "Rejected"],
+                "values": [
+                    fg.get("resumes") or 0,
+                    fg.get("submitted") or 0,
+                    fg.get("interview") or 0,
+                    fg.get("hired") or 0,
+                    fg.get("rejected") or 0,
+                ],
+            },
+            cls=DjangoJSONEncoder,
+        )
+
+        lb = context.get("employee_leaderboard") or []
+        context["leaderboard_chart_json"] = json.dumps(
+            {
+                "labels": [(r["user"].get_full_name() or r["user"].username)[:24] for r in lb[:12]],
+                "sub_to_interview": [(r.get("sub_to_interview_rate_pct") or 0) for r in lb[:12]],
+                "hires": [r.get("hires") or 0 for r in lb[:12]],
+            },
+            cls=DjangoJSONEncoder,
+        )
         return context
 
 

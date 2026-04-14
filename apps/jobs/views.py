@@ -31,7 +31,14 @@ def _get_require_pool_staging() -> bool:
         return True
 from companies.models import Company
 from users.models import User, MarketingRole
-from .services import JDParserService, match_consultants_for_job, find_potential_duplicate_jobs, ensure_parsed_jd, validate_job_quality
+from .services import (
+    JDParserService,
+    match_consultants_for_job,
+    ranked_consultants_for_job,
+    find_potential_duplicate_jobs,
+    ensure_parsed_jd,
+    validate_job_quality,
+)
 from submissions.models import ApplicationSubmission
 
 
@@ -200,8 +207,9 @@ class JobDetailView(LoginRequiredMixin, DetailView):
         else:
             context['parsed_jd_json'] = ""
 
-        # AI-style matching: top consultants for this job
+        # Consultant ↔ job match scores (ranked, with % and raw score)
         if job:
+            context['consultant_match_rankings'] = ranked_consultants_for_job(job, limit=25)
             context['matched_consultants'] = match_consultants_for_job(job, limit=6)
         # Consultant: their application for this job (so they can "Schedule interview" from this job)
         if job and getattr(self.request.user, 'role', None) == User.Role.CONSULTANT and hasattr(self.request.user, 'consultant_profile'):

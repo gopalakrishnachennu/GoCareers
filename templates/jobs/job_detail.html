@@ -425,44 +425,46 @@
                 </div>
                 {% endif %}
 
-                {% if matched_consultants %}
+                {% if consultant_match_rankings %}
                 <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h4 class="font-bold text-gray-800 mb-4 flex items-center justify-between">
-                        <span class="uppercase tracking-wide text-xs">Top Matching Consultants</span>
-                        <span class="text-xs text-gray-500">{{ matched_consultants|length }} match{{ matched_consultants|length|pluralize }}</span>
+                    <h4 class="font-bold text-gray-800 mb-1 flex items-center justify-between">
+                        <span class="uppercase tracking-wide text-xs">Consultant match</span>
+                        <span class="text-xs text-gray-500">Top {{ consultant_match_rankings|length }} by fit</span>
                     </h4>
-                    <div class="space-y-3 text-sm">
-                        {% for c in matched_consultants %}
+                    <p class="text-xs text-gray-500 mb-4">Match % uses JD required skills vs consultant profile skills (same family as rejection analysis).</p>
+                    <div class="overflow-x-auto max-h-[28rem] overflow-y-auto space-y-2 text-sm">
+                        {% for row in consultant_match_rankings %}
+                        {% with c=row.consultant %}
                         <div class="border border-gray-100 rounded-lg p-3 hover:bg-blue-50/40 transition">
-                            <div class="flex items-center justify-between">
-                                <div>
-                                    <div class="font-semibold text-gray-900">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="min-w-0">
+                                    <div class="font-semibold text-gray-900 truncate">
                                         <a href="{% url 'consultant-detail' c.user.pk %}" class="hover:text-blue-600">
                                             {{ c.user.get_full_name|default:c.user.username }}
                                         </a>
                                     </div>
                                     <div class="text-xs text-gray-500">
-                                        {% if c.hourly_rate %}
-                                        ${{ c.hourly_rate }}/hr ·
-                                        {% endif %}
+                                        {% if c.hourly_rate %}${{ c.hourly_rate }}/hr ·{% endif %}
                                         {{ c.get_status_display }}
                                     </div>
                                 </div>
-                                <div
-                                    class="bg-gray-100 text-gray-700 rounded-full w-8 h-8 flex items-center justify-center font-bold text-xs">
-                                    {{ c.user.username|first|upper }}
+                                <div class="flex flex-col items-end flex-shrink-0">
+                                    <span class="text-lg font-extrabold text-blue-700 tabular-nums">{{ row.match_pct }}%</span>
+                                    <span class="text-[10px] text-gray-400">score {{ row.raw_score }}</span>
                                 </div>
                             </div>
+                            {% if row.total_required %}
+                            <p class="text-[10px] text-gray-500 mt-1">JD skills matched {{ row.matched_required }}/{{ row.total_required }}</p>
+                            {% endif %}
                             {% if c.skills %}
                             <div class="mt-2 flex flex-wrap gap-1">
-                                {% for s in c.skills|slice:":4" %}
-                                <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-xs font-medium">
-                                    {{ s }}
-                                </span>
+                                {% for s in c.skills|slice:":5" %}
+                                <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-medium">{{ s }}</span>
                                 {% endfor %}
                             </div>
                             {% endif %}
                         </div>
+                        {% endwith %}
                         {% endfor %}
                     </div>
                 </div>
@@ -538,17 +540,24 @@
                 </div>
                 {% endif %}
 
-                <!-- Apply (Placeholder) -->
                 {% if object.status == 'OPEN' %}
-                <button
-                    class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg shadow-sm hover:shadow transition"
-                    onclick="alert('Apply Logic Coming Soon!')">
-                    Apply Now
-                </button>
+                    {% if user.role == 'CONSULTANT' %}
+                    <a href="{% url 'submission-quick-submit' %}"
+                        class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg shadow-sm hover:shadow transition">
+                        Start application
+                    </a>
+                    <p class="text-xs text-gray-500 mt-2 text-center">Uses Quick submit with your latest resume draft.</p>
+                    {% else %}
+                    <a href="{% url 'public-job-list' %}"
+                        class="block w-full text-center bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-3 rounded-lg border border-gray-200 transition text-sm">
+                        Public job board
+                    </a>
+                    <p class="text-xs text-gray-500 mt-2 text-center">Consultants: use Quick submit or your workflow to apply.</p>
+                    {% endif %}
                 {% else %}
-                <button class="w-full bg-gray-300 text-gray-500 font-bold py-3 rounded-lg cursor-not-allowed">
-                    Position Closed
-                </button>
+                <div class="w-full bg-gray-200 text-gray-600 font-medium py-3 rounded-lg text-center text-sm">
+                    Not open for applications
+                </div>
                 {% endif %}
 
             </div>

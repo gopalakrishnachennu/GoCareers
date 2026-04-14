@@ -19,7 +19,7 @@ from .engine import (
     preflight_check,
     validate_input_sections,
 )
-from users.models import ConsultantProfile
+from users.models import ConsultantProfile, User
 from core.models import LLMConfig
 from jobs.services import JDParserService
 
@@ -39,6 +39,30 @@ class DraftAccessMixin(LoginRequiredMixin, UserPassesTestMixin):
         if u.role == 'CONSULTANT' and hasattr(u, 'consultant_profile'):
             draft_id = self.kwargs.get('pk')
             return ResumeDraft.objects.filter(pk=draft_id, consultant=u.consultant_profile).exists()
+        return False
+
+
+class DraftRegenerateAccessMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """Staff or owning consultant can regenerate a draft."""
+    def test_func(self):
+        u = self.request.user
+        if u.is_superuser or u.role in ('ADMIN', 'EMPLOYEE'):
+            return True
+        if u.role == User.Role.CONSULTANT and hasattr(u, 'consultant_profile'):
+            draft_id = self.kwargs.get('pk')
+            return ResumeDraft.objects.filter(pk=draft_id, consultant=u.consultant_profile).exists()
+        return False
+
+
+class ResumeGenerateActionAccessMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """Staff, or a consultant generating for their own profile."""
+    def test_func(self):
+        u = self.request.user
+        if u.is_superuser or u.role in (User.Role.ADMIN, User.Role.EMPLOYEE):
+            return True
+        if u.role == User.Role.CONSULTANT and hasattr(u, 'consultant_profile'):
+            cid = self.request.POST.get('consultant')
+            return cid and str(u.consultant_profile.pk) == str(cid)
         return False
 
 
@@ -167,7 +191,7 @@ class LLMInputPreferenceSaveView(AdminOrEmployeeMixin, BaseView):
         return redirect(f"{reverse('draft-detail', kwargs={'pk': pk})}#llm-builder")
 
 
-class DraftRegenerateView(AdminOrEmployeeMixin, BaseView):
+class DraftRegenerateView(DraftRegenerateAccessMixin, BaseView):
     """Regenerate a draft using the Master Prompt engine (single LLM call)."""
 
     def post(self, request, pk):
@@ -185,8 +209,15 @@ class DraftRegenerateView(AdminOrEmployeeMixin, BaseView):
             messages.error(request, v_err)
             return redirect("draft-detail", pk=pk)
 
+        raw_kw = (request.POST.get("coaching_keywords") or "").strip()
+        coaching_keywords = [x.strip() for x in raw_kw.split(",") if x.strip()] if raw_kw else None
+
         content, tokens, error, metadata = generate_resume(
-            job, consultant_profile, actor=request.user, input_sections=post_sections
+            job,
+            consultant_profile,
+            actor=request.user,
+            input_sections=post_sections,
+            coaching_keywords=coaching_keywords,
         )
 
         draft = ResumeDraft(
@@ -422,7 +453,7 @@ class ResumeGeneratePageView(AdminOrEmployeeMixin, BaseView):
         return render(request, 'resumes/generate_resume.html', context)
 
 
-class ResumeGenerateActionView(AdminOrEmployeeMixin, BaseView):
+class ResumeGenerateActionView(ResumeGenerateActionAccessMixin, BaseView):
     """
     POST: Generate a resume using the clean engine (single LLM call).
     Creates a ResumeDraft and redirects to the review page.
@@ -449,6 +480,9 @@ class ResumeGenerateActionView(AdminOrEmployeeMixin, BaseView):
             messages.error(request, v_err)
             return redirect('resume-generate')
 
+        raw_kw = (request.POST.get("coaching_keywords") or "").strip()
+        coaching_keywords = [x.strip() for x in raw_kw.split(",") if x.strip()] if raw_kw else None
+
         # Create draft in PROCESSING
         draft = ResumeDraft(
             consultant=cp,
@@ -459,7 +493,7 @@ class ResumeGenerateActionView(AdminOrEmployeeMixin, BaseView):
         draft.save()
 
         content, tokens, error, metadata = generate_resume(
-            job, cp, actor=request.user, input_sections=post_sections
+            job, cp, actor=request.user, input_sections=post_sections, coaching_keywords=coaching_keywords
         )
 
         if error:

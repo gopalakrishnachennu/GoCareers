@@ -1,0 +1,51 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 py-10">
+    <div class="mb-8">
+        <h1 class="text-3xl font-bold text-gray-900">Open positions</h1>
+        <p class="text-gray-600 mt-2">Browse live roles. Sign in as a consultant to apply through the portal.</p>
+    </div>
+
+    <form method="get" class="mb-6 flex flex-wrap gap-2 items-center">
+        <input type="search" name="q" value="{{ request.GET.q }}" placeholder="Search title, company, location"
+            class="flex-1 min-w-[200px] border border-gray-300 rounded-lg px-4 py-2 text-sm" />
+        <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Search</button>
+    </form>
+
+    <div class="space-y-4">
+        {% for job in jobs %}
+        <article class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 hover:border-blue-200 transition">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold text-gray-900">
+                        <a href="{% url 'public-job-detail' job.pk %}" class="hover:text-blue-600">{{ job.title }}</a>
+                    </h2>
+                    <p class="text-sm text-gray-600 mt-1">{{ job.company }} · {{ job.location|default:"Remote" }}</p>
+                    <p class="text-xs text-gray-500 mt-2 line-clamp-2">{{ job.description|truncatewords:40 }}</p>
+                </div>
+                <div class="flex flex-col items-start md:items-end gap-2">
+                    <span class="text-xs font-medium text-gray-500">{{ job.get_job_type_display }}</span>
+                    <a href="{% url 'public-job-detail' job.pk %}"
+                        class="inline-flex px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">View</a>
+                </div>
+            </div>
+        </article>
+        {% empty %}
+        <p class="text-gray-500">No open roles match your search.</p>
+        {% endfor %}
+    </div>
+
+    {% if is_paginated %}
+    <div class="mt-8 flex justify-center gap-2">
+        {% if page_obj.has_previous %}
+        <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.q %}&q={{ request.GET.q|urlencode }}{% endif %}" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Previous</a>
+        {% endif %}
+        <span class="text-sm text-gray-600 py-1.5">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+        {% if page_obj.has_next %}
+        <a href="?page={{ page_obj.next_page_number }}{% if request.GET.q %}&q={{ request.GET.q|urlencode }}{% endif %}" class="px-3 py-1.5 rounded border border-gray-300 text-sm">Next</a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

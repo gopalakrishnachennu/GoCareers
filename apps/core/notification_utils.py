@@ -180,3 +180,63 @@ def notify_job_email_optional(user, *, subject: str, body: str, link_path: str) 
         )
     except Exception as exc:
         logger.debug("notify_job_email_optional failed: %s", exc)
+
+
+def email_consultant_interview_saved(interview) -> None:
+    """
+    Optional email to the consultant when an interview record is saved (confirmation copy).
+    Respects UserEmailNotificationPreferences.email_interviews.
+    """
+    from users.models import UserEmailNotificationPreferences
+
+    u = interview.consultant.user
+    prefs, _ = UserEmailNotificationPreferences.objects.get_or_create(user=u)
+    if not prefs.email_interviews:
+        return
+    if not getattr(u, "email", None):
+        return
+    path = reverse("interview-detail", kwargs={"pk": interview.pk})
+    when = interview.scheduled_at.strftime("%b %d, %Y %H:%M") if interview.scheduled_at else "TBD"
+    subject = f"Interview saved: {interview.job_title}"
+    body = f"{interview.company} · {interview.get_round_display()}\nWhen: {when}"
+    base = _settings_allowed_origin()
+    try:
+        send_mail(
+            subject=subject[:200],
+            message=f"{body}\n\nView: {base}{path}",
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None) or "noreply@localhost",
+            recipient_list=[u.email],
+            fail_silently=True,
+        )
+    except Exception as exc:
+        logger.debug("email_consultant_interview_saved failed: %s", exc)
+
+
+def email_consultant_placement_confirmed(placement) -> None:
+    """
+    Email consultant when a placement is created (submission marked PLACED).
+    Uses email_submissions preference (pipeline milestone).
+    """
+    from users.models import UserEmailNotificationPreferences
+
+    sub = placement.submission
+    u = sub.consultant.user
+    prefs, _ = UserEmailNotificationPreferences.objects.get_or_create(user=u)
+    if not prefs.email_submissions:
+        return
+    if not getattr(u, "email", None):
+        return
+    path = reverse("placement-detail", kwargs={"pk": placement.pk})
+    subject = f"Placement confirmed: {sub.job.title}"
+    body = f"{sub.job.company}\nYour submission is now marked as placed."
+    base = _settings_allowed_origin()
+    try:
+        send_mail(
+            subject=subject[:200],
+            message=f"{body}\n\nView: {base}{path}",
+            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None) or "noreply@localhost",
+            recipient_list=[u.email],
+            fail_silently=True,
+        )
+    except Exception as exc:
+        logger.debug("email_consultant_placement_confirmed failed: %s", exc)

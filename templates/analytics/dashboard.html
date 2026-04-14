@@ -63,6 +63,121 @@
         </div>
     </div>
 
+    <!-- Admin-aligned pipeline metrics (shared with Admin Dashboard) -->
+    {% if funnel_global %}
+    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Pipeline overview</h2>
+        <p class="text-xs text-gray-500 mb-4">Resume generation → submissions → interviews → offers (global, all time).</p>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-4">
+            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <p class="text-xs text-gray-500">Resumes generated</p>
+                <p class="text-lg font-bold text-gray-900">{{ funnel_global.resumes }}</p>
+            </div>
+            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <p class="text-xs text-gray-500">Submitted</p>
+                <p class="text-lg font-bold text-gray-900">{{ funnel_global.submitted }}</p>
+            </div>
+            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <p class="text-xs text-gray-500">Interview+</p>
+                <p class="text-lg font-bold text-gray-900">{{ funnel_global.interview }}</p>
+            </div>
+            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <p class="text-xs text-gray-500">Offers</p>
+                <p class="text-lg font-bold text-gray-900">{{ funnel_global.hired }}</p>
+            </div>
+            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
+                <p class="text-xs text-gray-500">Rejected</p>
+                <p class="text-lg font-bold text-gray-900">{{ funnel_global.rejected }}</p>
+            </div>
+        </div>
+        <div class="relative h-56 w-full max-w-3xl">
+            <canvas id="pipelineGlobalChart"></canvas>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if time_to_hire_stages %}
+    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Time-to-hire (avg. days)</h2>
+        <p class="text-xs text-gray-500 mb-3">Bottleneck stage: <strong>{{ time_to_hire_bottleneck|default:"—" }}</strong></p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {% for label, days in time_to_hire_stages %}
+            <div class="rounded-lg border border-gray-100 p-4">
+                <p class="text-xs text-gray-500">{{ label }}</p>
+                <p class="text-2xl font-bold text-indigo-700">{% if days is not None %}{{ days }}{% else %}—{% endif %}</p>
+                <p class="text-[10px] text-gray-400 mt-1">days</p>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% if employee_leaderboard %}
+    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Recruiter leaderboard</h2>
+        <p class="text-xs text-gray-500 mb-4">By jobs you posted: submission → interview conversion and hires.</p>
+        <div class="overflow-x-auto">
+            <table class="min-w-full text-sm text-left text-gray-700">
+                <thead>
+                    <tr class="border-b border-gray-200 text-xs uppercase text-gray-500">
+                        <th class="py-2 pr-4">#</th>
+                        <th class="py-2 pr-4">Employee</th>
+                        <th class="py-2 px-2 text-right">Submissions</th>
+                        <th class="py-2 px-2 text-right">Interviews</th>
+                        <th class="py-2 px-2 text-right">Sub→Int %</th>
+                        <th class="py-2 px-2 text-right">Hires</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in employee_leaderboard %}
+                    <tr class="border-b border-gray-50">
+                        <td class="py-2 pr-4 text-gray-500">{{ row.rank }}</td>
+                        <td class="py-2 pr-4 font-medium">{{ row.user.get_full_name|default:row.user.username }}</td>
+                        <td class="py-2 px-2 text-right">{{ row.submissions }}</td>
+                        <td class="py-2 px-2 text-right">{{ row.interviews }}</td>
+                        <td class="py-2 px-2 text-right">{% if row.sub_to_interview_rate_pct is not None %}{{ row.sub_to_interview_rate_pct }}%{% else %}—{% endif %}</td>
+                        <td class="py-2 px-2 text-right">{{ row.hires }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        <div class="mt-6 relative h-64 w-full">
+            <canvas id="leaderboardChart"></canvas>
+        </div>
+    </div>
+    {% endif %}
+
+    {% if consultant_performance %}
+    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-3">Consultant performance</h2>
+        <div class="overflow-x-auto max-h-80">
+            <table class="min-w-full text-sm text-left">
+                <thead>
+                    <tr class="border-b text-xs uppercase text-gray-500">
+                        <th class="py-2 pr-4">Consultant</th>
+                        <th class="py-2 px-2 text-right">Subs</th>
+                        <th class="py-2 px-2 text-right">Int %</th>
+                        <th class="py-2 px-2 text-right">Offer %</th>
+                        <th class="py-2 px-2 text-right">Score</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in consultant_performance|slice:":25" %}
+                    <tr class="border-b border-gray-50">
+                        <td class="py-2 pr-4">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
+                        <td class="py-2 px-2 text-right">{{ row.total_submissions }}</td>
+                        <td class="py-2 px-2 text-right">{% if row.interview_rate_pct is not None %}{{ row.interview_rate_pct }}%{% else %}—{% endif %}</td>
+                        <td class="py-2 px-2 text-right">{% if row.hire_rate_pct is not None %}{{ row.hire_rate_pct }}%{% else %}—{% endif %}</td>
+                        <td class="py-2 px-2 text-right font-semibold">{% if row.performance_score is not None %}{{ row.performance_score }}{% else %}—{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Conversion Snapshot (minimalist) -->
     <div class="bg-white border border-gray-200 rounded-lg p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
@@ -319,6 +434,32 @@
                     }
                 }
             }
+        });
+    }
+
+    const fg = {{ funnel_global_json|safe }};
+    if (fg && fg.labels && document.getElementById('pipelineGlobalChart')) {
+        new Chart(document.getElementById('pipelineGlobalChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: fg.labels,
+                datasets: [{ label: 'Count', data: fg.values, backgroundColor: '#6366f1' }]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
+        });
+    }
+    const lb = {{ leaderboard_chart_json|safe }};
+    if (lb && lb.labels && lb.labels.length && document.getElementById('leaderboardChart')) {
+        new Chart(document.getElementById('leaderboardChart').getContext('2d'), {
+            type: 'bar',
+            data: {
+                labels: lb.labels,
+                datasets: [
+                    { label: 'Sub→Interview %', data: lb.sub_to_interview, backgroundColor: '#10b981' },
+                    { label: 'Hires', data: lb.hires, backgroundColor: '#3b82f6' }
+                ]
+            },
+            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
         });
     }
 </script>

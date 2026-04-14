@@ -417,7 +417,7 @@ def build_jd_input(job):
 
 # ─── Single-call generation ──────────────────────────────────────────
 
-def generate_resume(job, consultant, actor=None, input_sections=None):
+def generate_resume(job, consultant, actor=None, input_sections=None, coaching_keywords=None):
     """
     Generate a resume using a single LLM call with the active MasterPrompt.
 
@@ -467,6 +467,13 @@ def generate_resume(job, consultant, actor=None, input_sections=None):
     jd_input = build_jd_input(job)
 
     user_prompt = candidate_input + "\n" + jd_input
+    if coaching_keywords:
+        kw = ", ".join([str(x).strip() for x in coaching_keywords if str(x).strip()][:24])
+        if kw:
+            user_prompt += (
+                "\n\nPrioritize weaving these missing or high-impact keywords into Skills and "
+                "Experience (only where truthful): " + kw + "."
+            )
     if master.generation_rules:
         user_prompt += "\n\n" + master.generation_rules
 
