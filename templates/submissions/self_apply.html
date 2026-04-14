@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+
+  <!-- Header -->
+  <div class="hero-gradient rounded-2xl px-6 py-5 mb-6">
+    <div class="flex items-center gap-4">
+      <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold text-white">Track a Job I Applied To</h1>
+        <p class="text-sm text-blue-100 mt-0.5">Log jobs you applied to on LinkedIn, Indeed, or company websites — track everything in one place.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info Banner -->
+  <div class="mb-6 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 flex items-start gap-3">
+    <svg class="w-5 h-5 text-blue-500 mt-0.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+    </svg>
+    <div>
+      <p class="text-sm font-semibold text-blue-900">Applied somewhere on your own?</p>
+      <p class="text-xs text-blue-700 mt-0.5">Fill in the details below. We'll save the job and help you track interviews, follow-ups, and outcomes — all in one dashboard.</p>
+    </div>
+  </div>
+
+  <!-- Messages -->
+  {% if messages %}
+    {% for message in messages %}
+    <div class="mb-4 rounded-xl px-4 py-3 text-sm font-medium
+      {% if message.tags == 'error' %}bg-red-50 border border-red-200 text-red-800
+      {% else %}bg-emerald-50 border border-emerald-200 text-emerald-800{% endif %}">
+      {{ message }}
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="space-y-6">
+    {% csrf_token %}
+
+    <!-- Source Selection -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">1</span>
+        How did you find this job?
+      </h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {% for value, label in source_choices %}
+        <label class="relative cursor-pointer">
+          <input type="radio" name="source" value="{{ value }}"
+            {% if post.source == value or not post and value == 'SELF_APPLIED' %}checked{% endif %}
+            class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center text-xs font-medium text-gray-600
+            peer-checked:border-blue-500 peer-checked:bg-blue-50 peer-checked:text-blue-700
+            hover:border-gray-300 transition-all">
+            {% if value == 'SELF_APPLIED' %}🔍{% elif value == 'REFERRAL' %}🤝{% elif value == 'AGENCY' %}🏢{% else %}🌐{% endif %}
+            <div class="mt-1">{{ label }}</div>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+
+      <!-- Referral name (shown only for referral) -->
+      <div id="referral-field" class="mt-3 hidden">
+        <label class="block text-xs font-medium text-gray-700 mb-1">Referred by (name)</label>
+        <input type="text" name="referral_name" value="{{ post.referral_name|default:'' }}"
+          placeholder="e.g. John Smith, ex-colleague"
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+      </div>
+    </div>
+
+    <!-- Job Details -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
+        Job Details
+      </h2>
+      <div class="space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">
+              Job Title <span class="text-red-500">*</span>
+            </label>
+            <input type="text" name="title" value="{{ post.title|default:'' }}" required
+              placeholder="e.g. Senior Salesforce Developer"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">
+              Company Name <span class="text-red-500">*</span>
+            </label>
+            <input type="text" name="company_name" value="{{ post.company_name|default:'' }}" required
+              placeholder="e.g. Acme Corp"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Job Posting URL</label>
+          <input type="url" name="job_url" value="{{ post.job_url|default:'' }}"
+            placeholder="https://www.linkedin.com/jobs/view/..."
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          <p class="text-xs text-gray-500 mt-1">Paste the original job posting URL so you can revisit it.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Location</label>
+            <input type="text" name="location" value="{{ post.location|default:'' }}"
+              placeholder="e.g. Remote, Austin TX"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Salary / Rate</label>
+            <input type="text" name="salary_range" value="{{ post.salary_range|default:'' }}"
+              placeholder="e.g. $120k–$140k or $95/hr"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+          </div>
+          <div>
+            <label class="block text-xs font-medium text-gray-700 mb-1">Job Type</label>
+            <select name="job_type"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none">
+              {% for value, label in job_types %}
+              <option value="{{ value }}" {% if post.job_type == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Job Description (optional but recommended)</label>
+          <textarea name="description" rows="5"
+            placeholder="Paste the job description here — helps with AI resume matching and interview prep later."
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none">{{ post.description|default:'' }}</textarea>
+          <p class="text-xs text-gray-500 mt-1">💡 Pasting the JD unlocks AI interview prep and resume gap analysis for this job.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Application Status & Notes -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">3</span>
+        Application Status & Notes
+      </h2>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-1">Notes</label>
+          <textarea name="notes" rows="3"
+            placeholder="e.g. Applied via LinkedIn Easy Apply. Recruiter name: Sarah M. Follow up in 1 week."
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none resize-none">{{ post.notes|default:'' }}</textarea>
+        </div>
+
+        <div>
+          <label class="block text-xs font-medium text-gray-700 mb-2">Proof of Application (optional)</label>
+          <div class="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-blue-400 transition cursor-pointer" id="drop-zone">
+            <input type="file" name="proof_file" id="proof-file-input"
+              accept=".pdf,.png,.jpg,.jpeg,.webp"
+              class="hidden">
+            <label for="proof-file-input" class="cursor-pointer">
+              <svg class="w-8 h-8 text-gray-400 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                  d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+              <p class="text-sm text-gray-600">Upload screenshot or PDF confirmation</p>
+              <p class="text-xs text-gray-400 mt-1">PNG, JPG, PDF up to 10MB</p>
+              <p id="file-name" class="text-xs text-blue-600 mt-2 font-medium hidden"></p>
+            </label>
+          </div>
+          <p class="text-xs text-gray-500 mt-1">Uploading proof will automatically mark this as "Applied" instead of "In Progress".</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Submit -->
+    <div class="flex items-center justify-between gap-4">
+      <a href="{% url 'consultant-my-tracker' %}"
+        class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+        ← My Tracker
+      </a>
+      <button type="submit"
+        class="inline-flex items-center gap-2 px-6 py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 active:scale-95 transition">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+        Save & Track Application
+      </button>
+    </div>
+  </form>
+</div>
+
+<script>
+  // Show referral field when REFERRAL is selected
+  document.querySelectorAll('input[name="source"]').forEach(radio => {
+    radio.addEventListener('change', function() {
+      const ref = document.getElementById('referral-field');
+      ref.classList.toggle('hidden', this.value !== 'REFERRAL');
+    });
+  });
+
+  // Show selected filename
+  document.getElementById('proof-file-input').addEventListener('change', function() {
+    const nameEl = document.getElementById('file-name');
+    if (this.files && this.files[0]) {
+      nameEl.textContent = '✅ ' + this.files[0].name;
+      nameEl.classList.remove('hidden');
+    }
+  });
+
+  // Initialize referral field visibility
+  const checkedSource = document.querySelector('input[name="source"]:checked');
+  if (checkedSource && checkedSource.value === 'REFERRAL') {
+    document.getElementById('referral-field').classList.remove('hidden');
+  }
+</script>
+{% endblock %}

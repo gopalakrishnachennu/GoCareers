@@ -9,6 +9,11 @@ from .views import (
     ResumeEditorView, ResumeEditorSaveView, ResumeEditorPreviewView,
     ResumeExportDOCXView, ResumeExportPDFView,
     ResumeTemplateSaveView, ResumeTemplateDeleteView, ResumeTemplateListView,
+    # Consultant self-resume & cover letter
+    ConsultantResumeGeneratePageView,
+    CoverLetterGenerateView, CoverLetterDetailView, CoverLetterDownloadView,
+    # Interview prep
+    InterviewPrepView,
 )
 
 urlpatterns = [
@@ -36,4 +41,15 @@ urlpatterns = [
     path('templates/', ResumeTemplateListView.as_view(), name='resume-template-list'),
     path('templates/save/', ResumeTemplateSaveView.as_view(), name='resume-template-save'),
     path('templates/<int:pk>/delete/', ResumeTemplateDeleteView.as_view(), name='resume-template-delete'),
+
+    # ── Consultant self-service resume generation ─────────────────────
+    path('my-resume/', ConsultantResumeGeneratePageView.as_view(), name='consultant-resume-generate'),
+
+    # ── Cover Letter ──────────────────────────────────────────────────
+    path('cover-letter/', CoverLetterGenerateView.as_view(), name='cover-letter-generate'),
+    path('cover-letter/<int:pk>/', CoverLetterDetailView.as_view(), name='cover-letter-detail'),
+    path('cover-letter/<int:pk>/download/', CoverLetterDownloadView.as_view(), name='cover-letter-download'),
+
+    # ── Interview Prep ────────────────────────────────────────────────
+    path('interview-prep/<int:pk>/', InterviewPrepView.as_view(), name='interview-prep'),
 ]

@@ -14,6 +14,8 @@ from .views import (
     FollowUpReminderCreateView, FollowUpReminderDismissView, StaleSubmissionsView,
     SubmissionArchiveView, SubmissionRestoreView, ArchivedSubmissionsView,
     GDPRExportView, WinLossAnalysisView,
+    # Consultant Self-Apply & Tracker
+    ConsultantSelfApplyView, ConsultantMyTrackerView,
 )
 from .views import (
     WorkflowDashboardView, WorkflowPanelView, WorkflowStarToggleView,
@@ -71,6 +73,10 @@ urlpatterns = [
 
     # Phase 5: Win/Loss analysis
     path('win-loss/', WinLossAnalysisView.as_view(), name='win-loss-analysis'),
+
+    # Consultant Self-Apply & My Tracker
+    path('self-apply/', ConsultantSelfApplyView.as_view(), name='consultant-self-apply'),
+    path('my-tracker/', ConsultantMyTrackerView.as_view(), name='consultant-my-tracker'),
 
     # Consultant Workflow Pipeline
     path('workflow/', WorkflowDashboardView.as_view(), name='workflow-dashboard'),

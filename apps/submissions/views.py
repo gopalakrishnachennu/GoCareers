@@ -1957,4 +1957,184 @@ class MarkExternalApplicationView(LoginRequiredMixin, UserPassesTestMixin, View)
         except Exception as e:
             messages.error(request, f"Could not mark as applied: {e}")
 
+
+# ─── Consultant Self-Apply: Track Own Applications ────────────────────────────
+
+class ConsultantSelfApplyView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """
+    Consultant logs a job they applied to on their own (LinkedIn, Indeed, company site, etc.).
+    Creates a Job record (if not already in system) + ApplicationSubmission with source=SELF_APPLIED.
+    """
+    template_name = 'submissions/self_apply.html'
+
+    def test_func(self):
+        u = self.request.user
+        return u.role == User.Role.CONSULTANT and hasattr(u, 'consultant_profile')
+
+    def get(self, request):
+        return render(request, self.template_name, {
+            'job_types': Job.JobType.choices,
+        })
+
+    def post(self, request):
+        from django.db import transaction
+        consultant = request.user.consultant_profile
+
+        title = request.POST.get('title', '').strip()
+        company_name = request.POST.get('company_name', '').strip()
+        job_url = request.POST.get('job_url', '').strip()
+        location = request.POST.get('location', '').strip()
+        salary_range = request.POST.get('salary_range', '').strip()
+        job_type = request.POST.get('job_type', Job.JobType.FULL_TIME)
+        description = request.POST.get('description', '').strip()
+        notes = request.POST.get('notes', '').strip()
+        referral_name = request.POST.get('referral_name', '').strip()
+        source = request.POST.get('source', ApplicationSubmission.Source.SELF_APPLIED)
+        proof_file = request.FILES.get('proof_file')
+
+        # Validate required fields
+        if not title or not company_name:
+            messages.error(request, "Job title and company name are required.")
+            return render(request, self.template_name, {
+                'job_types': Job.JobType.choices,
+                'post': request.POST,
+            })
+
+        if source not in [c[0] for c in ApplicationSubmission.Source.choices]:
+            source = ApplicationSubmission.Source.SELF_APPLIED
+
+        # File size check
+        if proof_file and proof_file.size > MAX_UPLOAD_SIZE:
+            messages.error(request, f"File too large. Max {MAX_UPLOAD_SIZE_MB}MB.")
+            return render(request, self.template_name, {
+                'job_types': Job.JobType.choices,
+                'post': request.POST,
+            })
+
+        try:
+            with transaction.atomic():
+                # Create Job record for this self-applied job
+                job = Job.objects.create(
+                    title=title,
+                    company=company_name,
+                    location=location,
+                    description=description or f"Self-tracked job: {title} at {company_name}",
+                    original_link=job_url or 'https://example.com',
+                    salary_range=salary_range,
+                    job_type=job_type,
+                    status=Job.Status.OPEN,
+                    posted_by=request.user,
+                    job_source=job_url or 'Self-tracked',
+                    validation_score=50,
+                )
+
+                # Create ApplicationSubmission
+                now = timezone.now()
+                sub = ApplicationSubmission.objects.create(
+                    job=job,
+                    consultant=consultant,
+                    status=ApplicationSubmission.Status.APPLIED if proof_file else ApplicationSubmission.Status.IN_PROGRESS,
+                    submitted_by=request.user,
+                    source=source,
+                    referral_name=referral_name,
+                    notes=notes,
+                    submitted_at=now if proof_file else None,
+                    proof_file=proof_file,
+                )
+
+                record_submission_status_change(
+                    sub,
+                    sub.status,
+                    from_status=None,
+                    note=f"Self-tracked application via GoCareers. Source: {sub.get_source_display()}",
+                )
+
+                _audit(request, 'consultant_self_apply', 'ApplicationSubmission', sub.pk, {
+                    'job_title': title,
+                    'company': company_name,
+                    'source': source,
+                })
+
+            messages.success(request, f"✅ '{title}' at {company_name} tracked successfully! Track updates from your submissions.")
+            return redirect('submission-detail', pk=sub.pk)
+
+        except Exception as e:
+            messages.error(request, f"Could not save application: {e}")
+            return render(request, self.template_name, {
+                'job_types': Job.JobType.choices,
+                'post': request.POST,
+            })
+
+
+class ConsultantMyTrackerView(LoginRequiredMixin, UserPassesTestMixin, ListView):
+    """
+    My Job Tracker — shows all consultant applications (both agency-submitted and self-applied)
+    with source badges, ghost detection, and quick-action buttons.
+    """
+    template_name = 'submissions/my_tracker.html'
+    context_object_name = 'submissions'
+    paginate_by = 20
+
+    def test_func(self):
+        u = self.request.user
+        return u.role == User.Role.CONSULTANT and hasattr(u, 'consultant_profile')
+
+    def get_queryset(self):
+        consultant = self.request.user.consultant_profile
+        qs = ApplicationSubmission.objects.filter(
+            consultant=consultant,
+            is_archived=False,
+        ).select_related('job', 'job__company_obj').prefetch_related('interviews', 'follow_up_reminders')
+
+        # Filters
+        source_filter = self.request.GET.get('source')
+        status_filter = self.request.GET.get('status')
+        search = self.request.GET.get('q', '').strip()
+
+        if source_filter:
+            qs = qs.filter(source=source_filter)
+        if status_filter:
+            qs = qs.filter(status=status_filter)
+        if search:
+            qs = qs.filter(
+                Q(job__title__icontains=search) | Q(job__company__icontains=search)
+            )
+
+        return qs.order_by('-updated_at')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        now = timezone.now()
+        stale_threshold = now - timedelta(days=14)
+
+        # Annotate each submission with ghost flag
+        for sub in context['submissions']:
+            days_silent = (now - sub.updated_at).days
+            sub.is_ghost = days_silent >= 14 and sub.status in [
+                ApplicationSubmission.Status.APPLIED,
+                ApplicationSubmission.Status.IN_PROGRESS,
+            ]
+            sub.days_silent = days_silent
+
+        context['source_choices'] = ApplicationSubmission.Source.choices
+        context['status_choices'] = ApplicationSubmission.Status.choices
+        context['selected_source'] = self.request.GET.get('source', '')
+        context['selected_status'] = self.request.GET.get('status', '')
+        context['search_q'] = self.request.GET.get('q', '')
+
+        # Summary counts
+        all_subs = ApplicationSubmission.objects.filter(
+            consultant=self.request.user.consultant_profile,
+            is_archived=False,
+        )
+        context['total_count'] = all_subs.count()
+        context['self_applied_count'] = all_subs.filter(source=ApplicationSubmission.Source.SELF_APPLIED).count()
+        context['agency_count'] = all_subs.filter(source=ApplicationSubmission.Source.AGENCY).count()
+        context['ghost_count'] = all_subs.filter(
+            status__in=[ApplicationSubmission.Status.APPLIED, ApplicationSubmission.Status.IN_PROGRESS],
+            updated_at__lt=stale_threshold,
+        ).count()
+
+        return context
+
         return redirect(f"{reverse('workflow-dashboard')}?consultant={consultant_pk}")

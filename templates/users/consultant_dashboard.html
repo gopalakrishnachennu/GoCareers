@@ -89,6 +89,92 @@
         </div>
     </div>
 
+    <!-- ═══════ MY TOOLKIT — New Feature Cards ═══════ -->
+    <div class="mb-5">
+        <h2 class="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">My Career Toolkit</h2>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <a href="{% url 'consultant-self-apply' %}"
+                class="flex flex-col items-start gap-2 bg-white rounded-xl border border-blue-100 shadow-sm p-4 hover:shadow-md hover:border-blue-300 transition group">
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-100 group-hover:bg-blue-200 transition">
+                    <svg class="w-4.5 h-4.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs font-semibold text-gray-800">Track a Job</p>
+                    <p class="text-[10px] text-gray-500 mt-0.5">Log jobs you applied on your own</p>
+                </div>
+            </a>
+            <a href="{% url 'consultant-my-tracker' %}"
+                class="flex flex-col items-start gap-2 bg-white rounded-xl border border-indigo-100 shadow-sm p-4 hover:shadow-md hover:border-indigo-300 transition group">
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-100 group-hover:bg-indigo-200 transition">
+                    <svg class="w-4.5 h-4.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs font-semibold text-gray-800">My Job Tracker</p>
+                    <p class="text-[10px] text-gray-500 mt-0.5">All apps in one place</p>
+                </div>
+            </a>
+            <a href="{% url 'cover-letter-generate' %}"
+                class="flex flex-col items-start gap-2 bg-white rounded-xl border border-emerald-100 shadow-sm p-4 hover:shadow-md hover:border-emerald-300 transition group">
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 group-hover:bg-emerald-200 transition">
+                    <svg class="w-4.5 h-4.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs font-semibold text-gray-800">Cover Letter AI</p>
+                    <p class="text-[10px] text-gray-500 mt-0.5">Tailored letter in seconds</p>
+                </div>
+            </a>
+            <a href="{% url 'consultant-resume-generate' %}"
+                class="flex flex-col items-start gap-2 bg-white rounded-xl border border-purple-100 shadow-sm p-4 hover:shadow-md hover:border-purple-300 transition group">
+                <div class="flex h-9 w-9 items-center justify-center rounded-lg bg-purple-100 group-hover:bg-purple-200 transition">
+                    <svg class="w-4.5 h-4.5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-xs font-semibold text-gray-800">Generate Resume</p>
+                    <p class="text-[10px] text-gray-500 mt-0.5">AI resume for any job</p>
+                </div>
+            </a>
+        </div>
+    </div>
+
+    <!-- ═══════ GHOST DETECTOR ═══════ -->
+    {% if ghost_submissions %}
+    <div class="mb-5 rounded-xl border border-amber-200 bg-amber-50 p-4">
+        <div class="flex items-start justify-between gap-3 mb-3">
+            <div class="flex items-center gap-2">
+                <span class="text-lg">👻</span>
+                <div>
+                    <p class="text-sm font-semibold text-amber-900">{{ ghost_submissions|length }} application{{ ghost_submissions|length|pluralize }} going silent</p>
+                    <p class="text-xs text-amber-700">No updates in 14+ days. Time to follow up or mark as withdrawn.</p>
+                </div>
+            </div>
+            <a href="{% url 'consultant-my-tracker' %}?status=APPLIED"
+                class="shrink-0 text-xs font-semibold text-amber-800 hover:underline">View all →</a>
+        </div>
+        <div class="space-y-2">
+            {% for sub in ghost_submissions|slice:":3" %}
+            <div class="bg-white rounded-lg border border-amber-200 px-3 py-2 flex items-center justify-between gap-2">
+                <div class="min-w-0">
+                    <p class="text-xs font-semibold text-gray-800 truncate">{{ sub.job.title }}</p>
+                    <p class="text-[10px] text-gray-500">{{ sub.job.company }} · {{ sub.days_since_update }}d silent</p>
+                </div>
+                <a href="{% url 'submission-detail' sub.pk %}"
+                    class="shrink-0 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-800 text-[10px] font-semibold hover:bg-amber-200 transition">
+                    View
+                </a>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
     <!-- ═══════ APPLICATION TRACKING ═══════ -->
     <div class="bg-white rounded-2xl shadow-sm p-5 border border-gray-100 mb-5">
         <div class="flex justify-between items-center mb-3">
@@ -266,6 +352,22 @@
         <div class="bg-white rounded-2xl shadow-sm p-5 border border-gray-100">
             <h2 class="text-sm font-semibold text-gray-800 mb-3">Quick actions</h2>
             <div class="grid grid-cols-2 gap-3">
+                <a href="{% url 'consultant-self-apply' %}"
+                    class="flex flex-col items-center justify-center px-4 py-3 rounded-xl border border-blue-100 bg-blue-50 text-blue-700 text-xs font-semibold hover:bg-blue-100 transition">
+                    ➕ Track Job
+                </a>
+                <a href="{% url 'consultant-career-timeline' %}"
+                    class="flex flex-col items-center justify-center px-4 py-3 rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 transition">
+                    ⚡ Timeline
+                </a>
+                <a href="{% url 'cover-letter-generate' %}"
+                    class="flex flex-col items-center justify-center px-4 py-3 rounded-xl border border-emerald-100 bg-emerald-50 text-emerald-700 text-xs font-semibold hover:bg-emerald-100 transition">
+                    ✍️ Cover Letter
+                </a>
+                <a href="{% url 'consultant-resume-generate' %}"
+                    class="flex flex-col items-center justify-center px-4 py-3 rounded-xl border border-purple-100 bg-purple-50 text-purple-700 text-xs font-semibold hover:bg-purple-100 transition">
+                    📄 Resume AI
+                </a>
                 <a href="{% url 'interview-list' %}"
                     class="flex flex-col items-center justify-center px-4 py-3 rounded-xl border border-indigo-100 bg-indigo-50 text-indigo-700 text-xs font-semibold hover:bg-indigo-100 transition">
                     Interviews

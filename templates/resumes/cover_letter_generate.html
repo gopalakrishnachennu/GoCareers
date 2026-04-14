@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+
+  <!-- Header -->
+  <div class="hero-gradient rounded-2xl px-6 py-5 mb-6">
+    <div class="flex items-center gap-4">
+      <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold text-white">AI Cover Letter Generator</h1>
+        <p class="text-sm text-blue-100 mt-0.5">Personalized, job-specific cover letters in seconds. Sounds like you, not a robot.</p>
+      </div>
+    </div>
+  </div>
+
+  {% if messages %}
+    {% for message in messages %}
+    <div class="mb-4 rounded-xl px-4 py-3 text-sm font-medium
+      {% if message.tags == 'error' %}bg-red-50 border border-red-200 text-red-800
+      {% else %}bg-emerald-50 border border-emerald-200 text-emerald-800{% endif %}">
+      {{ message }}
+    </div>
+    {% endfor %}
+  {% endif %}
+
+  <form method="post" class="space-y-5">
+    {% csrf_token %}
+
+    <!-- Job Selection -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">1</span>
+        Which job?
+      </h2>
+      <select name="job" required
+        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none">
+        <option value="">— Select a job —</option>
+        {% for job in jobs %}
+        <option value="{{ job.pk }}" {% if selected_job_id == job.pk %}selected{% endif %}>
+          {{ job.title }} @ {{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Tone -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-4 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">2</span>
+        What tone?
+      </h2>
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {% for value, emoji, description in tone_options %}
+        <label class="relative cursor-pointer">
+          <input type="radio" name="tone" value="{{ value }}"
+            {% if value == 'professional' %}checked{% endif %}
+            class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center
+            peer-checked:border-blue-500 peer-checked:bg-blue-50
+            hover:border-gray-300 transition-all">
+            <div class="text-lg mb-1">{{ emoji }}</div>
+            <div class="text-xs font-medium text-gray-700 peer-checked:text-blue-700">{{ value|capfirst }}</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">{{ description }}</div>
+          </div>
+        </label>
+        {% empty %}
+        {% for value, emoji, description in "professional,💼,Formal & polished|friendly,😊,Warm & approachable|concise,⚡,Brief & punchy|enthusiastic,🔥,Energetic & passionate"|split:"|" %}
+        {% endfor %}
+        <!-- Fallback hardcoded tones -->
+        <label class="relative cursor-pointer">
+          <input type="radio" name="tone" value="professional" checked class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:border-gray-300 transition-all">
+            <div class="text-lg mb-1">💼</div>
+            <div class="text-xs font-medium text-gray-700">Professional</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Formal & polished</div>
+          </div>
+        </label>
+        <label class="relative cursor-pointer">
+          <input type="radio" name="tone" value="friendly" class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:border-gray-300 transition-all">
+            <div class="text-lg mb-1">😊</div>
+            <div class="text-xs font-medium text-gray-700">Friendly</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Warm & approachable</div>
+          </div>
+        </label>
+        <label class="relative cursor-pointer">
+          <input type="radio" name="tone" value="concise" class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:border-gray-300 transition-all">
+            <div class="text-lg mb-1">⚡</div>
+            <div class="text-xs font-medium text-gray-700">Concise</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Brief & punchy</div>
+          </div>
+        </label>
+        <label class="relative cursor-pointer">
+          <input type="radio" name="tone" value="enthusiastic" class="peer sr-only">
+          <div class="rounded-xl border-2 border-gray-200 px-3 py-3 text-center peer-checked:border-blue-500 peer-checked:bg-blue-50 hover:border-gray-300 transition-all">
+            <div class="text-lg mb-1">🔥</div>
+            <div class="text-xs font-medium text-gray-700">Enthusiastic</div>
+            <div class="text-[10px] text-gray-400 mt-0.5">Energetic & passionate</div>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Extra Notes -->
+    <div class="bg-white rounded-2xl border border-gray-100 shadow-sm p-5">
+      <h2 class="text-sm font-semibold text-gray-800 mb-3 flex items-center gap-2">
+        <span class="flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-blue-600 text-xs font-bold">3</span>
+        Any extra context? <span class="text-gray-400 text-xs font-normal">(optional)</span>
+      </h2>
+      <textarea name="extra_notes" rows="3"
+        placeholder="e.g. I'm excited about their remote-first culture. Mention my experience with their tech stack. I was referred by John."
+        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none"></textarea>
+      <p class="text-xs text-gray-500 mt-1">This gets added to the AI prompt to personalize your letter further.</p>
+    </div>
+
+    <button type="submit"
+      class="w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl bg-emerald-600 text-white font-semibold hover:bg-emerald-700 active:scale-95 transition text-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+      </svg>
+      Generate Cover Letter
+    </button>
+    <p class="text-xs text-gray-400 text-center">Takes ~5 seconds. Personalized to your profile + the job's JD.</p>
+  </form>
+
+  <!-- Existing letters -->
+  {% if existing_letters %}
+  <div class="mt-8">
+    <h2 class="text-sm font-semibold text-gray-800 mb-3">Previous Cover Letters for this Job</h2>
+    <div class="space-y-2">
+      {% for letter in existing_letters %}
+      <div class="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex items-center justify-between gap-3">
+        <div>
+          <p class="text-sm font-medium text-gray-800">v{{ letter.version }} — {{ letter.job.title }} at {{ letter.job.company }}</p>
+          <p class="text-xs text-gray-500">Generated {{ letter.created_at|date:"M d, Y" }}</p>
+        </div>
+        <div class="flex gap-2">
+          <a href="{% url 'cover-letter-detail' letter.pk %}"
+            class="px-3 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs font-medium hover:bg-gray-200 transition">View</a>
+          <a href="{% url 'cover-letter-download' letter.pk %}"
+            class="px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700 text-xs font-medium hover:bg-blue-200 transition">Download</a>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

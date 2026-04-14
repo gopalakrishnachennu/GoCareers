@@ -1,4 +1,5 @@
 import csv
+from datetime import timedelta
 from django.shortcuts import render, get_object_or_404, redirect
 from django.views.generic import ListView, DetailView, CreateView, UpdateView, DeleteView, TemplateView, View
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
@@ -723,6 +724,19 @@ class ConsultantDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateV
         context['at_risk_count'] = _at_risk.count()
         context['at_risk_submissions_preview'] = _at_risk[:5]
 
+        # Ghost detector — applications with no update in 14+ days
+        stale_threshold = timezone.now() - timedelta(days=14)
+        ghost_qs = my_submissions.filter(
+            status__in=[ApplicationSubmission.Status.APPLIED, ApplicationSubmission.Status.IN_PROGRESS],
+            updated_at__lt=stale_threshold,
+            is_archived=False,
+        ).select_related('job').order_by('updated_at')
+        ghost_submissions = []
+        for sub in ghost_qs[:5]:
+            sub.days_since_update = (timezone.now() - sub.updated_at).days
+            ghost_submissions.append(sub)
+        context['ghost_submissions'] = ghost_submissions
+
         return context
 
 
@@ -939,6 +953,137 @@ class EmailNotificationPreferencesView(LoginRequiredMixin, UpdateView):
     def form_valid(self, form):
         messages.success(self.request, 'Notification preferences saved.')
         return super().form_valid(form)
+
+
+class ConsultantCareerTimelineView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
+    """
+    Visual career timeline — every application, interview, placement, and status change
+    in a single chronological scroll. Consultant sees their own; admins/employees can view any.
+    """
+    template_name = 'users/career_timeline.html'
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or u.role in ('ADMIN', 'EMPLOYEE', 'CONSULTANT')
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        u = self.request.user
+
+        if u.role == 'CONSULTANT' and hasattr(u, 'consultant_profile'):
+            consultant = u.consultant_profile
+        else:
+            # Admin/Employee can view any consultant's timeline via ?consultant_id=X
+            consultant_id = self.request.GET.get('consultant_id')
+            if consultant_id:
+                from users.models import ConsultantProfile
+                consultant = get_object_or_404(ConsultantProfile, pk=consultant_id)
+            elif hasattr(u, 'consultant_profile'):
+                consultant = u.consultant_profile
+            else:
+                context['no_consultant'] = True
+                return context
+
+        # Collect all timeline events
+        events = []
+
+        # 1. Submissions (application created)
+        from submissions.models import ApplicationSubmission, SubmissionStatusHistory, Placement
+        from interviews_app.models import Interview
+
+        submissions = ApplicationSubmission.objects.filter(
+            consultant=consultant, is_archived=False
+        ).select_related('job').order_by('-created_at')
+
+        for sub in submissions:
+            events.append({
+                'type': 'application',
+                'date': sub.created_at,
+                'title': f"Applied to {sub.job.title}",
+                'subtitle': sub.job.company,
+                'status': sub.status,
+                'status_display': sub.get_status_display(),
+                'source': sub.source,
+                'source_display': sub.get_source_display(),
+                'link': f"/submissions/{sub.pk}/",
+                'icon': 'briefcase',
+                'color': 'blue',
+                'obj': sub,
+            })
+
+            # Status changes for this submission
+            for hist in sub.status_history.all():
+                if hist.to_status != sub.status or hist.from_status:
+                    label = f"{hist.from_status or '—'} → {hist.to_status}"
+                    color = {
+                        'INTERVIEW': 'indigo',
+                        'OFFER': 'emerald',
+                        'PLACED': 'green',
+                        'REJECTED': 'red',
+                        'WITHDRAWN': 'gray',
+                    }.get(hist.to_status, 'gray')
+                    events.append({
+                        'type': 'status_change',
+                        'date': hist.created_at,
+                        'title': f"Status updated: {hist.to_status.replace('_', ' ').title()}",
+                        'subtitle': f"{sub.job.title} at {sub.job.company}",
+                        'note': hist.note,
+                        'link': f"/submissions/{sub.pk}/",
+                        'icon': 'arrow-right',
+                        'color': color,
+                    })
+
+        # 2. Interviews
+        interviews = Interview.objects.filter(consultant=consultant).select_related('submission__job')
+        for iv in interviews:
+            color = {
+                'SCHEDULED': 'indigo',
+                'COMPLETED': 'emerald',
+                'CANCELLED': 'red',
+                'RESCHEDULED': 'amber',
+            }.get(iv.status, 'gray')
+            events.append({
+                'type': 'interview',
+                'date': iv.scheduled_at,
+                'title': f"{iv.get_round_display()} Interview — {iv.company}",
+                'subtitle': iv.job_title,
+                'status': iv.status,
+                'status_display': iv.get_status_display(),
+                'video_link': iv.video_link,
+                'icon': 'video',
+                'color': color,
+                'obj': iv,
+            })
+
+        # 3. Placements
+        placements = Placement.objects.filter(submission__consultant=consultant).select_related('submission__job')
+        for pl in placements:
+            events.append({
+                'type': 'placement',
+                'date': pl.created_at,
+                'title': f"🎉 Placed at {pl.submission.job.company}",
+                'subtitle': f"{pl.submission.job.title} · {pl.get_placement_type_display()}",
+                'status': pl.status,
+                'status_display': pl.get_status_display(),
+                'icon': 'star',
+                'color': 'green',
+                'obj': pl,
+            })
+
+        # Sort all events by date descending
+        events.sort(key=lambda e: e['date'], reverse=True)
+
+        context['events'] = events
+        context['consultant'] = consultant
+        context['total_applications'] = submissions.count()
+        context['total_interviews'] = interviews.count()
+        context['total_placements'] = placements.count()
+
+        return context
+
+    def get(self, request, *args, **kwargs):
+        from django.contrib.auth.models import AnonymousUser
+        return super().get(request, *args, **kwargs)
 
 
 class SettingsView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):

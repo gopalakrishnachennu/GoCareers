@@ -12,6 +12,7 @@ from .views import (
     ExperienceCreateView, ExperienceUpdateView, ExperienceDeleteView,
     EducationCreateView, EducationUpdateView, EducationDeleteView,
     CertificationCreateView, CertificationUpdateView, CertificationDeleteView,
+    ConsultantCareerTimelineView,
 )
 from resumes.preview_views import draft_preview_llm
 
@@ -32,6 +33,7 @@ urlpatterns = [
     path('<int:pk>/edit/', ConsultantEditView.as_view(), name='consultant-edit'),
     path('dashboard/', ConsultantDashboardView.as_view(), name='consultant-dashboard'),
     path('journey/', ConsultantJourneyView.as_view(), name='consultant-journey'),
+    path('timeline/', ConsultantCareerTimelineView.as_view(), name='consultant-career-timeline'),
 
     # Experience CRUD (self)
     path('experience/add/', ExperienceCreateView.as_view(), name='experience-add'),

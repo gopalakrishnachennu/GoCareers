@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto px-4 py-8">
+
+  <!-- Header -->
+  <div class="hero-gradient rounded-2xl px-6 py-5 mb-6">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex items-center gap-4 min-w-0">
+        <div class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-white/20">
+          <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+              d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-xl font-bold text-white">Cover Letter v{{ letter.version }}</h1>
+          <p class="text-sm text-blue-100 mt-0.5">{{ letter.job.title }} at {{ letter.job.company }}</p>
+        </div>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <a href="{% url 'cover-letter-download' letter.pk %}"
+          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white text-blue-600 text-xs font-semibold hover:bg-blue-50 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+          </svg>
+          Download
+        </a>
+        <a href="{% url 'cover-letter-generate' %}?job={{ letter.job.pk }}"
+          class="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/20 text-white text-xs font-semibold hover:bg-white/30 transition">
+          Regenerate
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Content Card -->
+  <div class="bg-white rounded-2xl border border-gray-100 shadow-sm">
+    <!-- Toolbar -->
+    <div class="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span>{{ letter.tokens_used }} tokens used</span>
+        <span>·</span>
+        <span>Generated {{ letter.created_at|date:"M d, Y g:ia" }}</span>
+      </div>
+      <button onclick="copyToClipboard()"
+        class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-300 text-xs font-medium text-gray-700 hover:bg-gray-50 transition">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+        </svg>
+        Copy to clipboard
+      </button>
+    </div>
+
+    <!-- Letter content -->
+    <div class="p-6 sm:p-8" id="letter-content">
+      <div class="prose prose-sm max-w-none text-gray-800 leading-relaxed whitespace-pre-wrap font-serif">{{ letter.content }}</div>
+    </div>
+  </div>
+
+  <!-- Actions -->
+  <div class="mt-5 flex flex-wrap items-center gap-3">
+    <a href="{% url 'cover-letter-generate' %}?job={{ letter.job.pk }}"
+      class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 transition">
+      ✨ Generate new version
+    </a>
+    <a href="{% url 'cover-letter-download' letter.pk %}"
+      class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50 transition">
+      ⬇️ Download .txt
+    </a>
+    <a href="{% url 'consultant-my-tracker' %}"
+      class="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-gray-300 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
+      ← My Tracker
+    </a>
+  </div>
+</div>
+
+<script>
+function copyToClipboard() {
+  const content = document.getElementById('letter-content').innerText;
+  navigator.clipboard.writeText(content).then(() => {
+    const btn = event.target.closest('button');
+    const original = btn.innerHTML;
+    btn.innerHTML = '<svg class="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg> Copied!';
+    setTimeout(() => { btn.innerHTML = original; }, 2000);
+  });
+}
+</script>
+{% endblock %}

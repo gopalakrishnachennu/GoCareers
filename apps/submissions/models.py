@@ -20,6 +20,12 @@ class ApplicationSubmission(models.Model):
         REJECTED = 'REJECTED', _('Rejected')
         WITHDRAWN = 'WITHDRAWN', _('Withdrawn')
 
+    class Source(models.TextChoices):
+        AGENCY = 'AGENCY', _('Agency Submitted')
+        SELF_APPLIED = 'SELF_APPLIED', _('Self Applied')
+        REFERRAL = 'REFERRAL', _('Referral')
+        EXTERNAL = 'EXTERNAL', _('External Portal')
+
     job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='submissions')
     consultant = models.ForeignKey(ConsultantProfile, on_delete=models.CASCADE, related_name='submissions')
     resume = models.ForeignKey(Resume, on_delete=models.SET_NULL, null=True, blank=True, related_name='submissions')
@@ -46,7 +52,19 @@ class ApplicationSubmission(models.Model):
     )
     notes = models.TextField(blank=True)
     submitted_at = models.DateTimeField(blank=True, null=True, help_text="When proof of submission was uploaded")
-    
+
+    # Source tracking — who/how this application was submitted
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.AGENCY,
+        help_text=_("How this application was submitted"),
+    )
+    referral_name = models.CharField(
+        max_length=200, blank=True,
+        help_text=_("Name of person who referred (if source=REFERRAL)"),
+    )
+
     # Phase 5: Soft-delete
     is_archived = models.BooleanField(default=False)
     archived_at = models.DateTimeField(null=True, blank=True)
