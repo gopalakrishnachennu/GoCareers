@@ -136,6 +136,9 @@
                     <th class="px-4 py-3 text-right font-mono">
                         <a href="?{{ pagination_query }}&sort=placements" class="hover:text-blue-600 inline-flex items-center justify-end gap-1">Placements {% if selected_sort == 'placements' %}<span class="text-blue-600">↓</span>{% endif %}</a>
                     </th>
+                    <th class="px-4 py-3 text-right font-mono">
+                        <a href="?{{ pagination_query }}&sort=jobs" class="hover:text-blue-600 inline-flex items-center justify-end gap-1">Jobs {% if selected_sort == 'jobs' %}<span class="text-blue-600">↓</span>{% endif %}</a>
+                    </th>
                     <th class="px-4 py-3 hidden sm:table-cell text-center">Status</th>
                     <th class="px-4 py-3 hidden md:table-cell text-center">Links</th>
                     <th class="px-4 py-3 text-right">Actions</th>
@@ -178,6 +181,7 @@
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_submissions }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_interviews }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_placements }}</td>
+                    <td class="px-4 py-3 text-right font-mono">{{ company.job_count }}</td>
                     <td class="px-4 py-3 hidden sm:table-cell">
                         <div class="flex flex-wrap gap-1 justify-center">
                             {% if company.is_blacklisted %}
@@ -217,7 +221,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="10" class="px-4 py-6 text-center text-sm text-gray-500">
+                    <td colspan="11" class="px-4 py-6 text-center text-sm text-gray-500">
                         No companies yet. <a href="{% url 'company-create' %}" class="text-blue-600 hover:underline">Add a company</a> or post jobs to create them.
                     </td>
                 </tr>

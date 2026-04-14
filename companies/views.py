@@ -36,7 +36,7 @@ class AdminOrEmployeeRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
 
 def _get_company_list_queryset(request):
     """Shared queryset for list and CSV export (search, filters, sort)."""
-    qs = Company.objects.all()
+    qs = Company.objects.annotate(job_count=Count("jobs"))
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(name__icontains=q) | qs.filter(alias__icontains=q)
@@ -63,6 +63,8 @@ def _get_company_list_queryset(request):
         qs = qs.order_by("-total_interviews", "name")
     elif sort == "placements":
         qs = qs.order_by("-total_placements", "name")
+    elif sort == "jobs":
+        qs = qs.order_by("-job_count", "name")
     elif sort == "name_desc":
         qs = qs.order_by("-name")
     else:
@@ -356,7 +358,7 @@ class CompanyExportCSVView(LoginRequiredMixin, UserPassesTestMixin, View):
         writer = csv.writer(response)
         writer.writerow([
             "Name", "Alias", "Industry", "Website", "Career Site", "Relationship Status",
-            "Submissions", "Interviews", "Placements", "Blacklisted",
+            "Submissions", "Interviews", "Placements", "Jobs", "Blacklisted",
         ])
         for c in qs:
             writer.writerow([
@@ -369,6 +371,7 @@ class CompanyExportCSVView(LoginRequiredMixin, UserPassesTestMixin, View):
                 c.total_submissions,
                 c.total_interviews,
                 c.total_placements,
+                c.job_count,
                 "Yes" if c.is_blacklisted else "No",
             ])
         return response
