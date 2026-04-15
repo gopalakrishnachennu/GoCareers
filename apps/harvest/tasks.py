@@ -8,6 +8,73 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+@shared_task(name="harvest.backfill_platform_labels_from_jobs")
+def backfill_platform_labels_from_jobs_task():
+    """
+    Scan all job original_link URLs, detect ATS platform from URL patterns,
+    and create/update CompanyPlatformLabel records — no HTTP requests needed.
+
+    Runs after every bulk job import so new companies get labeled immediately.
+    """
+    from jobs.models import Job
+    from companies.models import Company
+    from .models import JobBoardPlatform, CompanyPlatformLabel
+    from .detectors import URL_PATTERNS, TENANT_EXTRACTORS
+    from .detectors import extract_tenant
+
+    platforms = {p.slug: p for p in JobBoardPlatform.objects.filter(is_enabled=True)}
+    company_best: dict = {}
+
+    for job in Job.objects.exclude(original_link="").select_related("company_obj").iterator():
+        if not job.company_obj_id or job.company_obj_id in company_best:
+            continue
+        raw_url = job.original_link
+        url = raw_url.lower()
+        for slug, patterns in URL_PATTERNS.items():
+            for pattern in patterns:
+                if pattern in url:
+                    from .detectors import extract_tenant as _et
+                    company_best[job.company_obj_id] = {
+                        "slug": slug,
+                        "tenant_id": _et(slug, raw_url),
+                        "sample_url": raw_url,
+                    }
+                    break
+            if job.company_obj_id in company_best:
+                break
+
+    created = updated = 0
+    now = timezone.now()
+
+    for company_id, info in company_best.items():
+        platform = platforms.get(info["slug"])
+        if not platform:
+            continue
+        try:
+            company = Company.objects.get(pk=company_id)
+        except Company.DoesNotExist:
+            continue
+
+        _, was_created = CompanyPlatformLabel.objects.update_or_create(
+            company=company,
+            defaults={
+                "platform": platform,
+                "confidence": "HIGH",
+                "detection_method": "URL_PATTERN",
+                "tenant_id": info["tenant_id"],
+                "detected_at": now,
+                "last_checked_at": now,
+            },
+        )
+        if was_created:
+            created += 1
+        else:
+            updated += 1
+
+    logger.info(f"backfill_platform_labels_from_jobs: {created} created, {updated} updated")
+    return {"created": created, "updated": updated}
+
+
 @shared_task(bind=True, max_retries=2, name="harvest.detect_company_platforms")
 def detect_company_platforms_task(self, batch_size: int = 200, force_recheck: bool = False):
     """

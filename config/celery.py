@@ -67,6 +67,10 @@ app.conf.beat_schedule = {
     },
 
     # ── HARVEST ENGINE ────────────────────────────────────────────────────────
+    "harvest-backfill-labels-from-jobs-daily": {
+        "task": "harvest.backfill_platform_labels_from_jobs",
+        "schedule": crontab(hour=1, minute=30),      # daily 01:30 UTC — after any bulk imports
+    },
     "harvest-detect-platforms-weekly": {
         "task": "harvest.detect_company_platforms",
         "schedule": crontab(hour=1, minute=0, day_of_week=1),  # Monday 01:00 UTC
