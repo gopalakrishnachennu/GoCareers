@@ -9,6 +9,7 @@ from .views import (
     PlatformListView,
     PlatformToggleView,
     PlatformUpdateView,
+    RunBackfillNowView,
     RunCleanupNowView,
     RunDetectNowView,
     RunHarvestNowView,
@@ -37,4 +38,5 @@ urlpatterns = [
     path("run/harvest/", RunHarvestNowView.as_view(), name="harvest-run-harvest"),
     path("run/sync/", RunSyncNowView.as_view(), name="harvest-run-sync"),
     path("run/cleanup/", RunCleanupNowView.as_view(), name="harvest-run-cleanup"),
+    path("run/backfill/", RunBackfillNowView.as_view(), name="harvest-run-backfill"),
 ]

@@ -275,3 +275,11 @@ class RunCleanupNowView(SuperuserRequiredMixin, View):
         task = cleanup_harvested_jobs_task.delay()
         messages.success(request, f"Cleanup started (Task: {task.id[:8]}...)")
         return redirect_with_task_progress("harvest-monitor", task.id, "Harvest cleanup")
+
+
+class RunBackfillNowView(SuperuserRequiredMixin, View):
+    def post(self, request):
+        from .tasks import backfill_platform_labels_from_jobs_task
+        task = backfill_platform_labels_from_jobs_task.delay()
+        messages.success(request, f"Backfill started — scanning all job URLs to detect platforms (Task: {task.id[:8]}...)")
+        return redirect_with_task_progress("harvest-labels", task.id, "Platform backfill from job URLs")
