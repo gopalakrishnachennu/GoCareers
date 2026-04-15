@@ -23,8 +23,8 @@ MAX_CONSECUTIVE_FAILURES = 3
 logger = logging.getLogger(__name__)
 
 
-@shared_task(name="harvest.backfill_platform_labels_from_jobs")
-def backfill_platform_labels_from_jobs_task():
+@shared_task(bind=True, name="harvest.backfill_platform_labels_from_jobs")
+def backfill_platform_labels_from_jobs_task(self):
     """
     Scan all job original_link URLs, detect ATS platform from URL patterns,
     and create/update CompanyPlatformLabel records — no HTTP requests needed.
@@ -34,34 +34,56 @@ def backfill_platform_labels_from_jobs_task():
     from jobs.models import Job
     from companies.models import Company
     from .models import JobBoardPlatform, CompanyPlatformLabel
-    from .detectors import URL_PATTERNS, TENANT_EXTRACTORS
-    from .detectors import extract_tenant
+    from .detectors import URL_PATTERNS, extract_tenant
+
+    update_task_progress(self, current=0, total=0, message="Loading job URLs…")
 
     platforms = {p.slug: p for p in JobBoardPlatform.objects.filter(is_enabled=True)}
     company_best: dict = {}
 
-    for job in Job.objects.exclude(original_link="").select_related("company_obj").iterator():
-        if not job.company_obj_id or job.company_obj_id in company_best:
+    all_jobs = list(
+        Job.objects.exclude(original_link="")
+        .filter(company_obj__isnull=False)
+        .values("company_obj_id", "original_link")
+    )
+    total_jobs = len(all_jobs)
+
+    update_task_progress(self, current=0, total=total_jobs, message=f"Scanning {total_jobs} job URLs…")
+
+    for idx, job in enumerate(all_jobs, start=1):
+        cid = job["company_obj_id"]
+        if cid in company_best:
             continue
-        raw_url = job.original_link
+        raw_url = job["original_link"]
         url = raw_url.lower()
         for slug, patterns in URL_PATTERNS.items():
             for pattern in patterns:
                 if pattern in url:
-                    from .detectors import extract_tenant as _et
-                    company_best[job.company_obj_id] = {
+                    company_best[cid] = {
                         "slug": slug,
-                        "tenant_id": _et(slug, raw_url),
-                        "sample_url": raw_url,
+                        "tenant_id": extract_tenant(slug, raw_url),
                     }
                     break
-            if job.company_obj_id in company_best:
+            if cid in company_best:
                 break
+
+        if idx % 200 == 0:
+            update_task_progress(
+                self,
+                current=idx,
+                total=total_jobs,
+                message=f"Scanned {idx}/{total_jobs} URLs · {len(company_best)} platforms found…",
+            )
+
+    matches = len(company_best)
+    update_task_progress(self, current=total_jobs, total=total_jobs,
+                         message=f"URL scan done — labeling {matches} companies…")
 
     created = updated = 0
     now = timezone.now()
+    items = list(company_best.items())
 
-    for company_id, info in company_best.items():
+    for i, (company_id, info) in enumerate(items, start=1):
         platform = platforms.get(info["slug"])
         if not platform:
             continue
@@ -85,6 +107,14 @@ def backfill_platform_labels_from_jobs_task():
             created += 1
         else:
             updated += 1
+
+        if i % 50 == 0:
+            update_task_progress(
+                self,
+                current=i,
+                total=matches,
+                message=f"Labeled {i}/{matches} companies ({created} new, {updated} updated)…",
+            )
 
     logger.info(f"backfill_platform_labels_from_jobs: {created} created, {updated} updated")
     return {"created": created, "updated": updated}
