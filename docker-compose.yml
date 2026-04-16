@@ -15,6 +15,8 @@ x-app-env: &app-env
   DJANGO_SETTINGS_MODULE: config.settings
   PYTHONPATH: /app/apps
   DEBUG: "0"
+  ALLOWED_HOSTS: "127.0.0.1,localhost,chennu.co,www.chennu.co,62.238.6.14"
+  CSRF_TRUSTED_ORIGINS: "https://chennu.co,https://www.chennu.co"
 
 services:
 
