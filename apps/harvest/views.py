@@ -605,6 +605,63 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress("harvest-rawjobs", task.id, "Raw jobs batch fetch")
 
 
+class StopBatchView(SuperuserRequiredMixin, View):
+    """POST — cancels the running (or a specific) FetchBatch and revokes pending Celery tasks."""
+
+    def post(self, request):
+        from celery import current_app
+
+        batch_id = request.POST.get("batch_id") or None
+        if batch_id:
+            batch = get_object_or_404(FetchBatch, pk=batch_id)
+        else:
+            batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
+
+        if not batch:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse({"ok": False, "error": "No running batch found."}, status=404)
+            messages.warning(request, "No running batch found.")
+            return redirect("harvest-rawjobs")
+
+        if batch.status not in ("RUNNING", "PENDING"):
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse({"ok": False, "error": f"Batch is already {batch.status}."})
+            messages.warning(request, f"Batch #{batch.pk} is already {batch.status}.")
+            return redirect("harvest-rawjobs")
+
+        # 1. Revoke the main batch orchestration task (if it's still queued/running)
+        if batch.task_id:
+            current_app.control.revoke(batch.task_id, terminate=True, signal="SIGTERM")
+
+        # 2. Revoke all PENDING/RUNNING per-company tasks for this batch
+        pending_runs = CompanyFetchRun.objects.filter(
+            batch=batch, status__in=["PENDING", "RUNNING"]
+        ).exclude(task_id="").exclude(task_id=None)
+        task_ids = list(pending_runs.values_list("task_id", flat=True))
+        if task_ids:
+            current_app.control.revoke(task_ids, terminate=True, signal="SIGTERM")
+
+        # 3. Mark company runs as SKIPPED
+        pending_runs.update(status="SKIPPED")
+
+        # 4. Mark batch as CANCELLED
+        batch.status = "CANCELLED"
+        if not batch.completed_at:
+            batch.completed_at = timezone.now()
+        batch.save(update_fields=["status", "completed_at"])
+
+        logger.info(
+            "[HARVEST] Batch #%s cancelled by %s — revoked %d task(s)",
+            batch.pk, request.user.username, len(task_ids) + (1 if batch.task_id else 0),
+        )
+
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse({"ok": True, "batch_id": batch.pk, "revoked": len(task_ids)})
+
+        messages.success(request, f"Batch #{batch.pk} cancelled — {len(task_ids)} pending tasks revoked.")
+        return redirect("harvest-rawjobs")
+
+
 class RawJobStatsView(SuperuserRequiredMixin, View):
     """JSON endpoint — live stats for dashboard polling."""
     def get(self, request):

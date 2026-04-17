@@ -113,7 +113,7 @@ class BaseHarvester(ABC):
 
     @abstractmethod
     def fetch_jobs(
-        self, company, tenant_id: str, since_hours: int = 24
+        self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
         """Return list of raw job dicts for a company. Never raises — returns [] on error."""
         raise NotImplementedError

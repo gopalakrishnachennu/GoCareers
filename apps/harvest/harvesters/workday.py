@@ -137,9 +137,10 @@ class WorkdayHarvester(BaseHarvester):
         if "|" in tenant_id:
             full_subdomain, jobboard = tenant_id.split("|", 1)
             tenant = _re.sub(r"\.wd\d+$", "", full_subdomain, flags=_re.I)
-            paths_to_try = [jobboard] + [
-                p for p in WORKDAY_PATHS_FALLBACK if p.lower() != jobboard.lower()
-            ]
+            # When a specific path is stored we ONLY try that path — never
+            # fall through to the generic list. Trying 10 extra paths × 3
+            # retries per company wastes resources and risks IP bans.
+            paths_to_try = [jobboard]
         else:
             full_subdomain = tenant_id
             tenant = _re.sub(r"\.wd\d+$", "", tenant_id, flags=_re.I)

@@ -49,7 +49,7 @@ class TaleoHarvester(BaseHarvester):
     platform_slug = "taleo"
     is_scraper = True
 
-    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24) -> list[dict[str, Any]]:
+    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False) -> list[dict[str, Any]]:
         """
         tenant_id = "{subdomain}|{career_section}"  e.g. "aa224|ex"
         Falls back to guessing section "ex" if no "|" found (old records).

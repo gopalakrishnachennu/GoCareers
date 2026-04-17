@@ -26,7 +26,7 @@ class JobviteHarvester(BaseHarvester):
 
     BASE_ORIGIN = "https://jobs.jobvite.com"
 
-    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24) -> list[dict[str, Any]]:
+    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False) -> list[dict[str, Any]]:
         """
         tenant_id = company slug e.g. "loandepot", "varonis", "leovegas"
         Also handles /careers/{slug} variant automatically.

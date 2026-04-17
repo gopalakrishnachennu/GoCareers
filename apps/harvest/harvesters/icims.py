@@ -25,7 +25,7 @@ class IcimsHarvester(BaseHarvester):
 
     # ── Public interface ──────────────────────────────────────────────────────
 
-    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24) -> list[dict[str, Any]]:
+    def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False) -> list[dict[str, Any]]:
         """
         tenant_id = full subdomain e.g. "careers-audacy", "careers-samaritanvillage"
         """

@@ -61,7 +61,7 @@ class HTMLScrapeHarvester(BaseHarvester):
     is_scraper = True       # ← activates strict compliance in BaseHarvester
 
     def fetch_jobs(
-        self, company, tenant_id: str, since_hours: int = 24
+        self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
         if not BS4_AVAILABLE:
             return []

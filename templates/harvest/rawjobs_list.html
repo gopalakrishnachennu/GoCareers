@@ -122,8 +122,18 @@
       <!-- Running batch progress (shown when a batch is active) -->
       <div id="batch-progress-card" style="display:{% if has_running_batch %}block{% else %}none{% endif %};background:#fff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:10px;padding:16px 20px;margin-bottom:20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-          <span style="font-size:13px;font-weight:700;color:#1d4ed8;">Batch in Progress</span>
-          <span style="font-size:11px;color:#6b7280;" id="batch-progress-label">Fetching…</span>
+          <span style="font-size:13px;font-weight:700;color:#1d4ed8;">⟳ Batch in Progress</span>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <span style="font-size:11px;color:#6b7280;" id="batch-progress-label">Fetching…</span>
+            <form id="stop-batch-form" method="POST" action="{% url 'harvest-run-stop-batch' %}" style="margin:0;">
+              {% csrf_token %}
+              <input type="hidden" name="batch_id" id="stop-batch-id" value="">
+              <button type="button" onclick="confirmStopBatch()"
+                style="padding:5px 14px;background:#dc2626;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;letter-spacing:.3px;">
+                ⏹ STOP BATCH
+              </button>
+            </form>
+          </div>
         </div>
         <div style="background:#e0f2fe;border-radius:20px;height:8px;overflow:hidden;">
           <div id="batch-progress-bar" style="background:linear-gradient(90deg,#3b82f6,#06b6d4);height:100%;width:0%;transition:width .5s;border-radius:20px;"></div>
@@ -665,6 +675,9 @@ function pollStats() {
         setText('batch-jobs-found', b.total_jobs_found);
         setText('batch-jobs-new', b.total_jobs_new);
         setText('batch-companies-done', (b.completed||0) + ' / ' + b.total);
+        // Keep batch_id in sync for the stop form
+        const stopIdEl = document.getElementById('stop-batch-id');
+        if (stopIdEl) stopIdEl.value = b.id || '';
       } else {
         card.style.display = 'none';
         stopPolling();
@@ -697,6 +710,33 @@ function escHtml(s) {
   const d = document.createElement('div');
   d.appendChild(document.createTextNode(s || ''));
   return d.innerHTML;
+}
+
+// ─── Stop Batch ────────────────────────────────────────────────────────────
+function confirmStopBatch() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:32px;max-width:400px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">⏹</div>
+      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Stop Running Batch?</h2>
+      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 24px;">
+        This will <strong>cancel all pending company fetches</strong> in the current batch and mark it as <strong>CANCELLED</strong>.<br><br>
+        Jobs already fetched will be kept. Already-running individual tasks will finish gracefully.
+      </p>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button onclick="this.closest('[style*=fixed]').remove();"
+          style="padding:10px 24px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          Keep Running
+        </button>
+        <button onclick="document.getElementById('stop-batch-form').submit();this.closest('[style*=fixed]').remove();"
+          style="padding:10px 24px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(220,38,38,.3);">
+          ⏹ Yes, Stop Batch
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
 
 // ─── Fetch ALL confirmation ────────────────────────────────────────────────

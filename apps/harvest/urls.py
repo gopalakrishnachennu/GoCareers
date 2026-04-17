@@ -23,6 +23,7 @@ from .views import (
     RunSyncNowView,
     RunVerifyPortalsView,
     ScheduleConfigView,
+    StopBatchView,
     TriggerBatchFetchView,
     TriggerCompanyFetchView,
 )
@@ -58,4 +59,5 @@ urlpatterns = [
     path("run/verify-portals/", RunVerifyPortalsView.as_view(), name="harvest-run-verify-portals"),
     path("run/fetch-company/", TriggerCompanyFetchView.as_view(), name="harvest-run-fetch-company"),
     path("run/fetch-batch/", TriggerBatchFetchView.as_view(), name="harvest-run-fetch-batch"),
+    path("run/stop-batch/", StopBatchView.as_view(), name="harvest-run-stop-batch"),
 ]
