@@ -71,8 +71,11 @@ class WorkableHarvester(BaseHarvester):
         else:
             location_type = "UNKNOWN"
 
-        departments = job.get("department") or []
-        dept = departments[0] if departments else ""
+        dept_raw = job.get("department") or []
+        if isinstance(dept_raw, list):
+            dept = dept_raw[0] if dept_raw else ""
+        else:
+            dept = str(dept_raw) if dept_raw else ""
 
         emp_raw = (job.get("employment_type") or "").upper().replace("-", "_")
         emp_map = {
@@ -80,8 +83,8 @@ class WorkableHarvester(BaseHarvester):
             "PART_TIME": "PART_TIME",
             "CONTRACT": "CONTRACT",
             "TEMPORARY": "TEMPORARY",
-            "INTERN": "INTERN",
-            "INTERNSHIP": "INTERN",
+            "INTERN": "INTERNSHIP",
+            "INTERNSHIP": "INTERNSHIP",
         }
         employment_type = emp_map.get(emp_raw, "UNKNOWN")
 
