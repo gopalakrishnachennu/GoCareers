@@ -1,6 +1,7 @@
 import hashlib
 from datetime import timedelta
 
+from django.conf import settings
 from django.db import models
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -373,3 +374,267 @@ class HarvestedJob(models.Model):
         if not self.expires_at:
             self.expires_at = timezone.now() + timedelta(hours=24)
         super().save(*args, **kwargs)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Raw Jobs — comprehensive per-company job harvesting with full field coverage
+# ─────────────────────────────────────────────────────────────────────────────
+
+class FetchBatch(models.Model):
+    """Groups a bulk fetch session (e.g. 'all Workday companies on 2026-04-16')."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        RUNNING = "RUNNING", "Running"
+        COMPLETED = "COMPLETED", "Completed"
+        PARTIAL = "PARTIAL", "Partial"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="+",
+    )
+    name = models.CharField(max_length=256, blank=True)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING
+    )
+    platform_filter = models.CharField(
+        max_length=64, blank=True,
+        help_text="Platform slug filter, e.g. 'workday'. Empty = all platforms.",
+    )
+    task_id = models.CharField(max_length=64, blank=True)
+    total_companies = models.PositiveIntegerField(default=0)
+    completed_companies = models.PositiveIntegerField(default=0)
+    failed_companies = models.PositiveIntegerField(default=0)
+    total_jobs_found = models.PositiveIntegerField(default=0)
+    total_jobs_new = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Fetch Batch"
+        verbose_name_plural = "Fetch Batches"
+
+    def __str__(self):
+        return self.name or f"Batch #{self.pk} ({self.status})"
+
+    @property
+    def progress_pct(self):
+        if not self.total_companies:
+            return 0
+        done = self.completed_companies + self.failed_companies
+        return min(100, int(done / self.total_companies * 100))
+
+    @property
+    def duration_seconds(self):
+        if self.started_at and self.completed_at:
+            return int((self.completed_at - self.started_at).total_seconds())
+        return None
+
+
+class CompanyFetchRun(models.Model):
+    """Tracks a single per-company raw-jobs fetch attempt."""
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        PARTIAL = "PARTIAL", "Partial"
+        FAILED = "FAILED", "Failed"
+        SKIPPED = "SKIPPED", "Skipped"
+
+    class ErrorType(models.TextChoices):
+        TIMEOUT = "TIMEOUT", "Timeout"
+        HTTP_ERROR = "HTTP_ERROR", "HTTP Error"
+        PARSE_ERROR = "PARSE_ERROR", "Parse Error"
+        NO_TENANT = "NO_TENANT", "No Tenant ID"
+        PLATFORM_ERROR = "PLATFORM_ERROR", "Platform Error"
+        RATE_LIMITED = "RATE_LIMITED", "Rate Limited"
+
+    label = models.ForeignKey(
+        CompanyPlatformLabel,
+        on_delete=models.CASCADE,
+        related_name="raw_fetch_runs",
+    )
+    batch = models.ForeignKey(
+        FetchBatch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="company_runs",
+    )
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.PENDING
+    )
+    task_id = models.CharField(max_length=64, blank=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    jobs_found = models.PositiveIntegerField(default=0)
+    jobs_new = models.PositiveIntegerField(default=0)
+    jobs_updated = models.PositiveIntegerField(default=0)
+    jobs_duplicate = models.PositiveIntegerField(default=0)
+    jobs_failed = models.PositiveIntegerField(default=0)
+    pages_fetched = models.PositiveIntegerField(default=0)
+    error_message = models.TextField(blank=True)
+    error_type = models.CharField(
+        max_length=16,
+        choices=ErrorType.choices,
+        blank=True,
+    )
+    triggered_by = models.CharField(
+        max_length=16,
+        default="MANUAL",
+        help_text="MANUAL | SCHEDULED | BATCH",
+    )
+
+    class Meta:
+        ordering = ["-started_at"]
+        verbose_name = "Company Fetch Run"
+        verbose_name_plural = "Company Fetch Runs"
+
+    def __str__(self):
+        return f"{self.label} – {self.status} ({self.started_at})"
+
+    @property
+    def duration_seconds(self):
+        if self.started_at and self.completed_at:
+            return int((self.completed_at - self.started_at).total_seconds())
+        return None
+
+
+class RawJob(models.Model):
+    """Comprehensive job record harvested from an external ATS platform."""
+
+    class LocationType(models.TextChoices):
+        REMOTE = "REMOTE", "Remote"
+        HYBRID = "HYBRID", "Hybrid"
+        ONSITE = "ONSITE", "On-Site"
+        UNKNOWN = "UNKNOWN", "Unknown"
+
+    class EmploymentType(models.TextChoices):
+        FULL_TIME = "FULL_TIME", "Full-Time"
+        PART_TIME = "PART_TIME", "Part-Time"
+        CONTRACT = "CONTRACT", "Contract"
+        INTERNSHIP = "INTERNSHIP", "Internship"
+        TEMPORARY = "TEMPORARY", "Temporary"
+        OTHER = "OTHER", "Other"
+        UNKNOWN = "UNKNOWN", "Unknown"
+
+    class ExperienceLevel(models.TextChoices):
+        ENTRY = "ENTRY", "Entry Level"
+        MID = "MID", "Mid Level"
+        SENIOR = "SENIOR", "Senior"
+        LEAD = "LEAD", "Lead"
+        MANAGER = "MANAGER", "Manager"
+        DIRECTOR = "DIRECTOR", "Director"
+        EXECUTIVE = "EXECUTIVE", "Executive"
+        UNKNOWN = "UNKNOWN", "Unknown"
+
+    class SyncStatus(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        SYNCED = "SYNCED", "Synced"
+        FAILED = "FAILED", "Failed"
+        SKIPPED = "SKIPPED", "Skipped"
+
+    # ── Relations ─────────────────────────────────────────────────────────────
+    company = models.ForeignKey(
+        "companies.Company",
+        on_delete=models.CASCADE,
+        related_name="raw_jobs",
+    )
+    platform_label = models.ForeignKey(
+        CompanyPlatformLabel,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="raw_jobs",
+    )
+    job_platform = models.ForeignKey(
+        JobBoardPlatform,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="raw_jobs",
+    )
+
+    # ── Identity / Dedup ──────────────────────────────────────────────────────
+    external_id = models.CharField(max_length=512, blank=True)
+    url_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    original_url = models.URLField(max_length=1024, blank=True)
+    apply_url = models.URLField(max_length=1024, blank=True)
+
+    # ── Core fields ───────────────────────────────────────────────────────────
+    title = models.CharField(max_length=512)
+    company_name = models.CharField(max_length=256, blank=True)
+    department = models.CharField(max_length=256, blank=True)
+    team = models.CharField(max_length=256, blank=True)
+
+    # ── Location ──────────────────────────────────────────────────────────────
+    location_raw = models.CharField(max_length=512, blank=True)
+    city = models.CharField(max_length=128, blank=True)
+    state = models.CharField(max_length=128, blank=True)
+    country = models.CharField(max_length=128, blank=True)
+    postal_code = models.CharField(max_length=32, blank=True)
+    location_type = models.CharField(
+        max_length=8, choices=LocationType.choices, default=LocationType.UNKNOWN
+    )
+    is_remote = models.BooleanField(default=False)
+
+    # ── Employment ────────────────────────────────────────────────────────────
+    employment_type = models.CharField(
+        max_length=12, choices=EmploymentType.choices, default=EmploymentType.UNKNOWN
+    )
+    experience_level = models.CharField(
+        max_length=10, choices=ExperienceLevel.choices, default=ExperienceLevel.UNKNOWN
+    )
+
+    # ── Compensation ──────────────────────────────────────────────────────────
+    salary_min = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    salary_max = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    salary_currency = models.CharField(max_length=8, default="USD")
+    salary_period = models.CharField(max_length=16, blank=True)
+    salary_raw = models.CharField(max_length=256, blank=True)
+
+    # ── Content ───────────────────────────────────────────────────────────────
+    description = models.TextField(blank=True)
+    requirements = models.TextField(blank=True)
+    benefits = models.TextField(blank=True)
+
+    # ── Dates ─────────────────────────────────────────────────────────────────
+    posted_date = models.DateField(null=True, blank=True)
+    closing_date = models.DateField(null=True, blank=True)
+
+    # ── Platform meta ─────────────────────────────────────────────────────────
+    platform_slug = models.CharField(max_length=64, blank=True)
+    raw_payload = models.JSONField(default=dict, blank=True)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+    sync_status = models.CharField(
+        max_length=8, choices=SyncStatus.choices, default=SyncStatus.PENDING
+    )
+    is_active = models.BooleanField(default=True)
+    fetched_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-fetched_at"]
+        indexes = [
+            models.Index(fields=["company", "platform_slug"]),
+            models.Index(fields=["platform_slug"]),
+            models.Index(fields=["sync_status"]),
+            models.Index(fields=["posted_date"]),
+            models.Index(fields=["employment_type"]),
+            models.Index(fields=["location_type"]),
+            models.Index(fields=["is_active"]),
+        ]
+        verbose_name = "Raw Job"
+        verbose_name_plural = "Raw Jobs"
+
+    def __str__(self):
+        return f"{self.title} @ {self.company_name}"

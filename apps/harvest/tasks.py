@@ -3,7 +3,7 @@ import time
 from datetime import timedelta
 
 from celery import shared_task
-from django.db import transaction
+from django.db import models, transaction
 from django.utils import timezone
 
 from core.task_progress import update_task_progress
@@ -505,6 +505,334 @@ def verify_all_portals_task(self):
     update_task_progress(self, current=total, total=total,
                          message=f"✅ All {total} portal checks queued!")
     return {"queued": total}
+
+
+@shared_task(bind=True, name="harvest.fetch_raw_jobs_for_company", max_retries=2, default_retry_delay=60)
+def fetch_raw_jobs_for_company_task(
+    self,
+    label_pk: int,
+    batch_id: int = None,
+    triggered_by: str = "MANUAL",
+):
+    """
+    Fetch ALL jobs for a single CompanyPlatformLabel and upsert into RawJob.
+    Creates a CompanyFetchRun audit record. Updates FetchBatch counters if batch_id given.
+    """
+    import hashlib
+    import requests
+    from datetime import date
+
+    from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, RawJob
+    from .harvesters import get_harvester
+
+    # ── Load label ────────────────────────────────────────────────────────────
+    try:
+        label = CompanyPlatformLabel.objects.select_related("platform", "company").get(pk=label_pk)
+    except CompanyPlatformLabel.DoesNotExist:
+        logger.warning("fetch_raw_jobs_for_company_task: label %s not found", label_pk)
+        return
+
+    batch = None
+    if batch_id:
+        batch = FetchBatch.objects.filter(pk=batch_id).first()
+
+    # ── Create run record ─────────────────────────────────────────────────────
+    run = CompanyFetchRun.objects.create(
+        label=label,
+        batch=batch,
+        status=CompanyFetchRun.Status.RUNNING,
+        task_id=self.request.id or "",
+        started_at=timezone.now(),
+        triggered_by=triggered_by,
+    )
+
+    # ── Guard: no tenant or no platform ──────────────────────────────────────
+    if not label.platform or not label.tenant_id:
+        run.status = CompanyFetchRun.Status.SKIPPED
+        run.error_type = CompanyFetchRun.ErrorType.NO_TENANT
+        run.error_message = "No platform or tenant_id configured."
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        return
+
+    harvester = get_harvester(label.platform.slug)
+    if harvester is None:
+        run.status = CompanyFetchRun.Status.SKIPPED
+        run.error_type = CompanyFetchRun.ErrorType.PLATFORM_ERROR
+        run.error_message = f"No harvester for platform slug: {label.platform.slug}"
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        return
+
+    # ── Fetch ─────────────────────────────────────────────────────────────────
+    try:
+        raw_jobs = harvester.fetch_jobs(
+            label.company,
+            label.tenant_id,
+            fetch_all=True,
+        )
+    except requests.exceptions.Timeout as exc:
+        run.status = CompanyFetchRun.Status.FAILED
+        run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
+        run.error_message = str(exc)[:500]
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        return
+    except requests.exceptions.HTTPError as exc:
+        run.status = CompanyFetchRun.Status.FAILED
+        run.error_type = CompanyFetchRun.ErrorType.HTTP_ERROR
+        run.error_message = str(exc)[:500]
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        return
+    except Exception as exc:
+        run.status = CompanyFetchRun.Status.FAILED
+        run.error_type = CompanyFetchRun.ErrorType.PARSE_ERROR
+        run.error_message = str(exc)[:500]
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        logger.exception("fetch_raw_jobs_for_company_task failed for label %s: %s", label_pk, exc)
+        return
+
+    # ── Upsert jobs ───────────────────────────────────────────────────────────
+    jobs_new = jobs_updated = jobs_duplicate = jobs_failed = 0
+
+    for job_dict in raw_jobs:
+        try:
+            original_url = (job_dict.get("original_url") or "").strip()
+            if not original_url:
+                jobs_failed += 1
+                continue
+
+            url_hash = hashlib.sha256(original_url.encode()).hexdigest()
+
+            # Parse posted_date
+            posted_date = None
+            posted_raw = job_dict.get("posted_date_raw", "")
+            if posted_raw:
+                try:
+                    # Handle ISO format: 2024-01-15T00:00:00Z or 2024-01-15
+                    posted_date = date.fromisoformat(
+                        posted_raw[:10].replace("Z", "")
+                    )
+                except Exception:
+                    pass
+
+            # Parse closing_date
+            closing_date = None
+            closing_raw = job_dict.get("closing_date", "")
+            if closing_raw:
+                try:
+                    closing_date = date.fromisoformat(closing_raw[:10])
+                except Exception:
+                    pass
+
+            defaults = {
+                "company": label.company,
+                "platform_label": label,
+                "job_platform": label.platform,
+                "external_id": (job_dict.get("external_id") or "")[:512],
+                "original_url": original_url[:1024],
+                "apply_url": (job_dict.get("apply_url") or "")[:1024],
+                "title": (job_dict.get("title") or "")[:512],
+                "company_name": (job_dict.get("company_name") or label.company.name)[:256],
+                "department": (job_dict.get("department") or "")[:256],
+                "team": (job_dict.get("team") or "")[:256],
+                "location_raw": (job_dict.get("location_raw") or "")[:512],
+                "city": (job_dict.get("city") or "")[:128],
+                "state": (job_dict.get("state") or "")[:128],
+                "country": (job_dict.get("country") or "")[:128],
+                "location_type": job_dict.get("location_type", "UNKNOWN"),
+                "is_remote": bool(job_dict.get("is_remote", False)),
+                "employment_type": job_dict.get("employment_type", "UNKNOWN"),
+                "experience_level": job_dict.get("experience_level", "UNKNOWN"),
+                "salary_min": job_dict.get("salary_min"),
+                "salary_max": job_dict.get("salary_max"),
+                "salary_currency": (job_dict.get("salary_currency") or "USD")[:8],
+                "salary_period": (job_dict.get("salary_period") or "")[:16],
+                "salary_raw": (job_dict.get("salary_raw") or "")[:256],
+                "description": job_dict.get("description") or "",
+                "requirements": job_dict.get("requirements") or "",
+                "benefits": job_dict.get("benefits") or "",
+                "posted_date": posted_date,
+                "closing_date": closing_date,
+                "platform_slug": (label.platform.slug if label.platform else "")[:64],
+                "raw_payload": job_dict.get("raw_payload") or {},
+                "is_active": True,
+            }
+
+            obj, created = RawJob.objects.update_or_create(
+                url_hash=url_hash,
+                defaults=defaults,
+            )
+            if created:
+                jobs_new += 1
+            else:
+                jobs_updated += 1
+
+        except Exception as exc:
+            jobs_failed += 1
+            logger.error("RawJob upsert failed for label %s: %s", label_pk, exc)
+
+    # ── Update run record ─────────────────────────────────────────────────────
+    run.status = (
+        CompanyFetchRun.Status.SUCCESS
+        if jobs_failed == 0
+        else (CompanyFetchRun.Status.PARTIAL if (jobs_new + jobs_updated) > 0 else CompanyFetchRun.Status.FAILED)
+    )
+    run.jobs_found = len(raw_jobs)
+    run.jobs_new = jobs_new
+    run.jobs_updated = jobs_updated
+    run.jobs_duplicate = jobs_duplicate
+    run.jobs_failed = jobs_failed
+    run.completed_at = timezone.now()
+    run.save(update_fields=[
+        "status", "jobs_found", "jobs_new", "jobs_updated",
+        "jobs_duplicate", "jobs_failed", "completed_at",
+    ])
+
+    # ── Update batch counters ─────────────────────────────────────────────────
+    if batch:
+        if run.status in (CompanyFetchRun.Status.SUCCESS, CompanyFetchRun.Status.PARTIAL):
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                completed_companies=models.F("completed_companies") + 1,
+                total_jobs_found=models.F("total_jobs_found") + len(raw_jobs),
+                total_jobs_new=models.F("total_jobs_new") + jobs_new,
+            )
+        else:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1,
+            )
+
+    logger.info(
+        "fetch_raw_jobs: label=%s new=%d updated=%d failed=%d",
+        label_pk, jobs_new, jobs_updated, jobs_failed,
+    )
+    return {
+        "label_pk": label_pk,
+        "jobs_found": len(raw_jobs),
+        "jobs_new": jobs_new,
+        "jobs_updated": jobs_updated,
+        "jobs_failed": jobs_failed,
+    }
+
+
+@shared_task(bind=True, name="harvest.fetch_raw_jobs_batch", max_retries=0)
+def fetch_raw_jobs_batch_task(
+    self,
+    platform_slug: str = None,
+    label_pks: list = None,
+    batch_name: str = None,
+    triggered_user_id: int = None,
+):
+    """
+    Create a FetchBatch and dispatch fetch_raw_jobs_for_company_task for every matching label.
+    """
+    from django.contrib.auth import get_user_model
+    from .models import CompanyPlatformLabel, FetchBatch
+
+    User = get_user_model()
+    triggered_user = None
+    if triggered_user_id:
+        triggered_user = User.objects.filter(pk=triggered_user_id).first()
+
+    # Build batch name
+    if not batch_name:
+        ts = timezone.now().strftime("%Y-%m-%d %H:%M")
+        if platform_slug:
+            batch_name = f"{platform_slug.title()} batch — {ts}"
+        else:
+            batch_name = f"Full batch — {ts}"
+
+    batch = FetchBatch.objects.create(
+        created_by=triggered_user,
+        name=batch_name,
+        status=FetchBatch.Status.RUNNING,
+        platform_filter=platform_slug or "",
+        task_id=self.request.id or "",
+        started_at=timezone.now(),
+    )
+
+    # ── Build label queryset ──────────────────────────────────────────────────
+    qs = CompanyPlatformLabel.objects.filter(
+        portal_alive=True,
+        platform__isnull=False,
+    ).exclude(tenant_id="").select_related("platform")
+
+    if platform_slug:
+        qs = qs.filter(platform__slug=platform_slug)
+
+    if label_pks:
+        qs = qs.filter(pk__in=label_pks)
+
+    label_list = list(qs.values_list("pk", flat=True))
+    total = len(label_list)
+
+    batch.total_companies = total
+    batch.save(update_fields=["total_companies"])
+
+    update_task_progress(self, current=0, total=total, message=f"Dispatching {total} company fetches…")
+
+    for i, label_pk in enumerate(label_list, start=1):
+        fetch_raw_jobs_for_company_task.apply_async(
+            args=[label_pk, batch.pk, "BATCH"],
+            countdown=i * 0.2,  # stagger slightly
+        )
+        if i % 50 == 0:
+            update_task_progress(
+                self, current=i, total=total,
+                message=f"Queued {i}/{total} company fetches…",
+            )
+
+    update_task_progress(self, current=total, total=total,
+                         message=f"All {total} fetches queued for batch #{batch.pk}")
+
+    logger.info("fetch_raw_jobs_batch: queued %d companies (batch #%d)", total, batch.pk)
+    return {"batch_id": batch.pk, "total_companies": total}
+
+
+@shared_task(bind=True, name="harvest.retry_failed_raw_jobs")
+def retry_failed_raw_jobs_task(self):
+    """Re-queue fetch_raw_jobs_for_company_task for all FAILED runs in the last 7 days."""
+    from .models import CompanyFetchRun
+
+    cutoff = timezone.now() - timedelta(days=7)
+    failed_runs = CompanyFetchRun.objects.filter(
+        status=CompanyFetchRun.Status.FAILED,
+        started_at__gte=cutoff,
+    ).select_related("label")
+
+    queued = 0
+    for run in failed_runs:
+        fetch_raw_jobs_for_company_task.delay(
+            run.label_id,
+            run.batch_id,
+            "SCHEDULED",
+        )
+        queued += 1
+
+    logger.info("retry_failed_raw_jobs: re-queued %d tasks", queued)
+    return {"queued": queued}
 
 
 @shared_task(name="harvest.cleanup_harvested_jobs")

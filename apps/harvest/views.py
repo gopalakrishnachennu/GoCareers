@@ -8,12 +8,20 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.utils import timezone
-from django.views.generic import CreateView, ListView, TemplateView, UpdateView, View
+from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from core.http import redirect_with_task_progress
 
 from .forms import JobBoardPlatformForm
-from .models import CompanyPlatformLabel, HarvestRun, HarvestedJob, JobBoardPlatform
+from .models import (
+    CompanyFetchRun,
+    CompanyPlatformLabel,
+    FetchBatch,
+    HarvestRun,
+    HarvestedJob,
+    JobBoardPlatform,
+    RawJob,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -360,3 +368,277 @@ class RunVerifyPortalsView(SuperuserRequiredMixin, View):
             f"Portal verification started — checking all career URLs in the background (Task: {task.id[:8]}...)"
         )
         return redirect_with_task_progress("harvest-labels", task.id, "Verifying career portal health")
+
+
+# ── Raw Jobs Views ─────────────────────────────────────────────────────────────
+
+class RawJobListView(SuperuserRequiredMixin, ListView):
+    model = RawJob
+    template_name = "harvest/rawjobs_list.html"
+    context_object_name = "jobs"
+    paginate_by = 100
+
+    def get_queryset(self):
+        qs = RawJob.objects.select_related("company", "job_platform").order_by("-fetched_at")
+
+        q = self.request.GET.get("q", "").strip()
+        if q:
+            qs = qs.filter(
+                Q(title__icontains=q) | Q(company_name__icontains=q)
+            )
+
+        platform_f = self.request.GET.get("platform", "").strip()
+        if platform_f:
+            qs = qs.filter(platform_slug=platform_f)
+
+        location_f = self.request.GET.get("location_type", "").strip()
+        if location_f:
+            qs = qs.filter(location_type=location_f)
+
+        employment_f = self.request.GET.get("employment_type", "").strip()
+        if employment_f:
+            qs = qs.filter(employment_type=employment_f)
+
+        exp_f = self.request.GET.get("experience_level", "").strip()
+        if exp_f:
+            qs = qs.filter(experience_level=exp_f)
+
+        sync_f = self.request.GET.get("sync_status", "").strip()
+        if sync_f:
+            qs = qs.filter(sync_status=sync_f)
+
+        remote_f = self.request.GET.get("is_remote", "").strip()
+        if remote_f == "1":
+            qs = qs.filter(is_remote=True)
+        elif remote_f == "0":
+            qs = qs.filter(is_remote=False)
+
+        date_from = self.request.GET.get("date_from", "").strip()
+        if date_from:
+            qs = qs.filter(posted_date__gte=date_from)
+
+        date_to = self.request.GET.get("date_to", "").strip()
+        if date_to:
+            qs = qs.filter(posted_date__lte=date_to)
+
+        return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "rawjobs"
+
+        # Stats
+        ctx["total_jobs"] = RawJob.objects.count()
+        ctx["active_jobs"] = RawJob.objects.filter(is_active=True).count()
+        ctx["remote_jobs"] = RawJob.objects.filter(is_remote=True).count()
+        ctx["synced_jobs"] = RawJob.objects.filter(sync_status="SYNCED").count()
+        ctx["pending_jobs"] = RawJob.objects.filter(sync_status="PENDING").count()
+        ctx["failed_jobs"] = RawJob.objects.filter(sync_status="FAILED").count()
+
+        from django.utils.timezone import now
+        from datetime import timedelta
+        today = now().date()
+        ctx["new_today"] = RawJob.objects.filter(fetched_at__date=today).count()
+
+        # Platform breakdown
+        ctx["platform_stats"] = (
+            RawJob.objects.values("platform_slug")
+            .annotate(count=Count("id"))
+            .order_by("-count")
+        )
+
+        # Recent batches
+        ctx["recent_batches"] = FetchBatch.objects.order_by("-created_at")[:5]
+
+        # Platforms list for filter dropdown
+        ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True).order_by("name")
+
+        # Choices for filter dropdowns
+        ctx["location_type_choices"] = RawJob.LocationType.choices
+        ctx["employment_type_choices"] = RawJob.EmploymentType.choices
+        ctx["experience_level_choices"] = RawJob.ExperienceLevel.choices
+        ctx["sync_status_choices"] = RawJob.SyncStatus.choices
+
+        # Filter state
+        ctx["q"] = self.request.GET.get("q", "")
+        ctx["selected_platform"] = self.request.GET.get("platform", "")
+        ctx["selected_location_type"] = self.request.GET.get("location_type", "")
+        ctx["selected_employment_type"] = self.request.GET.get("employment_type", "")
+        ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
+        ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
+        ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
+        ctx["selected_date_from"] = self.request.GET.get("date_from", "")
+        ctx["selected_date_to"] = self.request.GET.get("date_to", "")
+
+        # Running batch check (for live polling)
+        ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
+
+        return ctx
+
+
+class RawJobDetailView(SuperuserRequiredMixin, DetailView):
+    model = RawJob
+    template_name = "harvest/rawjob_detail.html"
+    context_object_name = "job"
+
+    def get_queryset(self):
+        return RawJob.objects.select_related("company", "job_platform", "platform_label")
+
+
+class FetchBatchListView(SuperuserRequiredMixin, ListView):
+    model = FetchBatch
+    template_name = "harvest/rawjobs_batches.html"
+    context_object_name = "batches"
+    paginate_by = 20
+
+    def get_queryset(self):
+        return FetchBatch.objects.prefetch_related("company_runs").order_by("-created_at")
+
+    def get(self, request, *args, **kwargs):
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            qs = self.get_queryset()[:50]
+            batches = []
+            for b in qs:
+                batches.append({
+                    "id": b.pk,
+                    "name": b.name,
+                    "status": b.status,
+                    "platform_filter": b.platform_filter,
+                    "total": b.total_companies,
+                    "completed": b.completed_companies,
+                    "failed": b.failed_companies,
+                    "total_jobs_found": b.total_jobs_found,
+                    "total_jobs_new": b.total_jobs_new,
+                    "progress_pct": b.progress_pct,
+                    "created_at": b.created_at.strftime("%Y-%m-%d %H:%M") if b.created_at else "",
+                })
+            return JsonResponse({"batches": batches})
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "rawjobs"
+        return ctx
+
+
+class CompanyFetchStatusView(SuperuserRequiredMixin, ListView):
+    template_name = "harvest/rawjobs_company_status.html"
+    context_object_name = "runs"
+    paginate_by = 50
+
+    def get_queryset(self):
+        qs = CompanyFetchRun.objects.select_related(
+            "label__company", "label__platform", "batch"
+        ).order_by("-started_at")
+
+        status_f = self.request.GET.get("status", "").strip()
+        if status_f:
+            qs = qs.filter(status=status_f)
+
+        platform_f = self.request.GET.get("platform", "").strip()
+        if platform_f:
+            qs = qs.filter(label__platform__slug=platform_f)
+
+        return qs
+
+    def get(self, request, *args, **kwargs):
+        # JSON response for AJAX calls from the rawjobs_list template
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            qs = self.get_queryset()[:100]
+            runs = []
+            for run in qs:
+                runs.append({
+                    "label_pk": run.label_id,
+                    "company_name": run.label.company.name if run.label and run.label.company else "",
+                    "platform_slug": run.label.platform.slug if run.label and run.label.platform else "",
+                    "status": run.status,
+                    "jobs_found": run.jobs_found,
+                    "jobs_new": run.jobs_new,
+                    "started_at": run.started_at.strftime("%Y-%m-%d %H:%M") if run.started_at else "",
+                })
+            return JsonResponse({"runs": runs})
+        return super().get(request, *args, **kwargs)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "rawjobs"
+        ctx["status_choices"] = CompanyFetchRun.Status.choices
+        ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True).order_by("name")
+        ctx["selected_status"] = self.request.GET.get("status", "")
+        ctx["selected_platform"] = self.request.GET.get("platform", "")
+        return ctx
+
+
+class TriggerCompanyFetchView(SuperuserRequiredMixin, View):
+    """AJAX POST — triggers a single-company raw job fetch."""
+    def post(self, request):
+        from .tasks import fetch_raw_jobs_for_company_task
+        label_pk = request.POST.get("label_pk", "").strip()
+        if not label_pk:
+            return JsonResponse({"ok": False, "error": "Missing label_pk"}, status=400)
+        try:
+            label_pk = int(label_pk)
+        except ValueError:
+            return JsonResponse({"ok": False, "error": "Invalid label_pk"}, status=400)
+
+        task = fetch_raw_jobs_for_company_task.delay(label_pk, None, "MANUAL")
+        return JsonResponse({"ok": True, "task_id": task.id})
+
+
+class TriggerBatchFetchView(SuperuserRequiredMixin, View):
+    """POST — triggers a batch raw job fetch for all or filtered companies."""
+    def post(self, request):
+        from .tasks import fetch_raw_jobs_batch_task
+        platform_slug = request.POST.get("platform_slug", "").strip() or None
+        batch_name = request.POST.get("batch_name", "").strip() or None
+        task = fetch_raw_jobs_batch_task.delay(
+            platform_slug=platform_slug,
+            batch_name=batch_name,
+            triggered_user_id=request.user.id,
+        )
+        messages.success(
+            request,
+            f"Raw jobs batch fetch started"
+            + (f" for platform '{platform_slug}'" if platform_slug else " for all platforms")
+            + f" (Task: {task.id[:8]}...)",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Raw jobs batch fetch")
+
+
+class RawJobStatsView(SuperuserRequiredMixin, View):
+    """JSON endpoint — live stats for dashboard polling."""
+    def get(self, request):
+        from django.utils.timezone import now
+        today = now().date()
+
+        # Running batch info
+        running_batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
+        batch_data = None
+        if running_batch:
+            batch_data = {
+                "id": running_batch.pk,
+                "name": running_batch.name,
+                "total": running_batch.total_companies,
+                "completed": running_batch.completed_companies,
+                "failed": running_batch.failed_companies,
+                "progress_pct": running_batch.progress_pct,
+                "total_jobs_found": running_batch.total_jobs_found,
+                "total_jobs_new": running_batch.total_jobs_new,
+            }
+
+        return JsonResponse({
+            "total_jobs": RawJob.objects.count(),
+            "active_jobs": RawJob.objects.filter(is_active=True).count(),
+            "remote_jobs": RawJob.objects.filter(is_remote=True).count(),
+            "synced_jobs": RawJob.objects.filter(sync_status="SYNCED").count(),
+            "pending_jobs": RawJob.objects.filter(sync_status="PENDING").count(),
+            "failed_jobs": RawJob.objects.filter(sync_status="FAILED").count(),
+            "new_today": RawJob.objects.filter(fetched_at__date=today).count(),
+            "running_batch": batch_data,
+            "platform_stats": list(
+                RawJob.objects.values("platform_slug")
+                .annotate(count=Count("id"))
+                .order_by("-count")
+                .values("platform_slug", "count")
+            ),
+        })

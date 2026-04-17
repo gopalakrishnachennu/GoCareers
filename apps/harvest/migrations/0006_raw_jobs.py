@@ -1,0 +1,240 @@
+import django.db.models.deletion
+from django.conf import settings
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ("harvest", "0005_portal_health_fields"),
+        ("companies", "0001_initial"),
+        migrations.swappable_dependency(settings.AUTH_USER_MODEL),
+    ]
+
+    operations = [
+        # ── FetchBatch ────────────────────────────────────────────────────────
+        migrations.CreateModel(
+            name="FetchBatch",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("name", models.CharField(blank=True, max_length=256)),
+                ("status", models.CharField(
+                    choices=[
+                        ("PENDING", "Pending"),
+                        ("RUNNING", "Running"),
+                        ("COMPLETED", "Completed"),
+                        ("PARTIAL", "Partial"),
+                        ("CANCELLED", "Cancelled"),
+                    ],
+                    default="PENDING",
+                    max_length=10,
+                )),
+                ("platform_filter", models.CharField(
+                    blank=True,
+                    help_text="Platform slug filter, e.g. 'workday'. Empty = all platforms.",
+                    max_length=64,
+                )),
+                ("task_id", models.CharField(blank=True, max_length=64)),
+                ("total_companies", models.PositiveIntegerField(default=0)),
+                ("completed_companies", models.PositiveIntegerField(default=0)),
+                ("failed_companies", models.PositiveIntegerField(default=0)),
+                ("total_jobs_found", models.PositiveIntegerField(default=0)),
+                ("total_jobs_new", models.PositiveIntegerField(default=0)),
+                ("created_at", models.DateTimeField(auto_now_add=True)),
+                ("started_at", models.DateTimeField(blank=True, null=True)),
+                ("completed_at", models.DateTimeField(blank=True, null=True)),
+                ("created_by", models.ForeignKey(
+                    blank=True,
+                    null=True,
+                    on_delete=django.db.models.deletion.SET_NULL,
+                    related_name="+",
+                    to=settings.AUTH_USER_MODEL,
+                )),
+            ],
+            options={
+                "verbose_name": "Fetch Batch",
+                "verbose_name_plural": "Fetch Batches",
+                "ordering": ["-created_at"],
+            },
+        ),
+        # ── CompanyFetchRun ───────────────────────────────────────────────────
+        migrations.CreateModel(
+            name="CompanyFetchRun",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("status", models.CharField(
+                    choices=[
+                        ("PENDING", "Pending"),
+                        ("RUNNING", "Running"),
+                        ("SUCCESS", "Success"),
+                        ("PARTIAL", "Partial"),
+                        ("FAILED", "Failed"),
+                        ("SKIPPED", "Skipped"),
+                    ],
+                    default="PENDING",
+                    max_length=10,
+                )),
+                ("task_id", models.CharField(blank=True, max_length=64)),
+                ("started_at", models.DateTimeField(blank=True, null=True)),
+                ("completed_at", models.DateTimeField(blank=True, null=True)),
+                ("jobs_found", models.PositiveIntegerField(default=0)),
+                ("jobs_new", models.PositiveIntegerField(default=0)),
+                ("jobs_updated", models.PositiveIntegerField(default=0)),
+                ("jobs_duplicate", models.PositiveIntegerField(default=0)),
+                ("jobs_failed", models.PositiveIntegerField(default=0)),
+                ("pages_fetched", models.PositiveIntegerField(default=0)),
+                ("error_message", models.TextField(blank=True)),
+                ("error_type", models.CharField(
+                    blank=True,
+                    choices=[
+                        ("TIMEOUT", "Timeout"),
+                        ("HTTP_ERROR", "HTTP Error"),
+                        ("PARSE_ERROR", "Parse Error"),
+                        ("NO_TENANT", "No Tenant ID"),
+                        ("PLATFORM_ERROR", "Platform Error"),
+                        ("RATE_LIMITED", "Rate Limited"),
+                    ],
+                    max_length=16,
+                )),
+                ("triggered_by", models.CharField(
+                    default="MANUAL",
+                    help_text="MANUAL | SCHEDULED | BATCH",
+                    max_length=16,
+                )),
+                ("label", models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE,
+                    related_name="raw_fetch_runs",
+                    to="harvest.companyplatformlabel",
+                )),
+                ("batch", models.ForeignKey(
+                    blank=True,
+                    null=True,
+                    on_delete=django.db.models.deletion.SET_NULL,
+                    related_name="company_runs",
+                    to="harvest.fetchbatch",
+                )),
+            ],
+            options={
+                "verbose_name": "Company Fetch Run",
+                "verbose_name_plural": "Company Fetch Runs",
+                "ordering": ["-started_at"],
+            },
+        ),
+        # ── RawJob ────────────────────────────────────────────────────────────
+        migrations.CreateModel(
+            name="RawJob",
+            fields=[
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                ("external_id", models.CharField(blank=True, max_length=512)),
+                ("url_hash", models.CharField(db_index=True, max_length=64, unique=True)),
+                ("original_url", models.URLField(blank=True, max_length=1024)),
+                ("apply_url", models.URLField(blank=True, max_length=1024)),
+                ("title", models.CharField(max_length=512)),
+                ("company_name", models.CharField(blank=True, max_length=256)),
+                ("department", models.CharField(blank=True, max_length=256)),
+                ("team", models.CharField(blank=True, max_length=256)),
+                ("location_raw", models.CharField(blank=True, max_length=512)),
+                ("city", models.CharField(blank=True, max_length=128)),
+                ("state", models.CharField(blank=True, max_length=128)),
+                ("country", models.CharField(blank=True, max_length=128)),
+                ("postal_code", models.CharField(blank=True, max_length=32)),
+                ("location_type", models.CharField(
+                    choices=[
+                        ("REMOTE", "Remote"),
+                        ("HYBRID", "Hybrid"),
+                        ("ONSITE", "On-Site"),
+                        ("UNKNOWN", "Unknown"),
+                    ],
+                    default="UNKNOWN",
+                    max_length=8,
+                )),
+                ("is_remote", models.BooleanField(default=False)),
+                ("employment_type", models.CharField(
+                    choices=[
+                        ("FULL_TIME", "Full-Time"),
+                        ("PART_TIME", "Part-Time"),
+                        ("CONTRACT", "Contract"),
+                        ("INTERNSHIP", "Internship"),
+                        ("TEMPORARY", "Temporary"),
+                        ("OTHER", "Other"),
+                        ("UNKNOWN", "Unknown"),
+                    ],
+                    default="UNKNOWN",
+                    max_length=12,
+                )),
+                ("experience_level", models.CharField(
+                    choices=[
+                        ("ENTRY", "Entry Level"),
+                        ("MID", "Mid Level"),
+                        ("SENIOR", "Senior"),
+                        ("LEAD", "Lead"),
+                        ("MANAGER", "Manager"),
+                        ("DIRECTOR", "Director"),
+                        ("EXECUTIVE", "Executive"),
+                        ("UNKNOWN", "Unknown"),
+                    ],
+                    default="UNKNOWN",
+                    max_length=10,
+                )),
+                ("salary_min", models.DecimalField(blank=True, decimal_places=2, max_digits=12, null=True)),
+                ("salary_max", models.DecimalField(blank=True, decimal_places=2, max_digits=12, null=True)),
+                ("salary_currency", models.CharField(default="USD", max_length=8)),
+                ("salary_period", models.CharField(blank=True, max_length=16)),
+                ("salary_raw", models.CharField(blank=True, max_length=256)),
+                ("description", models.TextField(blank=True)),
+                ("requirements", models.TextField(blank=True)),
+                ("benefits", models.TextField(blank=True)),
+                ("posted_date", models.DateField(blank=True, null=True)),
+                ("closing_date", models.DateField(blank=True, null=True)),
+                ("platform_slug", models.CharField(blank=True, max_length=64)),
+                ("raw_payload", models.JSONField(blank=True, default=dict)),
+                ("sync_status", models.CharField(
+                    choices=[
+                        ("PENDING", "Pending"),
+                        ("SYNCED", "Synced"),
+                        ("FAILED", "Failed"),
+                        ("SKIPPED", "Skipped"),
+                    ],
+                    default="PENDING",
+                    max_length=8,
+                )),
+                ("is_active", models.BooleanField(default=True)),
+                ("fetched_at", models.DateTimeField(auto_now_add=True)),
+                ("updated_at", models.DateTimeField(auto_now=True)),
+                ("expires_at", models.DateTimeField(blank=True, null=True)),
+                ("company", models.ForeignKey(
+                    on_delete=django.db.models.deletion.CASCADE,
+                    related_name="raw_jobs",
+                    to="companies.company",
+                )),
+                ("platform_label", models.ForeignKey(
+                    blank=True,
+                    null=True,
+                    on_delete=django.db.models.deletion.SET_NULL,
+                    related_name="raw_jobs",
+                    to="harvest.companyplatformlabel",
+                )),
+                ("job_platform", models.ForeignKey(
+                    blank=True,
+                    null=True,
+                    on_delete=django.db.models.deletion.SET_NULL,
+                    related_name="raw_jobs",
+                    to="harvest.jobboardplatform",
+                )),
+            ],
+            options={
+                "verbose_name": "Raw Job",
+                "verbose_name_plural": "Raw Jobs",
+                "ordering": ["-fetched_at"],
+                "indexes": [
+                    models.Index(fields=["company", "platform_slug"], name="harvest_rawjob_company_platform_idx"),
+                    models.Index(fields=["platform_slug"], name="harvest_rawjob_platform_slug_idx"),
+                    models.Index(fields=["sync_status"], name="harvest_rawjob_sync_status_idx"),
+                    models.Index(fields=["posted_date"], name="harvest_rawjob_posted_date_idx"),
+                    models.Index(fields=["employment_type"], name="harvest_rawjob_employment_type_idx"),
+                    models.Index(fields=["location_type"], name="harvest_rawjob_location_type_idx"),
+                    models.Index(fields=["is_active"], name="harvest_rawjob_is_active_idx"),
+                ],
+            },
+        ),
+    ]

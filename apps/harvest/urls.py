@@ -1,7 +1,9 @@
 from django.urls import path
 
 from .views import (
+    CompanyFetchStatusView,
     CompanyLabelListView,
+    FetchBatchListView,
     LabelManualSetView,
     LabelUpdateTenantView,
     LabelVerifyView,
@@ -10,6 +12,9 @@ from .views import (
     PlatformListView,
     PlatformToggleView,
     PlatformUpdateView,
+    RawJobDetailView,
+    RawJobListView,
+    RawJobStatsView,
     RunBackfillNowView,
     RunCleanupNowView,
     RunDetectNowView,
@@ -18,6 +23,8 @@ from .views import (
     RunSyncNowView,
     RunVerifyPortalsView,
     ScheduleConfigView,
+    TriggerBatchFetchView,
+    TriggerCompanyFetchView,
 )
 
 urlpatterns = [
@@ -36,6 +43,12 @@ urlpatterns = [
     path("labels/<int:pk>/verify/", LabelVerifyView.as_view(), name="harvest-label-verify"),
     path("labels/<int:pk>/set-platform/", LabelManualSetView.as_view(), name="harvest-label-set-platform"),
     path("labels/<int:pk>/update-tenant/", LabelUpdateTenantView.as_view(), name="harvest-label-update-tenant"),
+    # Raw Jobs — note: static paths before <int:pk>
+    path("raw-jobs/", RawJobListView.as_view(), name="harvest-rawjobs"),
+    path("raw-jobs/batches/", FetchBatchListView.as_view(), name="harvest-rawjobs-batches"),
+    path("raw-jobs/company-status/", CompanyFetchStatusView.as_view(), name="harvest-rawjobs-company-status"),
+    path("raw-jobs/stats/", RawJobStatsView.as_view(), name="harvest-rawjobs-stats"),
+    path("raw-jobs/<int:pk>/", RawJobDetailView.as_view(), name="harvest-rawjob-detail"),
     # Trigger actions
     path("run/detect/", RunDetectNowView.as_view(), name="harvest-run-detect"),
     path("run/harvest/", RunHarvestNowView.as_view(), name="harvest-run-harvest"),
@@ -43,4 +56,6 @@ urlpatterns = [
     path("run/cleanup/", RunCleanupNowView.as_view(), name="harvest-run-cleanup"),
     path("run/backfill/", RunBackfillNowView.as_view(), name="harvest-run-backfill"),
     path("run/verify-portals/", RunVerifyPortalsView.as_view(), name="harvest-run-verify-portals"),
+    path("run/fetch-company/", TriggerCompanyFetchView.as_view(), name="harvest-run-fetch-company"),
+    path("run/fetch-batch/", TriggerBatchFetchView.as_view(), name="harvest-run-fetch-batch"),
 ]
