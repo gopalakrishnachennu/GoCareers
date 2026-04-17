@@ -5,16 +5,35 @@ from .ashby import AshbyHarvester
 from .icims import IcimsHarvester
 from .jobvite import JobviteHarvester
 from .taleo import TaleoHarvester
+from .workable import WorkableHarvester
+from .smartrecruiters import SmartRecruitersHarvester
+from .bamboohr import BambooHRHarvester
+from .recruitee import RecruiteeHarvester
+from .oracle import OracleHCMHarvester
+from .ultipro import UltiProHarvester
+from .dayforce import DayforceHarvester
 from .html_scraper import HTMLScrapeHarvester
 
 HARVESTER_MAP: dict[str, type] = {
-    "workday": WorkdayHarvester,
-    "greenhouse": GreenhouseHarvester,
-    "lever": LeverHarvester,
-    "ashby": AshbyHarvester,
-    "icims": IcimsHarvester,
-    "jobvite": JobviteHarvester,
-    "taleo": TaleoHarvester,
+    # ── Full dedicated API harvesters ─────────────────────────────────────────
+    "workday":         WorkdayHarvester,
+    "greenhouse":      GreenhouseHarvester,
+    "lever":           LeverHarvester,
+    "ashby":           AshbyHarvester,
+    "workable":        WorkableHarvester,
+    "smartrecruiters": SmartRecruitersHarvester,
+    "bamboohr":        BambooHRHarvester,
+    "recruitee":       RecruiteeHarvester,
+    "oracle":          OracleHCMHarvester,
+    # ── Dedicated HTML/AJAX scrapers ──────────────────────────────────────────
+    "icims":           IcimsHarvester,
+    "jobvite":         JobviteHarvester,
+    "taleo":           TaleoHarvester,
+    "ultipro":         UltiProHarvester,
+    "dayforce":        DayforceHarvester,
+    # ── Generic HTML fallback (covers adp, applytojob, applicantpro, etc.) ────
+    # These use HTMLScrapeHarvester which follows job-looking links on the
+    # career page. Works OK for simple static pages; may miss SPA-rendered jobs.
 }
 
 
@@ -27,5 +46,7 @@ def get_harvester(platform_slug: str):
 __all__ = [
     "WorkdayHarvester", "GreenhouseHarvester", "LeverHarvester",
     "AshbyHarvester", "IcimsHarvester", "JobviteHarvester", "TaleoHarvester",
-    "HTMLScrapeHarvester", "get_harvester", "HARVESTER_MAP",
+    "WorkableHarvester", "SmartRecruitersHarvester", "BambooHRHarvester",
+    "RecruiteeHarvester", "OracleHCMHarvester", "UltiProHarvester",
+    "DayforceHarvester", "HTMLScrapeHarvester", "get_harvester", "HARVESTER_MAP",
 ]
