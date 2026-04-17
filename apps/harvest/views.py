@@ -593,19 +593,28 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
         batch_name = request.POST.get("batch_name", "").strip() or None
         test_mode = request.POST.get("test_mode", "") in ("1", "true", "True", "yes")
         test_max_jobs = int(request.POST.get("test_max_jobs", "10") or "10")
+        companies_per_platform = int(request.POST.get("companies_per_platform", "1") or "1")
+
+        # skip_platforms: comma-separated string OR multiple hidden inputs
+        skip_raw = request.POST.get("skip_platforms", "").strip()
+        skip_platforms = [s.strip() for s in skip_raw.split(",") if s.strip()] if skip_raw else []
+
         task = fetch_raw_jobs_batch_task.delay(
             platform_slug=platform_slug,
             batch_name=batch_name,
             triggered_user_id=request.user.id,
             test_mode=test_mode,
             test_max_jobs=test_max_jobs,
+            companies_per_platform=companies_per_platform,
+            skip_platforms=skip_platforms or None,
         )
         if test_mode:
+            skip_note = f", skip: {', '.join(skip_platforms)}" if skip_platforms else ""
             messages.success(
                 request,
-                f"Test fetch started — 1 company per platform, up to {test_max_jobs} jobs each (Task: {task.id[:8]}…)",
+                f"Platform check started — {companies_per_platform} co/platform, up to {test_max_jobs} jobs each{skip_note} (Task: {task.id[:8]}…)",
             )
-            return redirect_with_task_progress("harvest-rawjobs", task.id, f"Test fetch ({test_max_jobs} jobs/platform)")
+            return redirect_with_task_progress("harvest-rawjobs", task.id, f"Platform check ({test_max_jobs} jobs/platform)")
         messages.success(
             request,
             f"Raw jobs batch fetch started"

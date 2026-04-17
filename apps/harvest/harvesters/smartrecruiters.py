@@ -40,6 +40,8 @@ class SmartRecruitersHarvester(BaseHarvester):
                 results.append(self._normalize(p, slug, company.name))
 
             total = int(data.get("totalFound") or 0)
+            if total:
+                self.last_total_available = total
             offset += len(postings)
 
             if not fetch_all or not postings or offset >= total:

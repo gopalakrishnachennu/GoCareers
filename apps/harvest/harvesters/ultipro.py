@@ -27,6 +27,7 @@ class UltiProHarvester(BaseHarvester):
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
+        self.last_total_available = 0
         if not tenant_id:
             return []
 
@@ -40,12 +41,17 @@ class UltiProHarvester(BaseHarvester):
 
         results: list[dict] = []
 
-        # Path 1: Internal JSON API (preferred)
+        # Path 1: Board-scoped JSON API (preferred)
+        api_results = self._fetch_board_api(company_code, jobboard_id, company.name, fetch_all)
+        if api_results:
+            return api_results
+
+        # Path 2: Legacy JSON API (kept as backup)
         api_results = self._fetch_api(company_code, company.name, fetch_all)
         if api_results:
             return api_results
 
-        # Path 2: HTML scrape (fallback)
+        # Path 3: HTML scrape (fallback)
         if jobboard_id:
             url = f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
         else:
@@ -53,6 +59,55 @@ class UltiProHarvester(BaseHarvester):
         return self._scrape_html(url, company.name)
 
     # ── Path 1: JSON API ──────────────────────────────────────────────────────
+
+    def _fetch_board_api(
+        self,
+        company_code: str,
+        jobboard_id: str,
+        company_name: str,
+        fetch_all: bool,
+    ) -> list[dict]:
+        import time as _t
+        if not jobboard_id:
+            return []
+
+        url = (
+            f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
+            "/JobBoardView/LoadSearchResults"
+        )
+        results: list[dict] = []
+        skip = 0
+
+        while True:
+            payload = {
+                "opportunitySearch": {
+                    "Top": PAGE_SIZE,
+                    "Skip": skip,
+                    "Query": "",
+                    "SortBy": "Relevance",
+                    "Filters": [],
+                }
+            }
+            data = self._post(url, json_data=payload)
+            if not isinstance(data, dict) or "error" in data:
+                break
+
+            jobs = data.get("opportunities") or []
+            if not jobs:
+                break
+
+            for j in jobs:
+                results.append(self._normalize_api(j, company_code, company_name))
+
+            total = int(data.get("totalCount") or 0)
+            if total:
+                self.last_total_available = total
+            skip += len(jobs)
+            if not fetch_all or not total or skip >= total or skip >= (MAX_PAGES * PAGE_SIZE):
+                break
+            _t.sleep(MIN_DELAY_API)
+
+        return results
 
     def _fetch_api(self, company_code: str, company_name: str, fetch_all: bool) -> list[dict]:
         import time as _t
@@ -81,6 +136,8 @@ class UltiProHarvester(BaseHarvester):
                 results.append(self._normalize_api(j, company_code, company_name))
 
             total = int(data.get("total") or data.get("totalCount") or 0)
+            if total:
+                self.last_total_available = total
             if not fetch_all or (total and page * PAGE_SIZE >= total) or page >= MAX_PAGES:
                 break
             page += 1
@@ -89,11 +146,16 @@ class UltiProHarvester(BaseHarvester):
         return results
 
     def _normalize_api(self, j: dict, company_code: str, company_name: str) -> dict:
-        job_id = j.get("requisitionId") or j.get("id") or j.get("jobId") or ""
-        title = j.get("jobTitle") or j.get("title") or ""
+        job_id = j.get("requisitionId") or j.get("id") or j.get("jobId") or j.get("Id") or ""
+        title = j.get("jobTitle") or j.get("title") or j.get("Title") or ""
         city = j.get("city") or ""
         state = j.get("state") or j.get("stateCode") or ""
         country = j.get("country") or j.get("countryCode") or ""
+        locs = j.get("Locations") or []
+        if not city and locs and isinstance(locs[0], dict):
+            city = locs[0].get("AddressCity") or ""
+            state = state or locs[0].get("AddressState") or ""
+            country = country or locs[0].get("AddressCountry") or ""
         location_raw = ", ".join(x for x in [city, state, country] if x)
 
         is_remote = bool(
@@ -120,8 +182,10 @@ class UltiProHarvester(BaseHarvester):
         }
         employment_type = emp_map.get(emp_raw, "UNKNOWN")
 
+        links = j.get("Links") or {}
         url = (
-            j.get("applyUrl")
+            links.get("OpportunityDetail")
+            or j.get("applyUrl")
             or j.get("url")
             or f"https://recruiting.ultipro.com/{company_code}/JobBoard/job/{job_id}"
         )
@@ -176,12 +240,14 @@ class UltiProHarvester(BaseHarvester):
         results: list[dict] = []
         seen: set[str] = set()
 
-        # UltiPro job links pattern
+        # UltiPro/UKG job links pattern (OpportunityDetail pages)
         for m in re.finditer(
-            r'href=["\']([^"\']*recruiting\.ultipro\.com[^"\']+/JobBoard/job/[^"\']+)["\']',
+            r'href=["\']([^"\']*(?:recruiting\.ultipro\.com)?/[^"\']+/JobBoard/[^"\']+/OpportunityDetail\?opportunityId=[^"\']+)["\']',
             html, re.I,
         ):
             job_url = m.group(1)
+            if job_url.startswith("/"):
+                job_url = f"https://recruiting.ultipro.com{job_url}"
             if job_url in seen:
                 continue
             seen.add(job_url)

@@ -27,28 +27,35 @@ class DayforceHarvester(BaseHarvester):
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
+        self.last_total_available = 0
         if not tenant_id:
             return []
 
-        slug = tenant_id.strip()
+        raw = tenant_id.strip()
+        if "|" in raw:
+            slug, board_code = raw.split("|", 1)
+            board_code = board_code.strip() or "CANDIDATEPORTAL"
+        else:
+            slug = raw
+            board_code = "CANDIDATEPORTAL"
         results: list[dict] = []
 
         # Path 1: JSON API
-        api_results = self._fetch_api(slug, company.name, fetch_all)
+        api_results = self._fetch_api(slug, board_code, company.name, fetch_all)
         if api_results:
             return api_results
 
         # Path 2: HTML scrape
-        return self._scrape_html(slug, company.name)
+        return self._scrape_html(slug, board_code, company.name)
 
     # ── Path 1: JSON API ──────────────────────────────────────────────────────
 
-    def _fetch_api(self, slug: str, company_name: str, fetch_all: bool) -> list[dict]:
+    def _fetch_api(self, slug: str, board_code: str, company_name: str, fetch_all: bool) -> list[dict]:
         import time as _t
         # Two possible API URL patterns
         api_urls = [
             f"https://jobs.dayforcehcm.com/CandidatePortal/en-US/{slug}/api/jobs",
-            f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/api/jobs",
+            f"https://jobs.dayforcehcm.com/en-US/{slug}/{board_code}/api/jobs",
         ]
 
         for base_url in api_urls:
@@ -78,6 +85,8 @@ class DayforceHarvester(BaseHarvester):
                     or data.get("total")
                     or 0
                 )
+                if total:
+                    self.last_total_available = total
                 if not fetch_all or (total and page * PAGE_SIZE >= total) or page >= MAX_PAGES:
                     break
                 page += 1
@@ -147,9 +156,9 @@ class DayforceHarvester(BaseHarvester):
 
     # ── Path 2: HTML scrape ───────────────────────────────────────────────────
 
-    def _scrape_html(self, slug: str, company_name: str) -> list[dict]:
+    def _scrape_html(self, slug: str, board_code: str, company_name: str) -> list[dict]:
         import time as _t
-        url = f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs"
+        url = f"https://jobs.dayforcehcm.com/en-US/{slug}/{board_code}/jobs"
         self._enforce_rate_limit()
         try:
             resp = self._session.get(
@@ -165,11 +174,11 @@ class DayforceHarvester(BaseHarvester):
 
         results: list[dict] = []
         seen: set[str] = set()
-        base = f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs"
+        base = f"https://jobs.dayforcehcm.com/en-US/{slug}/{board_code}/jobs"
 
         # Look for job links in the SPA HTML
         for m in re.finditer(
-            r'href=["\']([^"\']*CANDIDATEPORTAL/jobs/\d+[^"\']*)["\']',
+            rf'href=["\']([^"\']*{re.escape(board_code)}/jobs/\d+[^"\']*)["\']',
             html, re.I,
         ):
             job_url = m.group(1)
@@ -204,6 +213,6 @@ class DayforceHarvester(BaseHarvester):
                 "benefits": "",
                 "posted_date_raw": "",
                 "closing_date": "",
-                "raw_payload": {"source": "html_scrape"},
+                "raw_payload": {"source": "html_scrape", "board_code": board_code},
             })
         return results

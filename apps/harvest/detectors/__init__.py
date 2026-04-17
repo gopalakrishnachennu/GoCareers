@@ -18,7 +18,8 @@ URL_PATTERNS: dict[str, list[str]] = {
     "icims": ["icims.com"],
     "recruitee": ["recruitee.com"],
     "taleo": ["taleo.net"],
-    "zoho": ["zoho.com/recruit", "jobs.zoho.com"],
+    "zoho": ["zoho.com/recruit", "jobs.zoho.com", "zohorecruit.com"],
+    "teamtailor": ["teamtailor.com/jobs", ".teamtailor.com"],
     "ultipro": ["ultipro.com", "ukg.com", "recruiting.ukg.net"],
     "applicantpro": ["applicantpro.com"],
     "applytojob": ["applytojob.com"],
@@ -30,6 +31,7 @@ URL_PATTERNS: dict[str, list[str]] = {
     "dayforce": ["jobs.dayforcehcm.com", "dayforcehcm.com"],
     "adp": ["workforcenow.adp.com", "myjobs.adp.com"],
     "oracle": ["oraclecloud.com/hcmUI", "fa.ocs.oraclecloud.com", "fa.us2.oraclecloud.com"],
+    "breezy": [".breezy.hr", "breezy.hr/p/"],
 }
 
 TENANT_EXTRACTORS: dict[str, re.Pattern] = {
@@ -51,9 +53,11 @@ TENANT_EXTRACTORS: dict[str, re.Pattern] = {
     # ── Taleo: {subdomain}.taleo.net/careersection/{section}/...
     # Stored as "{subdomain}|{career_section}" e.g. "aa224|ex", "uhg|10000"
     "taleo": re.compile(r"([^/.]+)\.taleo\.net(?:/careersection/([^/?#\s]+))?", re.I),
-    # ── UltiPro/UKG: recruiting.ultipro.com/{TENANT_CODE}/JobBoard/...
+    # ── UltiPro/UKG: recruiting.ultipro.com/{TENANT_CODE}/JobBoard/{board_id}/...
+    # Store as "{company_code}|{jobboard_id}" when board_id exists.
     "ultipro": re.compile(
-        r"(?:recruiting\d*\.ultipro\.com|recruiting\.ukg\.net)/([^/?#\s]+)", re.I
+        r"(?:recruiting\d*\.ultipro\.com|recruiting\.ukg\.net)/([^/?#\s]+)/JobBoard(?:/([^/?#\s]+))?",
+        re.I,
     ),
     # ── ApplicantPro: {tenant}.applicantpro.com
     "applicantpro": re.compile(r"([^/.]+)\.applicantpro\.com", re.I),
@@ -67,8 +71,12 @@ TENANT_EXTRACTORS: dict[str, re.Pattern] = {
     "bamboohr": re.compile(r"([^/.]+)\.bamboohr\.com", re.I),
     # ── SmartRecruiters: jobs.smartrecruiters.com/{Tenant}/...
     "smartrecruiters": re.compile(r"(?:jobs\.)?smartrecruiters\.com/([^/?#\s]+)", re.I),
-    # ── Dayforce HCM: jobs.dayforcehcm.com/en-US/{tenant}/CANDIDATEPORTAL/...
-    "dayforce": re.compile(r"dayforcehcm\.com/[^/]+/([^/?#\s]+)", re.I),
+    # ── Dayforce HCM: jobs.dayforcehcm.com/en-US/{tenant}/{board}/...
+    # Store as "{tenant}|{board}" when board is present.
+    "dayforce": re.compile(
+        r"dayforcehcm\.com/[^/]+/([^/?#\s]+)(?:/([^/?#\s]+))?",
+        re.I,
+    ),
     # ── ADP: myjobs.adp.com/{tenant}/cx  (workforcenow.adp.com has no reusable tenant)
     "adp": re.compile(r"myjobs\.adp\.com/([^/?#\s]+)/cx", re.I),
     # ── Oracle HCM: stored as "{subdomain}|{sites_id}"
@@ -77,6 +85,15 @@ TENANT_EXTRACTORS: dict[str, re.Pattern] = {
         r"([^/.]+\.fa\.[^/.]+)\.oraclecloud\.com/hcmUI/CandidateExperience/[^/]+/sites/([^/?#\s]+)",
         re.I,
     ),
+    # Breezy HR: {sub}.breezy.hr — tenant is subdomain (avoid matching https://… as tenant)
+    "breezy": re.compile(r"(?:https?://)?([a-z0-9-]+)\.breezy\.hr", re.I),
+    # Zoho: jobs.zoho.com/portal/{slug}/ or {sub}.zohorecruit.com
+    "zoho": re.compile(
+        r"(?:jobs\.zoho\.com/portal/([^/?#\s]+)|(?:https?://)?([a-z0-9-]+)\.zohorecruit\.com)",
+        re.I,
+    ),
+    # Teamtailor: {sub}.teamtailor.com
+    "teamtailor": re.compile(r"(?:https?://)?([a-z0-9-]+)\.teamtailor\.com", re.I),
 }
 
 
@@ -150,6 +167,26 @@ def extract_tenant(platform_slug: str, url: str) -> str:
         if subdomain and sites_id:
             return f"{subdomain}|{sites_id}"
         return subdomain
+
+    # UltiPro: groups = (company_code, jobboard_id?) → "company|jobboard" if present
+    if platform_slug == "ultipro":
+        company_code = m.group(1) or ""
+        jobboard_id = m.group(2) or ""
+        if company_code and jobboard_id:
+            return f"{company_code}|{jobboard_id}"
+        return company_code
+
+    # Dayforce: groups = (tenant, board?) → "tenant|board" if present
+    if platform_slug == "dayforce":
+        tenant = m.group(1) or ""
+        board = m.group(2) or ""
+        if tenant and board:
+            return f"{tenant}|{board}"
+        return tenant
+
+    # Zoho: portal slug (group 1) OR zohorecruit subdomain (group 2)
+    if platform_slug == "zoho":
+        return (m.group(1) or m.group(2) or "").strip()
 
     for g in m.groups():
         if g:

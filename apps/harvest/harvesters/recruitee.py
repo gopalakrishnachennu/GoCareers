@@ -28,10 +28,9 @@ class RecruiteeHarvester(BaseHarvester):
         if not isinstance(data, dict) or "error" in data:
             return []
 
-        return [
-            self._normalize(o, slug, company.name)
-            for o in (data.get("offers") or [])
-        ]
+        offers = data.get("offers") or []
+        self.last_total_available = len(offers)
+        return [self._normalize(o, slug, company.name) for o in offers]
 
     # ── Normalization ─────────────────────────────────────────────────────────
 

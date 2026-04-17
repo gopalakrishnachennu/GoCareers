@@ -24,6 +24,7 @@ class OracleHCMHarvester(BaseHarvester):
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
+        self.last_total_available = 0
         if not tenant_id or "|" not in tenant_id:
             return []
 
@@ -47,7 +48,7 @@ class OracleHCMHarvester(BaseHarvester):
                 "limit": PAGE_SIZE,
                 "offset": offset,
                 "finder": f"findReqs;siteNumber={sites_id}",
-                "expand": "requisitionList.primaryLocation",
+                "expand": "requisitionList",
             }
             data = self._get(base_url, params=params)
 
@@ -55,6 +56,10 @@ class OracleHCMHarvester(BaseHarvester):
                 break
 
             items = data.get("items") or []
+            if items and isinstance(items[0], dict):
+                total_from_search = int(items[0].get("TotalJobsCount") or 0)
+                if total_from_search:
+                    self.last_total_available = total_from_search
             for item in items:
                 for req in item.get("requisitionList") or []:
                     results.append(
@@ -64,7 +69,10 @@ class OracleHCMHarvester(BaseHarvester):
             # Oracle REST uses hasMore + totalResults
             has_more = data.get("hasMore", False)
             total = int(data.get("totalResults") or 0)
-            offset += len(items)
+            if total:
+                self.last_total_available = total
+            # API returns search wrapper items; page via explicit offset step.
+            offset += PAGE_SIZE
 
             if not fetch_all or not has_more or (total and offset >= total):
                 break

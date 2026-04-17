@@ -12,6 +12,9 @@ from .recruitee import RecruiteeHarvester
 from .oracle import OracleHCMHarvester
 from .ultipro import UltiProHarvester
 from .dayforce import DayforceHarvester
+from .breezy import BreezyHarvester
+from .zoho import ZohoHarvester
+from .teamtailor import TeamtailorHarvester
 from .html_scraper import HTMLScrapeHarvester
 
 HARVESTER_MAP: dict[str, type] = {
@@ -31,6 +34,9 @@ HARVESTER_MAP: dict[str, type] = {
     "taleo":           TaleoHarvester,
     "ultipro":         UltiProHarvester,
     "dayforce":        DayforceHarvester,
+    "breezy":          BreezyHarvester,
+    "zoho":            ZohoHarvester,
+    "teamtailor":      TeamtailorHarvester,
     # ── Generic HTML fallback (covers adp, applytojob, applicantpro, etc.) ────
     # These use HTMLScrapeHarvester which follows job-looking links on the
     # career page. Works OK for simple static pages; may miss SPA-rendered jobs.
@@ -48,5 +54,6 @@ __all__ = [
     "AshbyHarvester", "IcimsHarvester", "JobviteHarvester", "TaleoHarvester",
     "WorkableHarvester", "SmartRecruitersHarvester", "BambooHRHarvester",
     "RecruiteeHarvester", "OracleHCMHarvester", "UltiProHarvester",
-    "DayforceHarvester", "HTMLScrapeHarvester", "get_harvester", "HARVESTER_MAP",
+    "DayforceHarvester", "BreezyHarvester", "ZohoHarvester", "TeamtailorHarvester",
+    "HTMLScrapeHarvester", "get_harvester", "HARVESTER_MAP",
 ]

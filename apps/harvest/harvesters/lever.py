@@ -163,6 +163,8 @@ class LeverHarvester(BaseHarvester):
             if not data:
                 break
 
+            self.last_total_available += len(data)
+
             for job in data:
                 created_ms = job.get("createdAt", 0)
                 # When not fetching all, skip jobs older than cutoff

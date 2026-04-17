@@ -15,7 +15,7 @@ INTER_COMPANY_DELAY_API = 1.5        # seconds — API platforms (GH, Lever, Ash
 INTER_COMPANY_DELAY_SCRAPE = 5.0     # seconds — HTML scrape platforms
 HTML_SCRAPE_PLATFORMS = {"html_scrape", "icims", "taleo", "jobvite", "ultipro",
                          "applicantpro", "applytojob", "theapplicantmanager",
-                         "zoho", "recruitee"}
+                         "zoho", "recruitee", "breezy", "teamtailor"}
 
 # Circuit breaker — skip a company after this many consecutive fetch failures
 MAX_CONSECUTIVE_FAILURES = 3
@@ -582,6 +582,8 @@ def fetch_raw_jobs_for_company_task(
             label.tenant_id,
             fetch_all=use_fetch_all,
         )
+        # Capture API-reported total (even when we only fetched a subset)
+        run.jobs_total_available = getattr(harvester, "last_total_available", 0) or len(raw_jobs)
     except requests.exceptions.Timeout as exc:
         run.status = CompanyFetchRun.Status.FAILED
         run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
@@ -714,7 +716,7 @@ def fetch_raw_jobs_for_company_task(
     run.jobs_failed = jobs_failed
     run.completed_at = timezone.now()
     run.save(update_fields=[
-        "status", "jobs_found", "jobs_new", "jobs_updated",
+        "status", "jobs_found", "jobs_total_available", "jobs_new", "jobs_updated",
         "jobs_duplicate", "jobs_failed", "completed_at",
     ])
 
@@ -753,13 +755,15 @@ def fetch_raw_jobs_batch_task(
     triggered_user_id: int = None,
     test_mode: bool = False,
     test_max_jobs: int = 10,
+    companies_per_platform: int = 1,
+    skip_platforms: list = None,
 ):
     """
     Create a FetchBatch and dispatch fetch_raw_jobs_for_company_task for every matching label.
 
-    test_mode=True — picks only 1 company per platform (first alphabetically by company name),
-    passes max_jobs=test_max_jobs to each per-company task, skips full pagination.
-    Useful for smoke-testing all platforms without a full run.
+    test_mode=True — picks up to `companies_per_platform` companies per platform,
+    passes max_jobs=test_max_jobs (no full pagination). Useful for smoke-testing.
+    skip_platforms — list of platform slugs to exclude (e.g. ["greenhouse","lever"]).
     """
     from django.contrib.auth import get_user_model
     from .models import CompanyPlatformLabel, FetchBatch
@@ -772,8 +776,10 @@ def fetch_raw_jobs_batch_task(
     # Build batch name
     if not batch_name:
         ts = timezone.now().strftime("%Y-%m-%d %H:%M")
+        skipped = ", ".join(skip_platforms or [])
         if test_mode:
-            batch_name = f"TEST FETCH ({test_max_jobs} jobs/platform) — {ts}"
+            skip_str = f" | skip: {skipped}" if skipped else ""
+            batch_name = f"PLATFORM CHECK — {companies_per_platform} co/platform, {test_max_jobs} jobs{skip_str} — {ts}"
         elif platform_slug:
             batch_name = f"{platform_slug.title()} batch — {ts}"
         else:
@@ -800,18 +806,25 @@ def fetch_raw_jobs_batch_task(
     if label_pks:
         qs = qs.filter(pk__in=label_pks)
 
+    if skip_platforms:
+        qs = qs.exclude(platform__slug__in=skip_platforms)
+
     if test_mode:
-        # Pick exactly 1 company per platform slug (first alphabetically)
-        seen_platforms: set[str] = set()
+        # Pick up to `companies_per_platform` companies per platform slug
+        per_plat = max(1, companies_per_platform)
+        seen_platforms: dict[str, int] = {}  # slug -> count
         label_list = []
         for label in qs.iterator():
             slug = label.platform.slug if label.platform else ""
-            if slug and slug not in seen_platforms:
-                seen_platforms.add(slug)
+            if not slug:
+                continue
+            count = seen_platforms.get(slug, 0)
+            if count < per_plat:
+                seen_platforms[slug] = count + 1
                 label_list.append(label.pk)
         logger.info(
-            "fetch_raw_jobs_batch TEST MODE: %d platforms, %d companies selected",
-            len(seen_platforms), len(label_list),
+            "fetch_raw_jobs_batch TEST MODE: %d platforms, %d companies selected (%d per platform)",
+            len(seen_platforms), len(label_list), per_plat,
         )
     else:
         label_list = list(qs.values_list("pk", flat=True))

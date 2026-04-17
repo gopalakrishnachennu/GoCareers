@@ -32,7 +32,9 @@ class WorkableHarvester(BaseHarvester):
         token: str | None = None
 
         while True:
-            payload: dict = {"limit": PAGE_SIZE, "details": False}
+            # Workable v3 rejects legacy "limit/details" body keys with 400.
+            # Empty body works and returns {"total","results","paging"}.
+            payload: dict = {}
             if token:
                 payload["token"] = token
 
@@ -40,10 +42,14 @@ class WorkableHarvester(BaseHarvester):
             if not isinstance(data, dict) or "error" in data:
                 break
 
-            for job in data.get("results") or []:
+            page_jobs = data.get("results") or []
+            for job in page_jobs:
                 results.append(self._normalize(job, slug, company.name))
 
             paging = data.get("paging") or {}
+            total = data.get("total") or paging.get("count") or 0
+            if total:
+                self.last_total_available = int(total)
             token = paging.get("next")
 
             if not fetch_all or not token:

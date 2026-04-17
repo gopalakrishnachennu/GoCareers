@@ -162,6 +162,7 @@ class AshbyHarvester(BaseHarvester):
             ((data.get("data") or {}).get("jobBoard") or {}).get("jobPostings") or []
         )
 
+        self.last_total_available = len(postings)
         results = []
         for job in postings:
             job_id = job.get("id", "")

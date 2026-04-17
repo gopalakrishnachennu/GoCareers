@@ -130,8 +130,10 @@ class GreenhouseHarvester(BaseHarvester):
         if isinstance(data, dict) and "error" in data:
             return []
 
+        all_jobs = data.get("jobs") or []
+        self.last_total_available = len(all_jobs)
         results = []
-        for job in (data.get("jobs") or []):
+        for job in all_jobs:
             updated_raw = job.get("updated_at", "")
 
             if cutoff and updated_raw:

@@ -108,6 +108,9 @@ class BaseHarvester(ABC):
             "Accept-Language": "en-US,en;q=0.9",
         })
         self._last_request_at: float = 0.0
+        # Set by fetch_jobs() implementations when the platform API returns a
+        # total count. Lets callers compare "available" vs "fetched".
+        self.last_total_available: int = 0
 
     # ── Public interface ──────────────────────────────────────────────────────
 

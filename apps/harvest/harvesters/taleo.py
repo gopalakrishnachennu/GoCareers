@@ -54,6 +54,7 @@ class TaleoHarvester(BaseHarvester):
         tenant_id = "{subdomain}|{career_section}"  e.g. "aa224|ex"
         Falls back to guessing section "ex" if no "|" found (old records).
         """
+        self.last_total_available = 0
         if not tenant_id:
             return []
 
@@ -95,6 +96,8 @@ class TaleoHarvester(BaseHarvester):
 
                     paging = data.get("pagingData") or {}
                     total = int(paging.get("totalCount") or 0)
+                    if total:
+                        self.last_total_available = total
                     page_size = int(paging.get("pageSize") or len(requisitions)) or len(requisitions)
                     if len(requisitions) < page_size or (total and page_no * page_size >= total):
                         break
@@ -236,17 +239,38 @@ class TaleoHarvester(BaseHarvester):
                 continue
             columns = req.get("column") or []
             title = str(columns[0] if columns else "").strip() or "Untitled Position"
-            location = self._location_label(columns[2] if len(columns) > 2 else "")
+            location_raw = self._location_label(columns[2] if len(columns) > 2 else "")
             posting_date = str(columns[4] if len(columns) > 4 else "").strip()
             contest_no = str(req.get("contestNo") or "").strip()
             detail_ref = contest_no or job_id
             job_url = f"{base_section_url}/jobdetail.ftl?job={quote(detail_ref)}&lang={lang}"
+            is_remote = "remote" in (title + location_raw).lower()
             postings.append({
+                "external_id": job_id,
                 "original_url": job_url,
+                "apply_url": job_url,
                 "title": title,
                 "company_name": company_name,
-                "location": location,
+                "department": "",
+                "team": "",
+                "location_raw": location_raw,
+                "city": "",
+                "state": "",
+                "country": "",
+                "is_remote": is_remote,
+                "location_type": "REMOTE" if is_remote else ("ONSITE" if location_raw else "UNKNOWN"),
+                "employment_type": "UNKNOWN",
+                "experience_level": "UNKNOWN",
+                "salary_min": None,
+                "salary_max": None,
+                "salary_currency": "USD",
+                "salary_period": "",
+                "salary_raw": "",
+                "description": "",
+                "requirements": "",
+                "benefits": "",
                 "posted_date_raw": posting_date,
+                "closing_date": "",
                 "raw_payload": req,
             })
         return postings
@@ -286,18 +310,40 @@ class TaleoHarvester(BaseHarvester):
 
             title = title_from_apply or fallback_title or "Untitled Position"
             detail_ref = job_number or job_id
-            location = self._location_label(location_raw)
-            dedup_key = f"{detail_ref}|{title}|{location}".lower()
+            location_label = self._location_label(location_raw)
+            dedup_key = f"{detail_ref}|{title}|{location_label}".lower()
             if not detail_ref or dedup_key in seen_keys:
                 continue
 
             seen_keys.add(dedup_key)
+            is_remote = "remote" in (title + location_label).lower()
+            job_url = f"{base_section_url}/jobdetail.ftl?job={quote(detail_ref)}&lang={lang}"
             postings.append({
-                "original_url": f"{base_section_url}/jobdetail.ftl?job={quote(detail_ref)}&lang={lang}",
+                "external_id": job_id,
+                "original_url": job_url,
+                "apply_url": job_url,
                 "title": title,
                 "company_name": company_name,
-                "location": location,
+                "department": "",
+                "team": "",
+                "location_raw": location_label,
+                "city": "",
+                "state": "",
+                "country": "",
+                "is_remote": is_remote,
+                "location_type": "REMOTE" if is_remote else ("ONSITE" if location_label else "UNKNOWN"),
+                "employment_type": "UNKNOWN",
+                "experience_level": "UNKNOWN",
+                "salary_min": None,
+                "salary_max": None,
+                "salary_currency": "USD",
+                "salary_period": "",
+                "salary_raw": "",
+                "description": "",
+                "requirements": "",
+                "benefits": "",
                 "posted_date_raw": posted_date,
+                "closing_date": "",
                 "raw_payload": {},
             })
 

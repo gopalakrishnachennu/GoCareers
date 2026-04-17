@@ -150,7 +150,7 @@ class WorkdayHarvester(BaseHarvester):
 
         for path in paths_to_try:
             url = (
-                f"https://{tenant}.myworkdayjobs.com"
+                f"https://{full_subdomain}.myworkdayjobs.com"
                 f"/wday/cxs/{tenant}/{path}/jobs"
             )
 
@@ -174,6 +174,7 @@ class WorkdayHarvester(BaseHarvester):
 
             # Found a valid path — collect results
             results = [_normalize_workday_job(j, job_domain, company.name) for j in postings]
+            self.last_total_available = int(data.get("total") or len(postings))
 
             if fetch_all:
                 total = data.get("total", len(postings))

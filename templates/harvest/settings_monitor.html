@@ -75,7 +75,7 @@
         </button>
       </form>
 
-      <form method="post" action="{% url 'harvest-run-harvest' %}" class="flex items-center gap-2">
+      <form method="post" action="{% url 'harvest-run-harvest' %}" class="flex flex-wrap items-center gap-2">
         {% csrf_token %}
         <select name="platform_slug" class="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-green-500/20 focus:border-green-500">
           <option value="">All Platforms</option>
@@ -102,6 +102,13 @@
         </button>
       </form>
     </div>
+    <p class="mt-4 text-xs text-gray-500 leading-relaxed max-w-3xl">
+      <strong>All Platforms</strong> + <strong>Harvest Now</strong> runs a single Celery task that walks <em>each</em> enabled platform in turn (up to 50 labeled companies per platform). For a synchronous spot-check from the server shell:
+      <code class="bg-gray-100 px-1 rounded text-[11px]">python manage.py smoke_test_harvest</code>
+      (2 companies per platform), or
+      <code class="bg-gray-100 px-1 rounded text-[11px]">python manage.py smoke_test_harvest --dry-run</code>
+      to list samples without HTTP.
+    </p>
   </div>
 
   <!-- Runs Table -->

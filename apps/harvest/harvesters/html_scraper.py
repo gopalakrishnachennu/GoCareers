@@ -18,6 +18,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from .base import BaseHarvester
+from ..career_url import build_career_url
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,17 @@ class HTMLScrapeHarvester(BaseHarvester):
         if not BS4_AVAILABLE:
             return []
 
+        # tenant_id is usually a short code (e.g. "bookofthemonth"), not a URL.
+        # Build the public career URL from platform slug + tenant first.
+        platform_slug = ""
+        try:
+            platform_obj = getattr(company, "platform_label", None)
+            if platform_obj and getattr(platform_obj, "platform", None):
+                platform_slug = platform_obj.platform.slug or ""
+        except Exception:
+            platform_slug = ""
         url = (
-            tenant_id
+            (build_career_url(platform_slug, tenant_id) if platform_slug and tenant_id else "")
             or getattr(company, "career_site_url", "")
             or getattr(company, "website", "")
         )
@@ -77,21 +87,8 @@ class HTMLScrapeHarvester(BaseHarvester):
             )
             return []
 
-        # Fetch with robots.txt check + rate limiting (check_robots=True handled
-        # automatically because is_scraper=True in BaseHarvester)
-        data = self._get(url, check_robots=True)
-
-        if isinstance(data, dict) and "error" in data:
-            error = data["error"]
-            if "robots.txt" in error:
-                logger.info(
-                    "[HARVEST] HTMLScraper: robots.txt blocked %s for %s",
-                    url, company.name,
-                )
-            return []
-
-        # At this point data is NOT json — it's a string; we used _get which
-        # calls resp.json(). We need raw HTML. Override with _get_html:
+        # Generic fallback pages are HTML (not JSON), so fetch directly using
+        # _get_html() which still enforces robots + rate-limit.
         html_text = self._get_html(url)
         if not html_text:
             return []

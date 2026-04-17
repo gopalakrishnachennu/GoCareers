@@ -475,6 +475,10 @@ class CompanyFetchRun(models.Model):
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     jobs_found = models.PositiveIntegerField(default=0)
+    jobs_total_available = models.PositiveIntegerField(
+        default=0,
+        help_text="Total jobs reported by the platform API (even if we only fetched a subset)",
+    )
     jobs_new = models.PositiveIntegerField(default=0)
     jobs_updated = models.PositiveIntegerField(default=0)
     jobs_duplicate = models.PositiveIntegerField(default=0)
