@@ -378,6 +378,48 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
     context_object_name = "jobs"
     paginate_by = 100
 
+    def get(self, request, *args, **kwargs):
+        """JSON path for infinite-scroll: ?page=N with X-Requested-With:XMLHttpRequest"""
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            from django.core.paginator import Paginator
+            from django.urls import reverse
+            qs = self.get_queryset()
+            paginator = Paginator(qs, self.paginate_by)
+            try:
+                page_num = int(request.GET.get("page", 1))
+                page_obj = paginator.page(page_num)
+            except Exception:
+                return JsonResponse({"jobs": [], "has_next": False, "total": 0})
+
+            jobs_data = []
+            for job in page_obj.object_list:
+                jobs_data.append({
+                    "id": job.pk,
+                    "company_name": (job.company_name or "")[:30],
+                    "platform_slug": job.platform_slug or "",
+                    "title": (job.title or "")[:60],
+                    "original_url": job.original_url or "",
+                    "location_raw": (job.location_raw or "")[:30],
+                    "is_remote": job.is_remote,
+                    "employment_type": job.employment_type or "",
+                    "experience_level": job.experience_level or "",
+                    "salary_min": float(job.salary_min) if job.salary_min else None,
+                    "salary_max": float(job.salary_max) if job.salary_max else None,
+                    "salary_raw": (job.salary_raw or "")[:20],
+                    "posted_date": str(job.posted_date) if job.posted_date else "",
+                    "sync_status": job.sync_status or "",
+                    "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
+                })
+
+            return JsonResponse({
+                "jobs": jobs_data,
+                "has_next": page_obj.has_next(),
+                "next_page": page_obj.next_page_number() if page_obj.has_next() else None,
+                "total": paginator.count,
+                "num_pages": paginator.num_pages,
+            })
+        return super().get(request, *args, **kwargs)
+
     def get_queryset(self):
         qs = RawJob.objects.select_related("company", "job_platform").order_by("-fetched_at")
 

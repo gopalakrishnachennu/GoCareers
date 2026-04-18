@@ -462,18 +462,23 @@
         </div>
       </div>
 
-      <!-- Pagination -->
-      {% if is_paginated %}
-      <div style="display:flex;justify-content:center;align-items:center;gap:8px;margin-top:20px;">
-        {% if page_obj.has_previous %}
-        <a href="?page={{ page_obj.previous_page_number }}&q={{ q }}&platform={{ selected_platform }}&employment_type={{ selected_employment_type }}&location_type={{ selected_location_type }}&experience_level={{ selected_experience_level }}&sync_status={{ selected_sync_status }}&is_remote={{ selected_is_remote }}&_subtab=jobs" style="padding:6px 14px;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-weight:500;color:#374151;text-decoration:none;">← Prev</a>
-        {% endif %}
-        <span style="font-size:12px;color:#64748b;">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
-        {% if page_obj.has_next %}
-        <a href="?page={{ page_obj.next_page_number }}&q={{ q }}&platform={{ selected_platform }}&employment_type={{ selected_employment_type }}&location_type={{ selected_location_type }}&experience_level={{ selected_experience_level }}&sync_status={{ selected_sync_status }}&is_remote={{ selected_is_remote }}&_subtab=jobs" style="padding:6px 14px;background:#fff;border:1px solid #d1d5db;border-radius:6px;font-size:12px;font-weight:500;color:#374151;text-decoration:none;">Next →</a>
-        {% endif %}
+      <!-- ── Infinite scroll footer ──────────────────────────────────────── -->
+      <!-- Counter bar: shows how many rows are loaded vs total -->
+      <div id="scroll-status" style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;">
+        <span style="font-size:12px;color:#64748b;" id="scroll-count">
+          Showing <strong id="loaded-count">{{ jobs|length }}</strong> of <strong>{{ total_jobs }}</strong> jobs
+        </span>
+        <span id="scroll-spinner" style="display:none;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:6px;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="animation:spin .8s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+          Loading more…
+        </span>
       </div>
-      {% endif %}
+      <!-- Sentinel: IntersectionObserver watches this — when visible → load next page -->
+      <div id="infinite-sentinel" style="height:1px;margin-bottom:40px;"
+           data-next-page="{{ page_obj.next_page_number|default:'' }}"
+           data-has-next="{% if page_obj.has_next %}1{% else %}0{% endif %}"
+           data-total="{{ page_obj.paginator.count }}">
+      </div>
     </div>
 
     <!-- ══════════════════════════════════════════════════════════════════
@@ -521,6 +526,7 @@
 @keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.2)} }
 @keyframes slideIn { from{transform:translateX(100px);opacity:0} to{transform:translateX(0);opacity:1} }
 @keyframes fadeOut { from{opacity:1} to{opacity:0} }
+@keyframes spin { to{transform:rotate(360deg)} }
 </style>
 
 <script>
@@ -875,6 +881,129 @@ function showToast(msg, type='success') {
     setTimeout(() => toast.remove(), 300);
   }, 3500);
 }
+
+// ─── Infinite Scroll ──────────────────────────────────────────────────────────
+(function() {
+  const sentinel  = document.getElementById('infinite-sentinel');
+  const tbody     = document.querySelector('#panel-jobs table tbody');
+  const spinner   = document.getElementById('scroll-spinner');
+  const loadedEl  = document.getElementById('loaded-count');
+  if (!sentinel || !tbody) return;
+
+  let nextPage   = parseInt(sentinel.dataset.nextPage) || null;
+  let hasNext    = sentinel.dataset.hasNext === '1';
+  let loading    = false;
+  let loadedRows = parseInt(loadedEl ? loadedEl.textContent : 0) || 0;
+
+  // Collect current filter params from the URL (so scroll preserves filters)
+  function filterParams() {
+    const p = new URLSearchParams(window.location.search);
+    p.delete('page');
+    p.delete('_subtab');
+    return p;
+  }
+
+  const SYNC_COLORS = {
+    SYNCED:  'background:#d1fae5;color:#065f46;',
+    FAILED:  'background:#fee2e2;color:#991b1b;',
+    PENDING: 'background:#dbeafe;color:#1d4ed8;',
+  };
+  const EMP_COLORS = {
+    FULL_TIME: 'background:#dbeafe;color:#1e40af;',
+    PART_TIME: 'background:#f3e8ff;color:#6b21a8;',
+    CONTRACT:  'background:#fef9c3;color:#713f12;',
+    INTERNSHIP:'background:#dcfce7;color:#14532d;',
+  };
+
+  function buildRow(j) {
+    const sync  = SYNC_COLORS[j.sync_status]  || 'background:#f1f5f9;color:#475569;';
+    const emp   = EMP_COLORS[j.employment_type] || 'background:#f1f5f9;color:#374151;';
+    const remBadge = j.is_remote
+      ? '<span style="margin-left:4px;padding:1px 5px;background:#d1fae5;color:#065f46;border-radius:10px;font-size:9px;font-weight:700;">REMOTE</span>'
+      : '';
+    const salary = j.salary_min
+      ? '$' + Math.round(j.salary_min).toLocaleString()
+        + (j.salary_max && j.salary_max !== j.salary_min ? '–$' + Math.round(j.salary_max).toLocaleString() : '')
+      : (j.salary_raw || '<span style="color:#94a3b8;">—</span>');
+    const extLink = j.original_url
+      ? `<a href="${j.original_url}" target="_blank" rel="noopener" style="color:#3b82f6;font-size:11px;text-decoration:none;" title="Open original">↗</a>`
+      : '';
+    const tr = document.createElement('tr');
+    tr.style.cssText = 'border-bottom:1px solid #f1f5f9;transition:background .1s;';
+    tr.onmouseover = () => { tr.style.background = '#f8fafc'; };
+    tr.onmouseout  = () => { tr.style.background = ''; };
+    tr.innerHTML = `
+      <td style="padding:9px 14px;position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;font-weight:600;color:#0f172a;max-width:160px;overflow:hidden;text-overflow:ellipsis;" title="${j.company_name}">${j.company_name.substring(0,22)}</td>
+      <td style="padding:9px 14px;">${j.platform_slug ? `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;white-space:nowrap;">${j.platform_slug}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#374151;max-width:220px;">
+        <a href="${j.detail_url}" style="color:#1d4ed8;text-decoration:none;font-weight:500;" title="${j.title}">${j.title.substring(0,40)}</a>${remBadge}
+      </td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${j.location_raw}">${j.location_raw.substring(0,20) || '—'}</td>
+      <td style="padding:9px 14px;white-space:nowrap;">${j.employment_type && j.employment_type !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;${emp}">${j.employment_type}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;white-space:nowrap;">${j.experience_level && j.experience_level !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">${j.experience_level}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${salary}</td>
+      <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.posted_date || '—'}</td>
+      <td style="padding:9px 14px;text-align:center;"><span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;${sync}">${j.sync_status}</span></td>
+      <td style="padding:9px 14px;text-align:center;">${extLink}</td>`;
+    return tr;
+  }
+
+  async function loadNextPage() {
+    if (!hasNext || loading || !nextPage) return;
+    loading = true;
+    if (spinner) spinner.style.display = 'flex';
+
+    const params = filterParams();
+    params.set('page', nextPage);
+
+    try {
+      const res = await fetch('?' + params.toString(), {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+
+      // Append rows
+      const frag = document.createDocumentFragment();
+      data.jobs.forEach(j => frag.appendChild(buildRow(j)));
+      tbody.appendChild(frag);
+
+      // Update state
+      loadedRows += data.jobs.length;
+      hasNext    = data.has_next;
+      nextPage   = data.next_page;
+      if (loadedEl) loadedEl.textContent = loadedRows.toLocaleString();
+
+      // Update sentinel
+      sentinel.dataset.hasNext   = hasNext ? '1' : '0';
+      sentinel.dataset.nextPage  = nextPage || '';
+
+      if (!hasNext && spinner) {
+        spinner.style.display = 'none';
+        const status = document.getElementById('scroll-status');
+        if (status) {
+          const done = document.createElement('span');
+          done.style.cssText = 'font-size:12px;color:#10b981;font-weight:600;';
+          done.textContent = '✓ All ' + loadedRows.toLocaleString() + ' jobs loaded';
+          status.appendChild(done);
+        }
+      }
+    } catch(e) {
+      console.error('Infinite scroll error:', e);
+      showToast('Failed to load more jobs — scroll up and try again', 'error');
+    } finally {
+      loading = false;
+      if (spinner && hasNext) spinner.style.display = 'none';
+    }
+  }
+
+  // IntersectionObserver: fires when sentinel enters viewport (300px before bottom)
+  const observer = new IntersectionObserver(
+    (entries) => { if (entries[0].isIntersecting) loadNextPage(); },
+    { rootMargin: '0px 0px 300px 0px', threshold: 0 }
+  );
+  if (hasNext) observer.observe(sentinel);
+})();
 </script>
 
 {% endblock %}
