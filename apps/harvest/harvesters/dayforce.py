@@ -1,15 +1,17 @@
 """
 DayforceHarvester — Dayforce HCM (Ceridian) Career Portal
 
-Dayforce career portals live at:
-  https://jobs.dayforcehcm.com/en-US/{company}/CANDIDATEPORTAL/jobs
+Dayforce portals are Next.js SPAs hosted at:
+  https://jobs.dayforcehcm.com/en-US/{company}/CANDIDATEPORTAL
 
-Dayforce has an undocumented but publicly accessible REST API that powers
-their React SPA:
-  GET https://jobs.dayforcehcm.com/CandidatePortal/en-US/{company}/api/jobs
-      ?pagesize=50&page=1
+The job-search API powers the SPA:
+  POST https://jobs.dayforcehcm.com/api/geo/{company}/jobposting/search
+  Body: {"cultureCode": "en-US", "pageNum": 1, "pageSize": 50}
 
-tenant_id = company code  e.g. "theverve", "globaltransportation"
+The API requires a Cloudflare-managed session cookie (__cf_bm / _cfuvid).
+We obtain the cookie by visiting the portal page first, then POST to the API.
+
+tenant_id = company code  e.g. "corpay", "atricure", "hightower"
 """
 import re
 import time
@@ -19,6 +21,23 @@ from .base import BaseHarvester, MIN_DELAY_API, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 PAGE_SIZE = 50
 MAX_PAGES = 40
+
+# Browser-like headers required to pass Cloudflare bot check
+BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+}
 
 
 class DayforceHarvester(BaseHarvester):
@@ -38,64 +57,100 @@ class DayforceHarvester(BaseHarvester):
         else:
             slug = raw
             board_code = "CANDIDATEPORTAL"
-        results: list[dict] = []
 
-        # Path 1: JSON API
-        api_results = self._fetch_api(slug, board_code, company.name, fetch_all)
+        # Warm the session: Cloudflare needs a page visit before allowing API calls
+        self._warm_session(slug, board_code)
+
+        # Path 1: GEO JSON API (Next.js SPA backend)
+        api_results = self._fetch_api(slug, company.name, fetch_all)
         if api_results:
             return api_results
 
-        # Path 2: HTML scrape
+        # Path 2: HTML scrape (last resort)
         return self._scrape_html(slug, board_code, company.name)
 
-    # ── Path 1: JSON API ──────────────────────────────────────────────────────
+    def _warm_session(self, slug: str, board_code: str) -> None:
+        """Visit the portal page to obtain CF cookies before calling the API."""
+        portal_url = f"https://jobs.dayforcehcm.com/en-US/{slug}/{board_code}"
+        self._enforce_rate_limit()
+        try:
+            self._session.get(
+                portal_url,
+                timeout=DEFAULT_TIMEOUT,
+                headers={
+                    "User-Agent": BROWSER_HEADERS["User-Agent"],
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+            )
+            self._last_request_at = time.monotonic()
+        except Exception:
+            pass
 
-    def _fetch_api(self, slug: str, board_code: str, company_name: str, fetch_all: bool) -> list[dict]:
-        import time as _t
-        # Two possible API URL patterns
-        api_urls = [
-            f"https://jobs.dayforcehcm.com/CandidatePortal/en-US/{slug}/api/jobs",
-            f"https://jobs.dayforcehcm.com/en-US/{slug}/{board_code}/api/jobs",
-        ]
+    # ── Path 1: GEO JSON API ─────────────────────────────────────────────────
 
-        for base_url in api_urls:
-            results: list[dict] = []
-            page = 1
-            while True:
-                data = self._get(base_url, params={"pagesize": PAGE_SIZE, "page": page})
-                if not isinstance(data, dict) or "error" in data:
-                    break
+    def _fetch_api(self, slug: str, company_name: str, fetch_all: bool) -> list[dict]:
+        search_url = f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/search"
 
-                jobs = (
-                    data.get("JobPostings")
-                    or data.get("jobs")
-                    or data.get("Items")
-                    or data.get("items")
-                    or []
+        results: list[dict] = []
+        page = 1
+        while True:
+            payload = {
+                "cultureCode": "en-US",
+                "pageNum": page,
+                "pageSize": PAGE_SIZE,
+            }
+            headers = dict(BROWSER_HEADERS)
+            headers["Content-Type"] = "application/json"
+            headers["Origin"] = "https://jobs.dayforcehcm.com"
+            headers["Referer"] = f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL"
+
+            self._enforce_rate_limit()
+            try:
+                resp = self._session.post(
+                    search_url,
+                    json=payload,
+                    headers=headers,
+                    timeout=DEFAULT_TIMEOUT,
                 )
-                if not jobs:
-                    break
+                self._last_request_at = time.monotonic()
+            except Exception:
+                break
 
-                for j in jobs:
-                    results.append(self._normalize(j, slug, company_name))
+            if not resp.ok:
+                break
 
-                total = int(
-                    data.get("TotalCount")
-                    or data.get("totalCount")
-                    or data.get("total")
-                    or 0
-                )
-                if total:
-                    self.last_total_available = total
-                if not fetch_all or (total and page * PAGE_SIZE >= total) or page >= MAX_PAGES:
-                    break
-                page += 1
-                _t.sleep(MIN_DELAY_API)
+            try:
+                data = resp.json()
+            except Exception:
+                break
 
-            if results:
-                return results
+            jobs = (
+                data.get("data")
+                or data.get("items")
+                or data.get("JobPostings")
+                or data.get("jobs")
+                or []
+            )
+            if not isinstance(jobs, list) or not jobs:
+                break
 
-        return []
+            for j in jobs:
+                results.append(self._normalize(j, slug, company_name))
+
+            total = int(
+                data.get("totalCount")
+                or data.get("TotalCount")
+                or data.get("total")
+                or 0
+            )
+            if total:
+                self.last_total_available = total
+            if not fetch_all or (total and page * PAGE_SIZE >= total) or page >= MAX_PAGES:
+                break
+            page += 1
+            time.sleep(MIN_DELAY_API)
+
+        return results
 
     def _normalize(self, j: dict, slug: str, company_name: str) -> dict:
         job_id = (

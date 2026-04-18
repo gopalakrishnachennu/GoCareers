@@ -39,24 +39,53 @@ class UltiProHarvester(BaseHarvester):
             jobboard_id = ""
         company_code = company_code.strip()
 
-        results: list[dict] = []
+        # If no jobboard_id, try to discover it via the JobBoardView redirect.
+        # GET /{code}/JobBoardView → 302 → /{code}/JobBoard/{GUID}
+        if not jobboard_id:
+            jobboard_id = self._discover_guid(company_code)
 
-        # Path 1: Board-scoped JSON API (preferred)
-        api_results = self._fetch_board_api(company_code, jobboard_id, company.name, fetch_all)
-        if api_results:
-            return api_results
-
-        # Path 2: Legacy JSON API (kept as backup)
-        api_results = self._fetch_api(company_code, company.name, fetch_all)
-        if api_results:
-            return api_results
-
-        # Path 3: HTML scrape (fallback)
+        # Path 1: Board-scoped LoadSearchResults API (requires GUID)
         if jobboard_id:
-            url = f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
-        else:
-            url = f"https://recruiting.ultipro.com/{company_code}/JobBoard"
-        return self._scrape_html(url, company.name)
+            api_results = self._fetch_board_api(company_code, jobboard_id, company.name, fetch_all)
+            if api_results:
+                return api_results
+
+        # Path 2: HTML scrape (fallback for companies whose GUID can't be discovered)
+        board_url = (
+            f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
+            if jobboard_id
+            else f"https://recruiting.ultipro.com/{company_code}/JobBoard"
+        )
+        return self._scrape_html(board_url, company.name)
+
+    # ── GUID discovery ────────────────────────────────────────────────────────
+
+    def _discover_guid(self, company_code: str) -> str:
+        """Hit /{code}/JobBoardView and extract the GUID from the redirect URL.
+
+        UltiPro normalises company-code → canonical JobBoard GUID on first load.
+        The final URL is /{code}/JobBoard/{GUID}.
+        Returns empty string if discovery fails (company not on UltiPro).
+        """
+        import re as _re
+        url = f"https://recruiting.ultipro.com/{company_code}/JobBoardView"
+        self._enforce_rate_limit()
+        try:
+            resp = self._session.get(
+                url,
+                timeout=15,
+                allow_redirects=True,
+                headers={"User-Agent": "GoCareers-Bot/1.0 (+https://gocareers.io/bot)"},
+            )
+            self._last_request_at = __import__("time").monotonic()
+            m = _re.search(
+                r"/JobBoard/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})",
+                resp.url,
+                _re.I,
+            )
+            return m.group(1) if m else ""
+        except Exception:
+            return ""
 
     # ── Path 1: JSON API ──────────────────────────────────────────────────────
 
@@ -109,54 +138,27 @@ class UltiProHarvester(BaseHarvester):
 
         return results
 
-    def _fetch_api(self, company_code: str, company_name: str, fetch_all: bool) -> list[dict]:
-        import time as _t
-        url = "https://recruiting.ultipro.com/api/recruiting/search/v1/job-board-jobs"
-
-        results: list[dict] = []
-        page = 1
-        while True:
-            payload = {
-                "companyIdentifier": company_code,
-                "page": page,
-                "pageSize": PAGE_SIZE,
-            }
-            data = self._post(url, json_data=payload)
-            if not isinstance(data, dict) or "error" in data:
-                break
-
-            jobs = data.get("jobs") or data.get("jobPostings") or []
-            if not jobs:
-                # Some tenants return data in different structure
-                jobs = data.get("value") or data.get("results") or []
-            if not jobs:
-                break
-
-            for j in jobs:
-                results.append(self._normalize_api(j, company_code, company_name))
-
-            total = int(data.get("total") or data.get("totalCount") or 0)
-            if total:
-                self.last_total_available = total
-            if not fetch_all or (total and page * PAGE_SIZE >= total) or page >= MAX_PAGES:
-                break
-            page += 1
-            _t.sleep(MIN_DELAY_API)
-
-        return results
-
     def _normalize_api(self, j: dict, company_code: str, company_name: str) -> dict:
-        job_id = j.get("requisitionId") or j.get("id") or j.get("jobId") or j.get("Id") or ""
-        title = j.get("jobTitle") or j.get("title") or j.get("Title") or ""
-        city = j.get("city") or ""
-        state = j.get("state") or j.get("stateCode") or ""
-        country = j.get("country") or j.get("countryCode") or ""
+        # LoadSearchResults response: PascalCase keys
+        # {"Id": uuid, "Title": str, "FullTime": bool, "Locations": [{"LocalizedName": ...}], ...}
+        job_id = j.get("Id") or j.get("id") or j.get("requisitionId") or j.get("jobId") or ""
+        title = j.get("Title") or j.get("jobTitle") or j.get("title") or ""
+
+        # Location comes from Locations[0].LocalizedName — e.g. "PA - Duquesne"
         locs = j.get("Locations") or []
-        if not city and locs and isinstance(locs[0], dict):
-            city = locs[0].get("AddressCity") or ""
-            state = state or locs[0].get("AddressState") or ""
-            country = country or locs[0].get("AddressCountry") or ""
-        location_raw = ", ".join(x for x in [city, state, country] if x)
+        location_parts = []
+        if locs and isinstance(locs[0], dict):
+            loc_name = (locs[0].get("LocalizedName") or locs[0].get("LocalizedLocation") or "").strip()
+            if loc_name:
+                location_parts.append(loc_name)
+        # Fallback: flat city/state fields
+        if not location_parts:
+            city = j.get("city") or j.get("AddressCity") or ""
+            state = j.get("state") or j.get("stateCode") or j.get("AddressState") or ""
+            country = j.get("country") or j.get("countryCode") or j.get("AddressCountry") or ""
+            location_parts = [x for x in [city, state, country] if x]
+
+        location_raw = ", ".join(location_parts)
 
         is_remote = bool(
             j.get("workFromHome")
@@ -170,38 +172,50 @@ class UltiProHarvester(BaseHarvester):
         else:
             location_type = "UNKNOWN"
 
-        emp_raw = (j.get("employmentType") or j.get("jobType") or "").lower()
-        emp_map = {
-            "full time": "FULL_TIME",
-            "full-time": "FULL_TIME",
-            "part time": "PART_TIME",
-            "part-time": "PART_TIME",
-            "contract": "CONTRACT",
-            "temporary": "TEMPORARY",
-            "intern": "INTERN",
-        }
-        employment_type = emp_map.get(emp_raw, "UNKNOWN")
+        # FullTime boolean flag
+        is_full_time = j.get("FullTime")
+        if is_full_time is True:
+            employment_type = "FULL_TIME"
+        elif is_full_time is False:
+            employment_type = "PART_TIME"
+        else:
+            emp_raw = (j.get("employmentType") or j.get("jobType") or j.get("JobCategoryName") or "").lower()
+            emp_map = {
+                "full time": "FULL_TIME",
+                "full-time": "FULL_TIME",
+                "part time": "PART_TIME",
+                "part-time": "PART_TIME",
+                "contract": "CONTRACT",
+                "temporary": "TEMPORARY",
+                "internship": "INTERNSHIP",
+                "intern": "INTERNSHIP",
+            }
+            employment_type = emp_map.get(emp_raw, "UNKNOWN")
 
+        # OpportunityDetail link from Links dict
         links = j.get("Links") or {}
-        url = (
-            links.get("OpportunityDetail")
+        opp_detail = links.get("OpportunityDetail") or ""
+        if opp_detail and not opp_detail.startswith("http"):
+            opp_detail = f"https://recruiting.ultipro.com{opp_detail}"
+        job_url = (
+            opp_detail
             or j.get("applyUrl")
             or j.get("url")
-            or f"https://recruiting.ultipro.com/{company_code}/JobBoard/job/{job_id}"
+            or f"https://recruiting.ultipro.com/{company_code}/JobBoard"
         )
 
         return {
             "external_id": str(job_id),
-            "original_url": url,
-            "apply_url": url,
+            "original_url": job_url,
+            "apply_url": job_url,
             "title": title,
             "company_name": company_name,
-            "department": j.get("department") or j.get("businessUnit") or "",
+            "department": j.get("JobCategoryName") or j.get("department") or j.get("businessUnit") or "",
             "team": "",
             "location_raw": location_raw,
-            "city": city,
-            "state": state,
-            "country": country,
+            "city": "",
+            "state": "",
+            "country": "",
             "is_remote": is_remote,
             "location_type": location_type,
             "employment_type": employment_type,
@@ -214,7 +228,7 @@ class UltiProHarvester(BaseHarvester):
             "description": "",
             "requirements": "",
             "benefits": "",
-            "posted_date_raw": j.get("postedDate") or j.get("datePosted") or "",
+            "posted_date_raw": j.get("PostedDate") or j.get("postedDate") or j.get("datePosted") or "",
             "closing_date": "",
             "raw_payload": j,
         }

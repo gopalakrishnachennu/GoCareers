@@ -59,52 +59,70 @@ class BambooHRHarvester(BaseHarvester):
             if not resp.ok:
                 return []
 
-            ct = resp.headers.get("Content-Type", "")
-            if "json" not in ct:
-                # Try to parse anyway — BambooHR sometimes serves JSON with wrong CT
-                try:
-                    data = resp.json()
-                except Exception:
-                    return []
-            else:
+            try:
                 data = resp.json()
-
-            if not isinstance(data, list):
+            except Exception:
                 return []
 
-            return [self._normalize_list(j, slug, company_name) for j in data]
+            # BambooHR v2 returns {"meta": {"totalCount": N}, "result": [...]}
+            # BambooHR v1 (legacy) returns a plain list
+            if isinstance(data, dict):
+                items = data.get("result") or data.get("results") or []
+                total = (data.get("meta") or {}).get("totalCount") or len(items)
+                self.last_total_available = int(total)
+            elif isinstance(data, list):
+                items = data
+                self.last_total_available = len(items)
+            else:
+                return []
+
+            return [self._normalize_list(j, slug, company_name) for j in items]
 
         except Exception:
             return []
 
     def _normalize_list(self, j: dict, slug: str, company_name: str) -> dict:
-        city = j.get("locationCity") or j.get("city") or ""
-        state = j.get("locationState") or j.get("state") or ""
-        country = j.get("locationCountry") or j.get("country") or ""
+        # API v2 nests location under "location": {"city": ..., "state": ...}
+        loc_obj = j.get("location") or {}
+        city = (loc_obj.get("city") or j.get("locationCity") or j.get("city") or "").strip()
+        state = (loc_obj.get("state") or j.get("locationState") or j.get("state") or "").strip()
+        country = (loc_obj.get("country") or j.get("locationCountry") or j.get("country") or "").strip()
+
         is_remote = bool(j.get("isRemote", False))
+        # locationType "1"=Remote, "2"=Hybrid, "3"=OnSite (BambooHR v2)
+        loc_type_code = str(j.get("locationType") or "")
+        if is_remote or loc_type_code == "1":
+            is_remote = True
+
         location_raw = ", ".join(x for x in [city, state, country] if x)
         if is_remote:
             location_type = "REMOTE"
+        elif loc_type_code == "2":
+            location_type = "HYBRID"
         elif location_raw:
             location_type = "ONSITE"
         else:
             location_type = "UNKNOWN"
 
+        # employmentStatusLabel values like "Regular Full-Time", "Full-Time", "Part-Time"
         emp_raw = (j.get("employmentStatusLabel") or "").lower()
         emp_map = {
+            "regular full-time": "FULL_TIME",
             "full-time": "FULL_TIME",
             "full time": "FULL_TIME",
+            "regular part-time": "PART_TIME",
             "part-time": "PART_TIME",
             "part time": "PART_TIME",
             "contractor": "CONTRACT",
             "contract": "CONTRACT",
             "temporary": "TEMPORARY",
-            "intern": "INTERN",
-            "internship": "INTERN",
+            "intern": "INTERNSHIP",
+            "internship": "INTERNSHIP",
         }
         employment_type = emp_map.get(emp_raw, "UNKNOWN")
 
         job_id = j.get("id") or ""
+        # v2 API may have no link — construct from slug + id
         job_url = (
             j.get("link")
             or j.get("url")
@@ -117,7 +135,7 @@ class BambooHRHarvester(BaseHarvester):
             "apply_url": job_url,
             "title": j.get("jobOpeningName") or j.get("title") or "",
             "company_name": company_name,
-            "department": j.get("department") or j.get("departmentLabel") or "",
+            "department": j.get("departmentLabel") or j.get("department") or "",
             "team": "",
             "location_raw": location_raw,
             "city": city,

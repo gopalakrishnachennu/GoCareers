@@ -6,12 +6,19 @@ job board widgets. It returns only published, public-facing postings.
 
 Endpoint: https://jobs.ashbyhq.com/api/non-user-graphql
 
+Query: jobBoardWithTeams — returns all public job postings for an org.
+The old `jobPostingsForOrganization` field was removed from the schema;
+`jobBoardWithTeams` is the current public API (confirmed 2024+).
+
+JobPostingBriefsWithIdsAndTeamId fields available:
+  id, title, locationName, locationAddress, locationId, teamId,
+  workplaceType (Remote|Hybrid|OnSite), employmentType, secondaryLocations,
+  compensationTierSummary
+
 Compliance:
   - Honest User-Agent (inherited from BaseHarvester)
   - 1-second minimum delay (BaseHarvester rate limit)
   - Retry + backoff on server errors (BaseHarvester)
-  - Only queries `jobPostingsForOrganization` — public data only
-  - fetch_all=True fetches with pagination via `after` cursor if available
 """
 import re
 from typing import Any
@@ -20,28 +27,24 @@ from .base import BaseHarvester
 
 GQL_URL = "https://jobs.ashbyhq.com/api/non-user-graphql"
 
-# Standard single-page query (Ashby returns all public postings in one call)
+# jobBoardWithTeams: returns brief job listings + team structure.
+# Uses only fields confirmed via GQL introspection (JobPostingBriefsWithIdsAndTeamId).
 ASHBY_QUERY = """
-query ApiJobBoardJobPostingsForOrganization($organizationHostedJobsPageName: String!) {
-  jobBoard: jobPostingsForOrganization(
-    organizationHostedJobsPageName: $organizationHostedJobsPageName
-  ) {
+query jobBoardWithTeams($organizationHostedJobsPageName: String!) {
+  jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
+    teams {
+      id
+      name
+      parentTeamId
+    }
     jobPostings {
       id
       title
-      department { name }
-      team { name }
       locationName
+      workplaceType
       employmentType
-      isRemote
-      descriptionHtml
-      publishedDate
-      externalLink
-      compensation {
-        summaryComponents { label value }
-        currency
-      }
-      applicationLink
+      teamId
+      compensationTierSummary
     }
   }
 }
@@ -56,58 +59,51 @@ ETYPE_MAP = {
     "Temporary":  "TEMPORARY",
 }
 
-_SALARY_PERIOD_MAP = {
-    "year": "YEAR",
-    "annual": "YEAR",
-    "hour": "HOUR",
-    "hourly": "HOUR",
-    "month": "MONTH",
-}
+def _parse_comp_summary(summary: str) -> tuple:
+    """Parse Ashby compensationTierSummary string.
 
-
-def _parse_compensation(comp: dict) -> tuple:
-    """Extract salary_min, salary_max, currency, period, salary_raw from Ashby comp dict."""
-    if not comp:
+    Examples:
+      "$144K – $220K • Offers Equity • Offers Commission • Multiple Ranges"
+      "$90K – $120K • Offers Equity"
+      "$50/hr – $75/hr"
+    Returns: (sal_min, sal_max, currency, period, salary_raw)
+    """
+    if not summary:
         return None, None, "USD", "", ""
 
-    currency = comp.get("currency", "USD") or "USD"
-    components = comp.get("summaryComponents", []) or []
+    salary_raw = summary
+    currency = "USD"
+    period = "YEAR"  # default for salaried roles
 
-    raw_parts = []
+    # Detect hourly
+    if "/hr" in summary.lower() or "hour" in summary.lower():
+        period = "HOUR"
+
+    # Extract numeric values — handles K suffix
     nums = []
-    period = ""
+    for m in re.finditer(r'\$([0-9]+(?:\.[0-9]+)?)\s*([Kk])?', summary):
+        val = float(m.group(1))
+        if m.group(2):
+            val *= 1000
+        if val > 0:
+            nums.append(val)
 
-    for c in components:
-        label = (c.get("label") or "").lower()
-        val = c.get("value") or ""
-        raw_parts.append(f"{label}: {val}".strip())
-
-        # Detect period from label
-        for pk, pv in _SALARY_PERIOD_MAP.items():
-            if pk in label:
-                period = pv
-                break
-
-        # Extract numbers from value
-        found = re.findall(r"[\d,]+(?:\.\d+)?", str(val).replace(",", ""))
-        for n in found:
-            try:
-                v = float(n)
-                if v > 0:
-                    nums.append(v)
-            except ValueError:
-                pass
-
-    salary_raw = "; ".join(raw_parts)
     sal_min = min(nums) if nums else None
     sal_max = max(nums) if len(nums) > 1 else sal_min
 
     return sal_min, sal_max, currency, period, salary_raw
 
 
-def _detect_location_type(location_raw: str, is_remote_flag) -> tuple[str, bool]:
-    if is_remote_flag:
+def _detect_location_type(location_raw: str, workplace_type: str) -> tuple[str, bool]:
+    """Map Ashby workplaceType (Remote|Hybrid|OnSite) to our location_type/is_remote."""
+    wt = (workplace_type or "").lower()
+    if wt == "remote":
         return "REMOTE", True
+    if wt == "hybrid":
+        return "HYBRID", False
+    if wt == "onsite":
+        return "ONSITE", False
+    # Fallback: check location name text
     loc_lower = (location_raw or "").lower()
     if "remote" in loc_lower:
         return "REMOTE", True
@@ -149,7 +145,7 @@ class AshbyHarvester(BaseHarvester):
             return []
 
         payload = {
-            "operationName": "ApiJobBoardJobPostingsForOrganization",
+            "operationName": "jobBoardWithTeams",
             "query": ASHBY_QUERY,
             "variables": {"organizationHostedJobsPageName": tenant_id},
         }
@@ -158,46 +154,47 @@ class AshbyHarvester(BaseHarvester):
         if isinstance(data, dict) and "error" in data:
             return []
 
-        postings = (
-            ((data.get("data") or {}).get("jobBoard") or {}).get("jobPostings") or []
-        )
+        board = (data.get("data") or {}).get("jobBoardWithTeams") or {}
+
+        # Build team-id → team-name lookup
+        teams_list = board.get("teams") or []
+        team_map: dict[str, str] = {t["id"]: t.get("name", "") for t in teams_list if t.get("id")}
+
+        # Top-level jobPostings array (brief records)
+        postings = board.get("jobPostings") or []
 
         self.last_total_available = len(postings)
         results = []
         for job in postings:
             job_id = job.get("id", "")
-            apply_link = job.get("applicationLink", "") or ""
-            job_url = (
-                job.get("externalLink")
-                or f"https://jobs.ashbyhq.com/{tenant_id}/{job_id}"
-            )
-            dept = (job.get("department") or {}).get("name", "")
-            team = (job.get("team") or {}).get("name", "")
+            job_url = f"https://jobs.ashbyhq.com/{tenant_id}/{job_id}"
+
+            team_id = job.get("teamId", "")
+            team_name = team_map.get(team_id, "")
+
             location_raw = job.get("locationName", "") or ""
-            is_remote_flag = job.get("isRemote", False)
-            location_type, is_remote = _detect_location_type(location_raw, is_remote_flag)
+            workplace_type = job.get("workplaceType", "") or ""
+            location_type, is_remote = _detect_location_type(location_raw, workplace_type)
 
             employment_type = ETYPE_MAP.get(job.get("employmentType", ""), "UNKNOWN")
-            description_html = job.get("descriptionHtml", "") or ""
 
-            # Strip basic HTML tags for plain text approximation
-            description_plain = re.sub(r"<[^>]+>", " ", description_html).strip()
-
-            experience_level = _detect_experience_level(
-                job.get("title", ""), description_plain[:500]
+            # Salary: compensationTierSummary is a human-readable string e.g.
+            # "$144K – $220K • Offers Equity • Offers Commission"
+            comp_summary = job.get("compensationTierSummary") or ""
+            sal_min, sal_max, salary_currency, salary_period, salary_raw = (
+                _parse_comp_summary(comp_summary)
             )
 
-            comp = job.get("compensation") or {}
-            sal_min, sal_max, currency, period, salary_raw = _parse_compensation(comp)
+            experience_level = _detect_experience_level(job.get("title", ""), "")
 
             results.append({
                 "external_id": job_id,
                 "original_url": job_url,
-                "apply_url": apply_link or job_url,
+                "apply_url": job_url,
                 "title": job.get("title", ""),
                 "company_name": company.name,
-                "department": dept,
-                "team": team,
+                "department": "",
+                "team": team_name,
                 "location_raw": location_raw,
                 "city": "",
                 "state": "",
@@ -208,13 +205,13 @@ class AshbyHarvester(BaseHarvester):
                 "experience_level": experience_level,
                 "salary_min": sal_min,
                 "salary_max": sal_max,
-                "salary_currency": currency,
-                "salary_period": period,
+                "salary_currency": salary_currency,
+                "salary_period": salary_period,
                 "salary_raw": salary_raw,
-                "description": description_plain,
+                "description": "",
                 "requirements": "",
                 "benefits": "",
-                "posted_date_raw": job.get("publishedDate", ""),
+                "posted_date_raw": "",
                 "closing_date": "",
                 "raw_payload": job,
             })
