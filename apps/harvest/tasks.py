@@ -579,8 +579,10 @@ def fetch_raw_jobs_for_company_task(
     # Scraper platforms (HTML-based) can't filter by date — always fetch all.
     # API platforms support since_hours for incremental fetches (default: 25h window).
     # test_mode passes max_jobs — skip full pagination to stay fast + respectful.
+    # adp uses HTMLScrapeHarvester (not a JSON API) — include in scraper set
+    # for proper rate-limiting and fetch_all behavior
     SCRAPER_SLUGS = {"jobvite", "icims", "taleo", "applicantpro", "applytojob",
-                     "theapplicantmanager", "zoho", "breezy", "teamtailor"}
+                     "theapplicantmanager", "zoho", "breezy", "teamtailor", "adp"}
     platform_slug_val = label.platform.slug if label.platform else ""
     is_scraper_platform = platform_slug_val in SCRAPER_SLUGS
 
@@ -860,9 +862,11 @@ def fetch_raw_jobs_batch_task(
     # ── Build label queryset ──────────────────────────────────────────────────
     # Include portal_alive=True (confirmed up) AND portal_alive=None (never checked).
     # Exclude portal_alive=False (confirmed down — no point hammering dead portals).
+    # Only include companies whose platform is enabled — respect is_enabled flag.
     qs = CompanyPlatformLabel.objects.filter(
         portal_alive__in=[True, None],
         platform__isnull=False,
+        platform__is_enabled=True,
     ).exclude(tenant_id="").select_related("platform", "company").order_by("company__name")
 
     if platform_slug:
@@ -928,8 +932,9 @@ def fetch_raw_jobs_batch_task(
 
     # Stagger by platform type: API platforms get a tighter stagger (0.1s),
     # HTML scrapers get a wider one (1.0s) to avoid hammering slow targets.
+    # adp uses HTMLScrapeHarvester → needs the slower 1.5s scraper stagger
     SCRAPER_SLUGS = {"jobvite", "icims", "taleo", "ultipro", "applicantpro",
-                     "applytojob", "theapplicantmanager", "zoho", "breezy", "teamtailor"}
+                     "applytojob", "theapplicantmanager", "zoho", "breezy", "teamtailor", "adp"}
 
     # Fetch label→platform slug mapping once to decide stagger
     label_platform_map: dict[int, str] = {}
