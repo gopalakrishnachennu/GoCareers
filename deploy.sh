@@ -104,7 +104,9 @@ cd $(printf %q "$DEPLOY_PATH")
 echo "[remote \$(date -u +%Y-%m-%dT%H:%M:%SZ)] cwd: \$(pwd)"
 git fetch origin
 git pull --ff-only origin $(printf %q "$DEPLOY_BRANCH")
-docker compose -f docker-compose.prod.yml --env-file .env.production up -d --build
+# NEVER use 'docker compose down' in deploy — it destroys container filesystems and
+# any data not in a named volume. Use 'up -d --build' which only recreates changed services.
+docker compose -f docker-compose.prod.yml up -d --build
 echo "[remote \$(date -u +%Y-%m-%dT%H:%M:%SZ)] done"
 EOF
 fi
