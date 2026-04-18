@@ -1,4 +1,6 @@
 from pathlib import Path
+from urllib.parse import urlparse
+
 # Trigger reload
 from decouple import config
 import dj_database_url
@@ -19,13 +21,37 @@ def _csv_list(value: str) -> list[str]:
 # Production domain (Namecheap). Override ALLOWED_HOSTS / CSRF_TRUSTED_ORIGINS / SITE_URL in .env for staging.
 _PUBLIC_DOMAIN = 'chennu.co'
 _PUBLIC_DOMAIN_WWW = 'www.chennu.co'
+_DEFAULT_ALLOWED_HOSTS = f'127.0.0.1,localhost,{_PUBLIC_DOMAIN},{_PUBLIC_DOMAIN_WWW}'
 
-ALLOWED_HOSTS = _csv_list(
-    config(
-        'ALLOWED_HOSTS',
-        default=f'127.0.0.1,localhost,{_PUBLIC_DOMAIN},{_PUBLIC_DOMAIN_WWW}',
-    )
+# Empty ALLOWED_HOSTS (e.g. ALLOWED_HOSTS= in .env) makes Django reject every Host → HTTP 400 "Bad Request".
+_hosts = _csv_list(config('ALLOWED_HOSTS', default=_DEFAULT_ALLOWED_HOSTS))
+if not _hosts:
+    _hosts = _csv_list(_DEFAULT_ALLOWED_HOSTS)
+
+# Always include the hostname from SITE_URL (even if ALLOWED_HOSTS was mistyped in .env).
+_site_url_raw = config('SITE_URL', default=f'https://{_PUBLIC_DOMAIN}').strip().rstrip('/')
+_parsed_site = urlparse(
+    _site_url_raw if '://' in _site_url_raw else f'https://{_site_url_raw}'
 )
+_site_host = (_parsed_site.hostname or '').strip().lower()
+if _site_host and _site_host not in _hosts:
+    _hosts = [* _hosts, _site_host]
+
+# Optional: Coolify/internal service names, staging hosts, etc. (comma-separated)
+_hosts.extend(_csv_list(config('ADDITIONAL_ALLOWED_HOSTS', default='')))
+# Dedupe while preserving order
+ALLOWED_HOSTS = list(dict.fromkeys(_hosts))
+
+# Behind TLS terminators (Coolify, Railway, nginx): the app often receives an internal Host while the
+# browser Host is sent as X-Forwarded-Host. Without USE_X_FORWARDED_HOST, Django validates the wrong
+# host → DisallowedHost → plain "Bad Request (400)" with DEBUG=False.
+#
+# Default ON: many prod stacks mistakenly leave DEBUG=1; then "default=not DEBUG" would disable proxy
+# trust and 400s persist. Opt out with TRUST_PROXY_TLS=false only if nothing sets X-Forwarded-* (rare).
+_TRUST_PROXY_TLS = config('TRUST_PROXY_TLS', default=True, cast=bool)
+USE_X_FORWARDED_HOST = _TRUST_PROXY_TLS
+if _TRUST_PROXY_TLS:
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 # Django 4+: required for HTTPS POSTs / admin when Origin differs; includes local dev ports.
 _CSRF_DEFAULT = (
