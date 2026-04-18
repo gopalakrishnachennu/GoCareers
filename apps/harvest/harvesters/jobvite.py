@@ -20,6 +20,26 @@ from urllib.parse import urljoin
 from .base import BaseHarvester, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 
+def _detect_location_type(location_raw: str) -> tuple[str, bool]:
+    loc_lower = (location_raw or "").lower()
+    if "remote" in loc_lower:
+        return "REMOTE", True
+    if "hybrid" in loc_lower:
+        return "HYBRID", False
+    if location_raw and location_raw.strip():
+        return "ONSITE", False
+    return "UNKNOWN", False
+
+
+def _split_location(location_raw: str) -> tuple[str, str, str]:
+    """Return (city, state, country) best-effort from a raw location string."""
+    parts = [p.strip() for p in (location_raw or "").split(",")]
+    city = parts[0] if parts else ""
+    state = parts[1] if len(parts) > 1 else ""
+    country = parts[2] if len(parts) > 2 else ""
+    return city, state, country
+
+
 class JobviteHarvester(BaseHarvester):
     platform_slug = "jobvite"
     is_scraper = True
@@ -67,6 +87,14 @@ class JobviteHarvester(BaseHarvester):
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 
+    def _extract_id_from_url(self, url: str) -> str:
+        """Extract job ID from Jobvite URL like /jobs/oLui0fwk or ?jvi=oLui0fwk."""
+        m = re.search(r'[?&]jvi=([^&]+)', url)
+        if m:
+            return m.group(1)
+        m = re.search(r'/jobs/([^/?#]+)', url)
+        return m.group(1) if m else ""
+
     def _parse_postings(self, company_name: str, slug: str, html: str) -> list[dict]:
         postings: list[dict] = []
         seen: set[str] = set()
@@ -92,13 +120,36 @@ class JobviteHarvester(BaseHarvester):
                 abs_url = urljoin(self.BASE_ORIGIN + "/", href) if href else ""
                 if not abs_url or abs_url in seen:
                     continue
+                location_raw = self._clean(m.group(3)) or ""
+                location_type, is_remote = _detect_location_type(location_raw)
+                city, state, country = _split_location(location_raw)
+                external_id = self._extract_id_from_url(abs_url)
                 postings.append({
+                    "external_id": external_id,
                     "original_url": abs_url,
+                    "apply_url": abs_url,
                     "title": self._clean(m.group(2)) or "Untitled Position",
                     "company_name": company_name,
-                    "location": self._clean(m.group(3)) or "",
                     "department": self._clean(department) or "",
+                    "team": "",
+                    "location_raw": location_raw,
+                    "city": city,
+                    "state": state,
+                    "country": country,
+                    "is_remote": is_remote,
+                    "location_type": location_type,
+                    "employment_type": "UNKNOWN",
+                    "experience_level": "UNKNOWN",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "salary_currency": "USD",
+                    "salary_period": "",
+                    "salary_raw": "",
+                    "description": "",
+                    "requirements": "",
+                    "benefits": "",
                     "posted_date_raw": "",
+                    "closing_date": "",
                     "raw_payload": {},
                 })
                 seen.add(abs_url)
@@ -112,6 +163,7 @@ class JobviteHarvester(BaseHarvester):
         if not matched:
             push_rows(html)
 
+        self.last_total_available = len(postings)
         return postings
 
     def _clean(self, value: str) -> str:

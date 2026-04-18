@@ -19,6 +19,26 @@ from .base import BaseHarvester, MIN_DELAY_SCRAPE, DEFAULT_TIMEOUT, BOT_USER_AGE
 MAX_PAGES = 25
 
 
+def _detect_location_type(location_raw: str) -> tuple[str, bool]:
+    loc_lower = (location_raw or "").lower()
+    if "remote" in loc_lower:
+        return "REMOTE", True
+    if "hybrid" in loc_lower:
+        return "HYBRID", False
+    if location_raw and location_raw.strip():
+        return "ONSITE", False
+    return "UNKNOWN", False
+
+
+def _split_location(location_raw: str) -> tuple[str, str, str]:
+    """Return (city, state, country) best-effort from a raw location string."""
+    parts = [p.strip() for p in (location_raw or "").split(",")]
+    city = parts[0] if parts else ""
+    state = parts[1] if len(parts) > 1 else ""
+    country = parts[2] if len(parts) > 2 else ""
+    return city, state, country
+
+
 class IcimsHarvester(BaseHarvester):
     platform_slug = "icims"
     is_scraper = True
@@ -28,6 +48,7 @@ class IcimsHarvester(BaseHarvester):
     def fetch_jobs(self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False) -> list[dict[str, Any]]:
         """
         tenant_id = full subdomain e.g. "careers-audacy", "careers-samaritanvillage"
+        Also accepts "uscareeropenings-alliancelaundry" style slugs.
         """
         if not tenant_id:
             return []
@@ -67,6 +88,7 @@ class IcimsHarvester(BaseHarvester):
             page_url = next_url
             time.sleep(MIN_DELAY_SCRAPE)
 
+        self.last_total_available = len(collected)
         return collected
 
     # ── HTML helpers ──────────────────────────────────────────────────────────
@@ -111,9 +133,47 @@ class IcimsHarvester(BaseHarvester):
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 
+    def _extract_job_id(self, url: str) -> str:
+        """Extract numeric job ID from iCIMS URL like /jobs/12345/..."""
+        m = re.search(r'/jobs/(\d+)', url)
+        return m.group(1) if m else ""
+
     def _parse_postings(self, company_name: str, origin: str, html: str) -> list[dict]:
         postings: list[dict] = []
         seen: set[str] = set()
+
+        def make_posting(abs_url: str, title: str, location_raw: str, posted_date_raw: str) -> dict:
+            location_type, is_remote = _detect_location_type(location_raw)
+            city, state, country = _split_location(location_raw)
+            external_id = self._extract_job_id(abs_url)
+            return {
+                "external_id": external_id,
+                "original_url": abs_url,
+                "apply_url": abs_url,
+                "title": title or "Untitled",
+                "company_name": company_name,
+                "department": "",
+                "team": "",
+                "location_raw": location_raw,
+                "city": city,
+                "state": state,
+                "country": country,
+                "is_remote": is_remote,
+                "location_type": location_type,
+                "employment_type": "UNKNOWN",
+                "experience_level": "UNKNOWN",
+                "salary_min": None,
+                "salary_max": None,
+                "salary_currency": "USD",
+                "salary_period": "",
+                "salary_raw": "",
+                "description": "",
+                "requirements": "",
+                "benefits": "",
+                "posted_date_raw": posted_date_raw,
+                "closing_date": "",
+                "raw_payload": {},
+            }
 
         card_pat = re.compile(
             r'<li[^>]*class=["\'][^"\']*iCIMS_JobCardItem[^"\']*["\'][^>]*>([\s\S]*?)</li>', re.I
@@ -131,14 +191,10 @@ class IcimsHarvester(BaseHarvester):
                 continue
 
             title_m = re.search(r"<h[1-6][^>]*>([\s\S]*?)</h[1-6]>", link_m.group(2), re.I)
-            postings.append({
-                "original_url": abs_url,
-                "title": self._clean(title_m.group(1) if title_m else link_m.group(2)) or "Untitled",
-                "company_name": company_name,
-                "location": self._extract_location(card_html),
-                "posted_date_raw": self._extract_date(card_html),
-                "raw_payload": {},
-            })
+            title = self._clean(title_m.group(1) if title_m else link_m.group(2))
+            location_raw = self._extract_location(card_html)
+            posted_date_raw = self._extract_date(card_html)
+            postings.append(make_posting(abs_url, title, location_raw, posted_date_raw))
             seen.add(abs_url)
 
         if postings:
@@ -154,14 +210,10 @@ class IcimsHarvester(BaseHarvester):
                 continue
             title_m = re.search(r"<h[1-6][^>]*>([\s\S]*?)</h[1-6]>", m.group(2), re.I)
             ctx = html[max(0, m.start() - 800): m.end() + 2200]
-            postings.append({
-                "original_url": abs_url,
-                "title": self._clean(title_m.group(1) if title_m else m.group(2)) or "Untitled",
-                "company_name": company_name,
-                "location": self._extract_location(ctx),
-                "posted_date_raw": self._extract_date(ctx),
-                "raw_payload": {},
-            })
+            title = self._clean(title_m.group(1) if title_m else m.group(2))
+            location_raw = self._extract_location(ctx)
+            posted_date_raw = self._extract_date(ctx)
+            postings.append(make_posting(abs_url, title, location_raw, posted_date_raw))
             seen.add(abs_url)
 
         return postings

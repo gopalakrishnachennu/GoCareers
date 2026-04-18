@@ -95,7 +95,7 @@ class WorkableHarvester(BaseHarvester):
         )
 
         return {
-            "external_id": job.get("id") or shortcode,
+            "external_id": str(job.get("id") or shortcode),
             "original_url": app_url,
             "apply_url": app_url,
             "title": job.get("title") or "",
