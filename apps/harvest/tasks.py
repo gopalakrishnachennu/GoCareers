@@ -1427,28 +1427,52 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
         except Company.MultipleObjectsReturned:
             return Company.objects.filter(name__iexact=company_name).first()
 
-    # ── 3. Fuzzy contains ────────────────────────────────────────────────────
-    # "Bayview Asset Management" ↔ "Bayview"
-    # "3M" ↔ "3M Company"
+    # ── 3. Word-by-word fuzzy scan ───────────────────────────────────────────
+    # Handles variants like:
+    #   "BRA 3M do Brasil Ltda." → finds "3M"   (first_word "BRA" wouldn't work)
+    #   "Bayview Asset Management" → finds "Bayview"
+    #   "3M Company" → finds "3M"
+    _STOP = {"the", "inc", "llc", "ltd", "ltda", "corp", "co", "company",
+             "group", "holdings", "do", "de", "da", "di", "du", "van", "and",
+             "of", "for", "a", "an", "&"}
+
     if company_name:
         name_lower = company_name.lower()
-        # Find companies whose name overlaps significantly
-        first_word = company_name.split()[0] if company_name.split() else ""
-        candidates = Company.objects.filter(
-            Q(name__icontains=first_word)
-        )[:20]
+        words = [w.strip(".,") for w in company_name.split()
+                 if len(w.strip(".,")) >= 2 and w.lower().strip(".,") not in _STOP]
 
         best = None
-        for cand in candidates:
-            cn = cand.name.lower()
-            # One name is fully contained in the other
-            if cn in name_lower or name_lower in cn:
-                # Prefer the shorter/existing name (avoid replacing "3M" with "3M Company")
-                if best is None or len(cand.name) < len(best.name):
-                    best = cand
+        seen_ids: set[int] = set()
+
+        for word in words:
+            # First try: exact company name == this single word (e.g., "3M")
+            try:
+                exact_word = Company.objects.get(name__iexact=word)
+                if exact_word.pk not in seen_ids:
+                    logger.info(
+                        "Jarvis word-exact match: '%s' (word '%s') → '%s'",
+                        company_name, word, exact_word.name,
+                    )
+                    return exact_word
+            except Company.DoesNotExist:
+                pass
+            except Company.MultipleObjectsReturned:
+                pass
+
+            # Second try: containment scan for this word
+            for cand in Company.objects.filter(name__icontains=word).order_by("name")[:10]:
+                if cand.pk in seen_ids:
+                    continue
+                seen_ids.add(cand.pk)
+                cn = cand.name.lower()
+                # Only accept if one name is fully contained in the other
+                if cn in name_lower or name_lower in cn:
+                    if best is None or len(cand.name) < len(best.name):
+                        best = cand
+
         if best:
             logger.info(
-                "Jarvis company fuzzy match: '%s' → '%s'",
+                "Jarvis fuzzy match: '%s' → '%s'",
                 company_name, best.name,
             )
             return best
