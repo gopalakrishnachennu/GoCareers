@@ -79,10 +79,16 @@ def _detect_location_type(location_raw) -> tuple[str, bool]:
 
 
 def _detect_employment_type(job: dict) -> str:
-    # Greenhouse metadata field
+    # Greenhouse metadata field — value can be str, bool, int, or None
     meta = job.get("metadata") or []
     for m in meta:
-        val = (m.get("value") or "").lower()
+        raw = m.get("value")
+        # Skip non-string values (booleans, numbers, None) — they're not employment types
+        if not isinstance(raw, str):
+            continue
+        val = raw.lower().strip()
+        if not val:
+            continue
         if val in _EMPLOYMENT_MAP:
             return _EMPLOYMENT_MAP[val]
         for key, mapped in _EMPLOYMENT_MAP.items():

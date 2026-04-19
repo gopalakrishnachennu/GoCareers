@@ -6,14 +6,24 @@ job board widgets. It returns only published, public-facing postings.
 
 Endpoint: https://jobs.ashbyhq.com/api/non-user-graphql
 
-Query: jobBoardWithTeams — returns all public job postings for an org.
-The old `jobPostingsForOrganization` field was removed from the schema;
-`jobBoardWithTeams` is the current public API (confirmed 2024+).
+Two-step approach (confirmed working 2025):
 
-JobPostingBriefsWithIdsAndTeamId fields available:
-  id, title, locationName, locationAddress, locationId, teamId,
-  workplaceType (Remote|Hybrid|OnSite), employmentType, secondaryLocations,
-  compensationTierSummary
+  Step 1 — List all jobs
+    Query: jobBoardWithTeams
+    Returns: JobPostingBriefsWithIdsAndTeamId for each job
+    Fields: id, title, locationName, workplaceType, employmentType,
+            compensationTierSummary, secondaryLocations, teamId
+
+  Step 2 — Fetch full details per job
+    Query: jobPosting(jobPostingId, organizationHostedJobsPageName)
+    Returns: JobPostingDetails
+    Fields: id, title, descriptionHtml, departmentName, teamNames,
+            locationName, locationAddress (String), workplaceType,
+            employmentType, compensationTierSummary, publishedDate
+
+NOTE: The `jobBoard` query and the `descriptionHtml` field on
+`JobPostingBriefsWithIdsAndTeamId` do NOT exist in the live schema
+(introspected 2025-04-19). Per-job detail calls are required for JD.
 
 Compliance:
   - Honest User-Agent (inherited from BaseHarvester)
@@ -21,58 +31,69 @@ Compliance:
   - Retry + backoff on server errors (BaseHarvester)
 """
 import re
+import time
 from typing import Any
 
-from .base import BaseHarvester
+from .base import BaseHarvester, MIN_DELAY_API
 
 GQL_URL = "https://jobs.ashbyhq.com/api/non-user-graphql"
 
-# jobBoard: returns full job postings including descriptionHtml, team, salary.
-# This replaces the old jobBoardWithTeams query which only returned brief fields
-# and had no description. jobBoard uses the JobPosting type which has all fields.
-ASHBY_QUERY = """
-query jobBoard($organizationHostedJobsPageName: String!) {
-  jobBoard(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
+# Step 1: list query — returns brief job info (no description)
+ASHBY_LIST_QUERY = """
+query jobBoardWithTeams($organizationHostedJobsPageName: String!) {
+  jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
     jobPostings {
       id
       title
-      descriptionHtml
       locationName
       workplaceType
       employmentType
       compensationTierSummary
-      publishedDate
-      team {
-        id
-        name
-        parentTeamId
+      teamId
+      secondaryLocations {
+        locationName
       }
-      department {
-        id
-        name
-      }
-      location {
-        id
-        name
-        city
-        region
-        regionCode
-        countryCode
-        isRemote
-      }
+    }
+    teams {
+      id
+      name
+      parentTeamId
     }
   }
 }
 """
 
-ETYPE_MAP = {
-    "FullTime":   "FULL_TIME",
-    "PartTime":   "PART_TIME",
-    "Contract":   "CONTRACT",
-    "Contractor": "CONTRACT",
-    "Internship": "INTERNSHIP",
-    "Temporary":  "TEMPORARY",
+# Step 2: per-job detail query — returns descriptionHtml + department + location details
+ASHBY_DETAIL_QUERY = """
+query jobPosting($jobPostingId: String!, $organizationHostedJobsPageName: String!) {
+  jobPosting(
+    jobPostingId: $jobPostingId
+    organizationHostedJobsPageName: $organizationHostedJobsPageName
+  ) {
+    id
+    title
+    descriptionHtml
+    departmentName
+    teamNames
+    locationName
+    locationAddress
+    workplaceType
+    employmentType
+    compensationTierSummary
+    publishedDate
+  }
 }
+"""
+
+ETYPE_MAP = {
+    "FullTime":    "FULL_TIME",
+    "PartTime":    "PART_TIME",
+    "Contract":    "CONTRACT",
+    "Contractor":  "CONTRACT",
+    "Internship":  "INTERNSHIP",
+    "Temporary":   "TEMPORARY",
+}
+
 
 def _parse_comp_summary(summary: str) -> tuple:
     """Parse Ashby compensationTierSummary string.
@@ -148,6 +169,20 @@ def _detect_experience_level(title: str, description: str) -> str:
     return "MID"
 
 
+def _parse_location_string(location_address: str) -> tuple[str, str, str]:
+    """
+    Ashby `locationAddress` is a plain string like 'San Francisco, CA, US'.
+    Parse it into (city, state, country).
+    """
+    if not location_address:
+        return "", "", ""
+    parts = [p.strip() for p in location_address.split(",")]
+    city    = parts[0] if len(parts) >= 1 else ""
+    state   = parts[1] if len(parts) >= 2 else ""
+    country = parts[2] if len(parts) >= 3 else ""
+    return city, state, country
+
+
 class AshbyHarvester(BaseHarvester):
     """Harvests jobs from Ashby public GraphQL API."""
 
@@ -159,88 +194,115 @@ class AshbyHarvester(BaseHarvester):
         if not tenant_id:
             return []
 
-        payload = {
-            "operationName": "jobBoard",
-            "query": ASHBY_QUERY,
+        # ── Step 1: fetch job list ────────────────────────────────────────────
+        list_payload = {
+            "operationName": "jobBoardWithTeams",
+            "query": ASHBY_LIST_QUERY,
             "variables": {"organizationHostedJobsPageName": tenant_id},
         }
 
-        data = self._post(GQL_URL, json_data=payload)
+        data = self._post(GQL_URL, json_data=list_payload)
         if isinstance(data, dict) and "error" in data:
             return []
 
-        board = (data.get("data") or {}).get("jobBoard") or {}
-        postings = board.get("jobPostings") or []
-        self.last_total_available = len(postings)
+        board = (data.get("data") or {}).get("jobBoardWithTeams") or {}
+        brief_postings = board.get("jobPostings") or []
+        teams_list = board.get("teams") or []
+        self.last_total_available = len(brief_postings)
+
+        # Build team_id → team_name lookup
+        team_lookup: dict[str, str] = {
+            t["id"]: t.get("name", "") for t in teams_list if t.get("id")
+        }
 
         results = []
-        for job in postings:
-            job_id = job.get("id", "")
+        for brief in brief_postings:
+            job_id   = brief.get("id", "")
+            title    = brief.get("title", "")
+            loc_name = brief.get("locationName", "") or ""
+            workplace_type = brief.get("workplaceType", "") or ""
+            employment_type = ETYPE_MAP.get(brief.get("employmentType", ""), "UNKNOWN")
+            comp_summary = brief.get("compensationTierSummary") or ""
+            team_id = brief.get("teamId", "") or ""
+            team_name = team_lookup.get(team_id, "")
+
             job_url = f"https://jobs.ashbyhq.com/{tenant_id}/{job_id}"
 
-            # Team from nested object
-            team_obj = job.get("team") or {}
-            team_name = team_obj.get("name", "") if isinstance(team_obj, dict) else ""
+            location_type, is_remote = _detect_location_type(loc_name, workplace_type)
 
-            # Department from nested object
-            dept_obj = job.get("department") or {}
-            dept = dept_obj.get("name", "") if isinstance(dept_obj, dict) else ""
-
-            # Location — use nested location object when available, fall back to locationName
-            loc_obj = job.get("location") or {}
-            if isinstance(loc_obj, dict) and loc_obj:
-                location_raw = loc_obj.get("name") or job.get("locationName", "") or ""
-                city    = loc_obj.get("city", "") or ""
-                state   = loc_obj.get("region", "") or ""
-                country = loc_obj.get("countryCode", "") or ""
-                remote_flag = bool(loc_obj.get("isRemote", False))
-            else:
-                location_raw = job.get("locationName", "") or ""
-                city = state = country = ""
-                remote_flag = False
-
-            workplace_type = job.get("workplaceType", "") or ""
-            location_type, is_remote = _detect_location_type(location_raw, workplace_type)
-            is_remote = is_remote or remote_flag
-
-            employment_type = ETYPE_MAP.get(job.get("employmentType", ""), "UNKNOWN")
-
-            comp_summary = job.get("compensationTierSummary") or ""
             sal_min, sal_max, salary_currency, salary_period, salary_raw = (
                 _parse_comp_summary(comp_summary)
             )
 
-            # ── Description — now included in jobBoard query ──────────────
-            description = job.get("descriptionHtml") or ""
-            experience_level = _detect_experience_level(job.get("title", ""), description[:500])
+            # ── Step 2: fetch full details (description, department, location) ─
+            description  = ""
+            dept         = ""
+            city = state = country = ""
+            posted_date  = ""
+
+            if job_id:
+                try:
+                    detail_payload = {
+                        "operationName": "jobPosting",
+                        "query": ASHBY_DETAIL_QUERY,
+                        "variables": {
+                            "jobPostingId": job_id,
+                            "organizationHostedJobsPageName": tenant_id,
+                        },
+                    }
+                    detail_data = self._post(GQL_URL, json_data=detail_payload)
+                    if isinstance(detail_data, dict) and "error" not in detail_data:
+                        p = (detail_data.get("data") or {}).get("jobPosting") or {}
+                        description  = p.get("descriptionHtml") or ""
+                        dept         = p.get("departmentName") or ""
+                        if not team_name:
+                            team_names = p.get("teamNames") or []
+                            team_name  = team_names[0] if team_names else ""
+                        # locationAddress is a plain string "City, State, Country"
+                        loc_addr = p.get("locationAddress") or ""
+                        city, state, country = _parse_location_string(loc_addr)
+                        if not loc_name:
+                            loc_name = p.get("locationName") or ""
+                        posted_date = p.get("publishedDate") or ""
+                        # Update comp if list had none
+                        if not comp_summary and p.get("compensationTierSummary"):
+                            comp_summary = p["compensationTierSummary"]
+                            sal_min, sal_max, salary_currency, salary_period, salary_raw = (
+                                _parse_comp_summary(comp_summary)
+                            )
+                except Exception:
+                    pass  # description stays empty — backfill will handle it
+                time.sleep(MIN_DELAY_API)
+
+            experience_level = _detect_experience_level(title, description[:500])
 
             results.append({
-                "external_id": job_id,
-                "original_url": job_url,
-                "apply_url": job_url,
-                "title": job.get("title", ""),
-                "company_name": company.name,
-                "department": dept,
-                "team": team_name,
-                "location_raw": location_raw,
-                "city": city,
-                "state": state,
-                "country": country,
-                "is_remote": is_remote,
-                "location_type": location_type,
-                "employment_type": employment_type,
+                "external_id":      job_id,
+                "original_url":     job_url,
+                "apply_url":        job_url,
+                "title":            title,
+                "company_name":     company.name,
+                "department":       dept,
+                "team":             team_name,
+                "location_raw":     loc_name,
+                "city":             city,
+                "state":            state,
+                "country":          country,
+                "is_remote":        is_remote,
+                "location_type":    location_type,
+                "employment_type":  employment_type,
                 "experience_level": experience_level,
-                "salary_min": sal_min,
-                "salary_max": sal_max,
-                "salary_currency": salary_currency,
-                "salary_period": salary_period,
-                "salary_raw": salary_raw,
-                "description": description,
-                "requirements": "",
-                "benefits": "",
-                "posted_date_raw": job.get("publishedDate") or "",
-                "closing_date": "",
-                "raw_payload": job,
+                "salary_min":       sal_min,
+                "salary_max":       sal_max,
+                "salary_currency":  salary_currency,
+                "salary_period":    salary_period,
+                "salary_raw":       salary_raw,
+                "description":      description,
+                "requirements":     "",
+                "benefits":         "",
+                "posted_date_raw":  posted_date,
+                "closing_date":     "",
+                "raw_payload":      brief,
             })
 
         return results
