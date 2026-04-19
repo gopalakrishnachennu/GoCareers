@@ -22,6 +22,7 @@ from .views import (
     RunBackfillNowView,
     RunCleanupNowView,
     RunDetectNowView,
+    RunEnrichExistingView,
     RunHarvestNowView,
     RunMonitorView,
     RunSyncNowView,
@@ -65,6 +66,7 @@ urlpatterns = [
     path("run/fetch-batch/", TriggerBatchFetchView.as_view(), name="harvest-run-fetch-batch"),
     path("run/stop-batch/", StopBatchView.as_view(), name="harvest-run-stop-batch"),
     path("run/backfill-descriptions/", RunBackfillDescriptionsView.as_view(), name="harvest-run-backfill-descriptions"),
+    path("run/enrich-existing/", RunEnrichExistingView.as_view(), name="harvest-run-enrich-existing"),
     # Job Jarvis — paste-any-URL ingestion
     path("jarvis/", JarvisView.as_view(), name="harvest-jarvis"),
     path("jarvis/status/", JarvisStatusView.as_view(), name="harvest-jarvis-status"),

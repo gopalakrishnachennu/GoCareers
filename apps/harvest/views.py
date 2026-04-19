@@ -730,6 +730,32 @@ class StopBatchView(SuperuserRequiredMixin, View):
         return redirect("harvest-rawjobs")
 
 
+class RunEnrichExistingView(SuperuserRequiredMixin, View):
+    """POST — run enrichment engine on all jobs already in DB (no HTTP)."""
+
+    def post(self, request):
+        from .tasks import enrich_existing_jobs_task
+
+        platform_slug  = request.POST.get("platform_slug", "").strip() or None
+        batch_size     = int(request.POST.get("batch_size", "2000") or "2000")
+        only_unenriched = request.POST.get("only_unenriched", "1") not in ("0", "false", "False")
+
+        task = enrich_existing_jobs_task.delay(
+            batch_size=batch_size,
+            platform_slug=platform_slug,
+            only_unenriched=only_unenriched,
+        )
+        label = f"platform={platform_slug}" if platform_slug else "all platforms"
+        messages.success(
+            request,
+            f"Enrichment started ({label}, batch={batch_size:,}, unenriched_only={only_unenriched}) — Task {task.id[:8]}…",
+        )
+        return redirect_with_task_progress(
+            "harvest-rawjobs", task.id,
+            f"Enrich existing jobs ({label})",
+        )
+
+
 class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
     """POST — launch backfill_descriptions_task to fetch JDs for jobs that have none."""
 

@@ -1643,3 +1643,120 @@ def backfill_descriptions_task(
     }
     logger.info("Backfill descriptions complete: %s", result)
     return result
+
+
+# ─── Enrich Existing Jobs (no HTTP) ──────────────────────────────────────────
+
+@shared_task(bind=True, name="harvest.enrich_existing_jobs")
+def enrich_existing_jobs_task(
+    self,
+    batch_size: int = 2000,
+    platform_slug: str | None = None,
+    only_unenriched: bool = True,
+    offset: int = 0,
+):
+    """
+    Run extract_enrichments() on jobs already in the DB — no HTTP calls.
+
+    Perfect for:
+      - Jobs that already have descriptions (Greenhouse, Lever ~11k)
+      - After a schema update adds new enrichment fields
+      - Re-enriching all jobs after improving the extractor
+
+    `only_unenriched=True`  → skips jobs that already have skills/category set
+    `only_unenriched=False` → re-runs on every job (full re-enrich)
+
+    Processes `batch_size` jobs per run at ~1000 jobs/sec (pure Python, no I/O).
+    Safe to run multiple times.
+    """
+    from .enrichments import extract_enrichments
+    from .models import RawJob
+
+    qs = RawJob.objects.all()
+    if platform_slug:
+        qs = qs.filter(platform_slug=platform_slug)
+    if only_unenriched:
+        # Only jobs that have no skills AND no category yet
+        qs = qs.filter(skills=[], job_category="")
+
+    total = qs.count()
+    if total == 0:
+        return {"message": "Nothing to enrich.", "updated": 0}
+
+    update_task_progress(self, current=0, total=total,
+                         message=f"Found {total:,} jobs to enrich…")
+
+    updated = skipped = 0
+    jobs = list(qs.order_by("id")[offset: offset + batch_size])
+
+    # Bulk-update in chunks of 500 for efficiency
+    CHUNK = 500
+    bulk_updates: list[RawJob] = []
+
+    ENRICH_FIELDS = [
+        "skills", "tech_stack", "job_category",
+        "years_required", "years_required_max", "education_required",
+        "visa_sponsorship", "work_authorization", "clearance_required",
+        "salary_equity", "signing_bonus", "relocation_assistance",
+        "travel_required", "certifications", "benefits_list",
+        "languages_required", "word_count", "quality_score",
+    ]
+
+    for idx, job in enumerate(jobs, start=1):
+        enriched = extract_enrichments({
+            "title":           job.title,
+            "description":     job.description,
+            "requirements":    job.requirements,
+            "benefits":        job.benefits,
+            "department":      job.department,
+            "location_raw":    job.location_raw,
+            "employment_type": job.employment_type,
+            "experience_level":job.experience_level,
+            "salary_raw":      job.salary_raw,
+            "company_name":    job.company_name,
+            "posted_date":     str(job.posted_date) if job.posted_date else "",
+        })
+
+        has_change = False
+        for field in ENRICH_FIELDS:
+            val = enriched.get(field)
+            current = getattr(job, field, None)
+            # Skip if no new value
+            if val in (None, [], "", 0):
+                continue
+            if val != current:
+                setattr(job, field, val)
+                has_change = True
+
+        if has_change:
+            bulk_updates.append(job)
+            updated += 1
+        else:
+            skipped += 1
+
+        # Flush chunk
+        if len(bulk_updates) >= CHUNK:
+            RawJob.objects.bulk_update(bulk_updates, ENRICH_FIELDS)
+            bulk_updates.clear()
+
+        if idx % 100 == 0:
+            update_task_progress(
+                self,
+                current=idx,
+                total=len(jobs),
+                message=f"Enriched {updated:,} / {idx:,} processed…",
+            )
+
+    # Flush remainder
+    if bulk_updates:
+        RawJob.objects.bulk_update(bulk_updates, ENRICH_FIELDS)
+
+    result = {
+        "updated":         updated,
+        "skipped":         skipped,
+        "total_processed": len(jobs),
+        "total_eligible":  total,
+        "remaining":       max(0, total - (offset + len(jobs))),
+    }
+    logger.info("Enrich existing jobs complete: %s", result)
+    return result
