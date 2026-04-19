@@ -1257,6 +1257,22 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     raw_payload["jarvis_strategy"] = data.get("strategy", "")
     raw_payload["jarvis_source_url"] = url
 
+    # ── Run enrichment extraction ─────────────────────────────────────────
+    from .enrichments import extract_enrichments
+    enriched = extract_enrichments({
+        "title": data.get("title") or "",
+        "description": description,
+        "requirements": requirements,
+        "benefits": benefits,
+        "department": data.get("department") or "",
+        "location_raw": data.get("location_raw") or "",
+        "employment_type": data.get("employment_type") or "",
+        "experience_level": data.get("experience_level") or "",
+        "salary_raw": data.get("salary_raw") or "",
+        "company_name": company_name or "",
+        "posted_date": posted_date,
+    })
+
     raw_job, created = RawJob.objects.update_or_create(
         url_hash=url_hash,
         defaults={
@@ -1292,6 +1308,8 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             "sync_status": "PENDING",
             "is_active": True,
             "expires_at": timezone.now() + timedelta(days=30),
+            # ── enrichment fields ─────────────────────────────────────────
+            **enriched,
         },
     )
 
@@ -1583,6 +1601,24 @@ def backfill_descriptions_task(
             update_fields["raw_payload"] = merged
 
         if update_fields:
+            # Run enrichment on the freshly fetched content
+            from .enrichments import extract_enrichments
+            merged_for_enrich = {
+                "title": job.title,
+                "description": update_fields.get("description") or job.description,
+                "requirements": update_fields.get("requirements") or job.requirements,
+                "benefits": update_fields.get("benefits") or job.benefits,
+                "department": job.department,
+                "location_raw": job.location_raw,
+                "employment_type": job.employment_type,
+                "experience_level": job.experience_level,
+                "salary_raw": job.salary_raw,
+                "company_name": job.company_name,
+                "posted_date": str(job.posted_date) if job.posted_date else "",
+            }
+            enriched = extract_enrichments(merged_for_enrich)
+            update_fields.update(enriched)
+
             RawJob.objects.filter(pk=job.pk).update(**update_fields)
             updated += 1
             logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])

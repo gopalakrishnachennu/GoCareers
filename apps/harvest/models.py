@@ -617,6 +617,53 @@ class RawJob(models.Model):
     platform_slug = models.CharField(max_length=64, blank=True)
     raw_payload = models.JSONField(default=dict, blank=True)
 
+    # ── Enriched: skills & tech ───────────────────────────────────────────────
+    # All extracted skills (tech + soft); populated by enrichments.extract_enrichments()
+    skills = models.JSONField(default=list, blank=True)
+    # Subset of skills that are programming languages / frameworks / tools
+    tech_stack = models.JSONField(default=list, blank=True)
+    # Job function category (Engineering, Data & Analytics, Product, etc.)
+    job_category = models.CharField(max_length=64, blank=True)
+
+    # ── Enriched: experience requirements ────────────────────────────────────
+    # "5+ years" → years_required=5; "3-7 years" → years_required=3, years_required_max=7
+    years_required = models.PositiveSmallIntegerField(null=True, blank=True)
+    years_required_max = models.PositiveSmallIntegerField(null=True, blank=True)
+    education_required = models.CharField(
+        max_length=12,
+        choices=[
+            ("", "Unknown"), ("HS", "High School"), ("ASSOCIATE", "Associate's"),
+            ("BS", "Bachelor's"), ("MS", "Master's"), ("MBA", "MBA"), ("PHD", "PhD"),
+        ],
+        blank=True,
+    )
+
+    # ── Enriched: legal & visa ────────────────────────────────────────────────
+    # True = sponsors, False = doesn't sponsor, None = not mentioned
+    visa_sponsorship = models.BooleanField(null=True, blank=True)
+    # e.g. "US citizens only", "US persons", "Any"
+    work_authorization = models.CharField(max_length=64, blank=True)
+    clearance_required = models.BooleanField(default=False)
+
+    # ── Enriched: compensation extras ────────────────────────────────────────
+    salary_equity = models.BooleanField(default=False)
+    signing_bonus = models.BooleanField(default=False)
+    relocation_assistance = models.BooleanField(default=False)
+
+    # ── Enriched: work conditions ─────────────────────────────────────────────
+    # e.g. "up to 25%", "occasional", "extensive"
+    travel_required = models.CharField(max_length=64, blank=True)
+
+    # ── Enriched: structured lists ────────────────────────────────────────────
+    certifications = models.JSONField(default=list, blank=True)
+    benefits_list = models.JSONField(default=list, blank=True)
+    languages_required = models.JSONField(default=list, blank=True)
+
+    # ── Enriched: quality signals ─────────────────────────────────────────────
+    word_count = models.PositiveIntegerField(default=0)
+    # 0.0–1.0: fraction of key fields populated (description, salary, location…)
+    quality_score = models.FloatField(null=True, blank=True)
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     sync_status = models.CharField(
         max_length=8, choices=SyncStatus.choices, default=SyncStatus.PENDING
@@ -636,6 +683,11 @@ class RawJob(models.Model):
             models.Index(fields=["employment_type"]),
             models.Index(fields=["location_type"]),
             models.Index(fields=["is_active"]),
+            models.Index(fields=["job_category"]),
+            models.Index(fields=["education_required"]),
+            models.Index(fields=["visa_sponsorship"]),
+            models.Index(fields=["clearance_required"]),
+            models.Index(fields=["quality_score"]),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"

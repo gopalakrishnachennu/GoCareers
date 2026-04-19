@@ -162,6 +162,151 @@
           <a href="{% url 'harvest-rawjobs' %}" style="display:block;width:100%;padding:8px;color:#64748b;border-radius:8px;font-size:12px;text-decoration:none;text-align:center;">← Back to Jobs</a>
         </div>
 
+        <!-- Quality Score -->
+        {% if rawjob.quality_score is not None %}
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Data Quality</h3>
+          {% with pct=rawjob.quality_score|floatformat:0 %}
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <div style="flex:1;height:8px;background:#f1f5f9;border-radius:4px;overflow:hidden;">
+              <div style="height:100%;border-radius:4px;width:{% widthratio rawjob.quality_score 1 100 %}%;background:{% if rawjob.quality_score >= 0.8 %}#10b981{% elif rawjob.quality_score >= 0.5 %}#f59e0b{% else %}#ef4444{% endif %};"></div>
+            </div>
+            <span style="font-size:13px;font-weight:700;color:{% if rawjob.quality_score >= 0.8 %}#059669{% elif rawjob.quality_score >= 0.5 %}#d97706{% else %}#dc2626{% endif %};">{{ rawjob.quality_score|floatformat:2 }}</span>
+          </div>
+          {% endwith %}
+          {% if rawjob.word_count %}<p style="font-size:11px;color:#94a3b8;margin:0;">{{ rawjob.word_count }} words in description</p>{% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Job Category + Experience -->
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Job Profile</h3>
+          <div style="display:flex;flex-direction:column;gap:8px;">
+            {% if rawjob.job_category %}
+            <div><p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Category</p>
+            <span style="font-size:12px;font-weight:600;color:#0f172a;">{{ rawjob.job_category }}</span></div>
+            {% endif %}
+            {% if rawjob.years_required %}
+            <div><p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Experience</p>
+            <span style="font-size:12px;color:#374151;">
+              {{ rawjob.years_required }}{% if rawjob.years_required_max %}–{{ rawjob.years_required_max }}{% else %}+{% endif %} years
+            </span></div>
+            {% endif %}
+            {% if rawjob.education_required %}
+            <div><p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Education</p>
+            <span style="font-size:12px;color:#374151;">{{ rawjob.get_education_required_display }}</span></div>
+            {% endif %}
+            {% if rawjob.travel_required %}
+            <div><p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Travel</p>
+            <span style="font-size:12px;color:#374151;">{{ rawjob.travel_required }}</span></div>
+            {% endif %}
+          </div>
+        </div>
+
+        <!-- Signals: Visa, Equity, Clearance, etc. -->
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Key Signals</h3>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            {% if rawjob.visa_sponsorship is not None %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">{% if rawjob.visa_sponsorship %}✅{% else %}❌{% endif %}</span>
+              <span style="font-size:12px;color:#374151;">Visa Sponsorship {% if rawjob.visa_sponsorship %}Available{% else %}Not Available{% endif %}</span>
+            </div>
+            {% endif %}
+            {% if rawjob.salary_equity %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">📈</span>
+              <span style="font-size:12px;color:#374151;">Equity / Stock Options</span>
+            </div>
+            {% endif %}
+            {% if rawjob.signing_bonus %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">💰</span>
+              <span style="font-size:12px;color:#374151;">Signing Bonus</span>
+            </div>
+            {% endif %}
+            {% if rawjob.relocation_assistance %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">🚚</span>
+              <span style="font-size:12px;color:#374151;">Relocation Assistance</span>
+            </div>
+            {% endif %}
+            {% if rawjob.clearance_required %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">🔒</span>
+              <span style="font-size:12px;color:#dc2626;font-weight:600;">Security Clearance Required</span>
+            </div>
+            {% endif %}
+            {% if rawjob.work_authorization %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">🛂</span>
+              <span style="font-size:12px;color:#374151;">{{ rawjob.work_authorization }}</span>
+            </div>
+            {% endif %}
+            {% if rawjob.languages_required %}
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="font-size:14px;">🌍</span>
+              <span style="font-size:12px;color:#374151;">{{ rawjob.languages_required|join:", " }}</span>
+            </div>
+            {% endif %}
+          </div>
+          {% if not rawjob.visa_sponsorship and not rawjob.salary_equity and not rawjob.clearance_required and not rawjob.work_authorization and not rawjob.languages_required %}
+          <p style="font-size:12px;color:#94a3b8;margin:0;">No signals detected</p>
+          {% endif %}
+        </div>
+
+        <!-- Tech Stack -->
+        {% if rawjob.tech_stack %}
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Tech Stack ({{ rawjob.tech_stack|length }})</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;">
+            {% for skill in rawjob.tech_stack %}
+            <span style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;padding:3px 8px;border-radius:5px;font-size:11px;font-weight:600;">{{ skill }}</span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- All Skills -->
+        {% if rawjob.skills %}
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">All Skills ({{ rawjob.skills|length }})</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:5px;">
+            {% for skill in rawjob.skills %}
+            <span style="background:#f8fafc;color:#475569;border:1px solid #e2e8f0;padding:2px 7px;border-radius:4px;font-size:11px;">{{ skill }}</span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Benefits List -->
+        {% if rawjob.benefits_list %}
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Benefits Detected</h3>
+          <div style="display:flex;flex-direction:column;gap:5px;">
+            {% for b in rawjob.benefits_list %}
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;">
+              <span style="color:#10b981;">✓</span> {{ b }}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Certifications -->
+        {% if rawjob.certifications %}
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Certifications Required</h3>
+          <div style="display:flex;flex-direction:column;gap:5px;">
+            {% for c in rawjob.certifications %}
+            <div style="display:flex;align-items:center;gap:6px;font-size:12px;color:#374151;">
+              <span style="color:#f59e0b;">🏅</span> {{ c }}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
         <!-- Metadata -->
         <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
           <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 14px;text-transform:uppercase;letter-spacing:.4px;">Metadata</h3>
