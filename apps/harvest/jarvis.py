@@ -98,14 +98,26 @@ class JobJarvis:
         result["platform_slug"] = platform_slug
 
         # ── Strategy 1: Platform-specific API ────────────────────────────────
+        # Some platform APIs (e.g. Workday CXS search) return structured
+        # metadata (title, location, ID) but NOT the full description.
+        # Only return early if the API gave us a useful description.
+        # Otherwise fall through so JSON-LD / HTML scrape can fill it in.
         if platform_slug:
             try:
                 api_data = self._platform_api(url, platform_slug)
                 if api_data:
                     result.update(api_data)
                     result["strategy"] = f"api:{platform_slug}"
-                    _enrich_inferred(result)
-                    return result
+                    if result.get("description"):
+                        # Description present — we're done.
+                        _enrich_inferred(result)
+                        return result
+                    # No description yet — keep metadata, continue to HTML fetch
+                    logger.debug(
+                        "Jarvis platform-API (%s) had no description — "
+                        "falling through to page fetch",
+                        platform_slug,
+                    )
             except Exception as exc:
                 logger.warning("Jarvis platform-API failed (%s): %s", platform_slug, exc)
 
@@ -130,16 +142,39 @@ class JobJarvis:
         # ── Strategy 2: JSON-LD structured data ───────────────────────────────
         jsonld = _try_jsonld(html)
         if jsonld:
-            result.update(jsonld)
-            result["strategy"] = "jsonld"
+            # Merge: API metadata wins for non-empty fields; JSON-LD fills gaps.
+            # "UNKNOWN" counts as empty — JSON-LD can always upgrade it.
+            _EMPTY = ("", "UNKNOWN", None, [], {})
+            for k, v in jsonld.items():
+                cur = result.get(k)
+                if k == "description":
+                    # Always take description from JSON-LD (it's the whole point)
+                    if v:
+                        result[k] = v
+                elif v not in _EMPTY and cur in _EMPTY:
+                    result[k] = v
+            if result.get("strategy", "").startswith("api:"):
+                result["strategy"] = f"{result['strategy']}+jsonld"
+            else:
+                result["strategy"] = "jsonld"
             _enrich_inferred(result)
             return result
 
         # ── Strategy 3: HTML scrape fallback ──────────────────────────────────
         scraped = _try_html_scrape(html, final_url)
         if scraped and scraped.get("title"):
-            result.update(scraped)
-            result["strategy"] = "html_scrape"
+            _EMPTY = ("", "UNKNOWN", None, [], {})
+            for k, v in scraped.items():
+                cur = result.get(k)
+                if k == "description":
+                    if v:
+                        result[k] = v
+                elif v not in _EMPTY and cur in _EMPTY:
+                    result[k] = v
+            if result.get("strategy", "").startswith("api:"):
+                result["strategy"] = f"{result['strategy']}+html"
+            else:
+                result["strategy"] = "html_scrape"
             _enrich_inferred(result)
             return result
 
