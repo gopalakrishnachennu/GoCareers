@@ -2,10 +2,11 @@
 SmartRecruitersHarvester — Public SmartRecruiters Postings API
 
 SmartRecruiters provides a documented public REST API for job postings:
-  GET https://api.smartrecruiters.com/v1/companies/{company}/postings
-      ?limit=100&offset=0
+  List:   GET https://api.smartrecruiters.com/v1/companies/{company}/postings
+  Detail: GET https://api.smartrecruiters.com/v1/companies/{company}/postings/{id}
 
 No authentication required for published postings.
+Detail endpoint returns jobAd.sections with full description HTML.
 """
 import time
 from typing import Any
@@ -13,6 +14,26 @@ from typing import Any
 from .base import BaseHarvester, MIN_DELAY_API
 
 PAGE_SIZE = 100
+DETAIL_URL = "https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}"
+
+
+def _detect_experience_level(title: str, description: str) -> str:
+    combined = (title + " " + description).lower()
+    if any(k in combined for k in ("intern", "internship", "co-op")):
+        return "ENTRY"
+    if any(k in combined for k in ("chief ", "cto", "ceo", "svp", "evp", "vp ", "vice president")):
+        return "EXECUTIVE"
+    if any(k in combined for k in ("director", "head of")):
+        return "DIRECTOR"
+    if any(k in combined for k in ("manager", "mgr")):
+        return "MANAGER"
+    if any(k in combined for k in ("lead ", "principal", "staff ")):
+        return "LEAD"
+    if any(k in combined for k in ("senior", "sr.", "sr ")):
+        return "SENIOR"
+    if any(k in combined for k in ("junior", "jr.", "entry", "associate")):
+        return "ENTRY"
+    return "MID"
 
 
 class SmartRecruitersHarvester(BaseHarvester):
@@ -98,6 +119,21 @@ class SmartRecruitersHarvester(BaseHarvester):
             or f"https://jobs.smartrecruiters.com/{slug}/{job_id}"
         )
 
+        # ── Fetch full description from detail endpoint ────────────────────
+        description = requirements = benefits = ""
+        if job_id:
+            try:
+                detail = self._get(DETAIL_URL.format(slug=slug, job_id=job_id))
+                if isinstance(detail, dict) and "error" not in detail:
+                    sections = (detail.get("jobAd") or {}).get("sections") or {}
+                    description  = (sections.get("jobDescription") or {}).get("text") or ""
+                    requirements = (sections.get("qualifications") or {}).get("text") or ""
+                    benefits     = (sections.get("additionalInformation") or {}).get("text") or ""
+            except Exception:
+                pass  # fall through — description stays empty, no crash
+
+        experience_level = _detect_experience_level(p.get("name") or "", description[:500])
+
         return {
             "external_id": job_id,
             "original_url": job_url,
@@ -119,9 +155,9 @@ class SmartRecruitersHarvester(BaseHarvester):
             "salary_currency": "USD",
             "salary_period": "",
             "salary_raw": "",
-            "description": "",
-            "requirements": "",
-            "benefits": "",
+            "description": description,
+            "requirements": requirements,
+            "benefits": benefits,
             "posted_date_raw": p.get("releasedDate") or "",
             "closing_date": "",
             "raw_payload": p,

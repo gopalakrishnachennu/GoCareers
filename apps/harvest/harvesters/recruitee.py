@@ -84,10 +84,11 @@ class RecruiteeHarvester(BaseHarvester):
             "salary_currency": "USD",
             "salary_period": "",
             "salary_raw": "",
-            "description": "",
-            "requirements": "",
+            # Recruitee list API returns full description HTML — use it directly
+            "description": o.get("description") or "",
+            "requirements": o.get("requirements") or "",
             "benefits": "",
             "posted_date_raw": o.get("created_at") or "",
-            "closing_date": "",
+            "closing_date": o.get("ends_at") or "",
             "raw_payload": o,
         }

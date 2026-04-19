@@ -27,24 +27,39 @@ from .base import BaseHarvester
 
 GQL_URL = "https://jobs.ashbyhq.com/api/non-user-graphql"
 
-# jobBoardWithTeams: returns brief job listings + team structure.
-# Uses only fields confirmed via GQL introspection (JobPostingBriefsWithIdsAndTeamId).
+# jobBoard: returns full job postings including descriptionHtml, team, salary.
+# This replaces the old jobBoardWithTeams query which only returned brief fields
+# and had no description. jobBoard uses the JobPosting type which has all fields.
 ASHBY_QUERY = """
-query jobBoardWithTeams($organizationHostedJobsPageName: String!) {
-  jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
-    teams {
-      id
-      name
-      parentTeamId
-    }
+query jobBoard($organizationHostedJobsPageName: String!) {
+  jobBoard(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
     jobPostings {
       id
       title
+      descriptionHtml
       locationName
       workplaceType
       employmentType
-      teamId
       compensationTierSummary
+      publishedDate
+      team {
+        id
+        name
+        parentTeamId
+      }
+      department {
+        id
+        name
+      }
+      location {
+        id
+        name
+        city
+        region
+        regionCode
+        countryCode
+        isRemote
+      }
     }
   }
 }
@@ -145,7 +160,7 @@ class AshbyHarvester(BaseHarvester):
             return []
 
         payload = {
-            "operationName": "jobBoardWithTeams",
+            "operationName": "jobBoard",
             "query": ASHBY_QUERY,
             "variables": {"organizationHostedJobsPageName": tenant_id},
         }
@@ -154,38 +169,50 @@ class AshbyHarvester(BaseHarvester):
         if isinstance(data, dict) and "error" in data:
             return []
 
-        board = (data.get("data") or {}).get("jobBoardWithTeams") or {}
-
-        # Build team-id → team-name lookup
-        teams_list = board.get("teams") or []
-        team_map: dict[str, str] = {t["id"]: t.get("name", "") for t in teams_list if t.get("id")}
-
-        # Top-level jobPostings array (brief records)
+        board = (data.get("data") or {}).get("jobBoard") or {}
         postings = board.get("jobPostings") or []
-
         self.last_total_available = len(postings)
+
         results = []
         for job in postings:
             job_id = job.get("id", "")
             job_url = f"https://jobs.ashbyhq.com/{tenant_id}/{job_id}"
 
-            team_id = job.get("teamId", "")
-            team_name = team_map.get(team_id, "")
+            # Team from nested object
+            team_obj = job.get("team") or {}
+            team_name = team_obj.get("name", "") if isinstance(team_obj, dict) else ""
 
-            location_raw = job.get("locationName", "") or ""
+            # Department from nested object
+            dept_obj = job.get("department") or {}
+            dept = dept_obj.get("name", "") if isinstance(dept_obj, dict) else ""
+
+            # Location — use nested location object when available, fall back to locationName
+            loc_obj = job.get("location") or {}
+            if isinstance(loc_obj, dict) and loc_obj:
+                location_raw = loc_obj.get("name") or job.get("locationName", "") or ""
+                city    = loc_obj.get("city", "") or ""
+                state   = loc_obj.get("region", "") or ""
+                country = loc_obj.get("countryCode", "") or ""
+                remote_flag = bool(loc_obj.get("isRemote", False))
+            else:
+                location_raw = job.get("locationName", "") or ""
+                city = state = country = ""
+                remote_flag = False
+
             workplace_type = job.get("workplaceType", "") or ""
             location_type, is_remote = _detect_location_type(location_raw, workplace_type)
+            is_remote = is_remote or remote_flag
 
             employment_type = ETYPE_MAP.get(job.get("employmentType", ""), "UNKNOWN")
 
-            # Salary: compensationTierSummary is a human-readable string e.g.
-            # "$144K – $220K • Offers Equity • Offers Commission"
             comp_summary = job.get("compensationTierSummary") or ""
             sal_min, sal_max, salary_currency, salary_period, salary_raw = (
                 _parse_comp_summary(comp_summary)
             )
 
-            experience_level = _detect_experience_level(job.get("title", ""), "")
+            # ── Description — now included in jobBoard query ──────────────
+            description = job.get("descriptionHtml") or ""
+            experience_level = _detect_experience_level(job.get("title", ""), description[:500])
 
             results.append({
                 "external_id": job_id,
@@ -193,12 +220,12 @@ class AshbyHarvester(BaseHarvester):
                 "apply_url": job_url,
                 "title": job.get("title", ""),
                 "company_name": company.name,
-                "department": "",
+                "department": dept,
                 "team": team_name,
                 "location_raw": location_raw,
-                "city": "",
-                "state": "",
-                "country": "",
+                "city": city,
+                "state": state,
+                "country": country,
                 "is_remote": is_remote,
                 "location_type": location_type,
                 "employment_type": employment_type,
@@ -208,10 +235,10 @@ class AshbyHarvester(BaseHarvester):
                 "salary_currency": salary_currency,
                 "salary_period": salary_period,
                 "salary_raw": salary_raw,
-                "description": "",
+                "description": description,
                 "requirements": "",
                 "benefits": "",
-                "posted_date_raw": "",
+                "posted_date_raw": job.get("publishedDate") or "",
                 "closing_date": "",
                 "raw_payload": job,
             })

@@ -797,6 +797,34 @@ def fetch_raw_jobs_for_company_task(
         "fetch_raw_jobs: label=%s new=%d updated=%d failed=%d",
         label_pk, jobs_new, jobs_updated, jobs_failed,
     )
+
+    # ── Auto-queue description backfill for new jobs that still have no JD ──
+    # Platforms like Workday, iCIMS, Taleo, Oracle, Jobvite, BambooHR, UltiPro
+    # don't return descriptions in their list APIs.  Fire a background task to
+    # fetch JDs for every new job from this run — totally automatic, no button.
+    _NEEDS_BACKFILL = {
+        "workday", "icims", "taleo", "oracle", "jobvite",
+        "bamboohr", "ultipro", "zoho", "teamtailor", "breezy",
+        "dayforce",
+    }
+    platform_s = (label.platform.slug if label and label.platform else "") or ""
+    if jobs_new > 0 and platform_s in _NEEDS_BACKFILL:
+        try:
+            backfill_descriptions_task.apply_async(
+                kwargs={
+                    "batch_size": min(jobs_new, 500),
+                    "platform_slug": platform_s,
+                    "offset": 0,
+                },
+                countdown=30,   # 30 s after harvest finishes, start fetching JDs
+            )
+            logger.info(
+                "Auto-queued description backfill for %d new %s jobs",
+                jobs_new, platform_s,
+            )
+        except Exception as exc:
+            logger.warning("Could not queue auto-backfill: %s", exc)
+
     return {
         "label_pk": label_pk,
         "jobs_found": len(raw_jobs),

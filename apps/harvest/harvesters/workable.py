@@ -2,11 +2,12 @@
 WorkableHarvester — Public Workable Jobs API
 
 Workable exposes a public undocumented but stable REST API:
-  POST https://apply.workable.com/api/v3/accounts/{company}/jobs
-  Body: {"limit": 100, "details": false}
+  List:   POST https://apply.workable.com/api/v3/accounts/{company}/jobs
+  Detail: GET  https://apply.workable.com/api/v1/widget/accounts/{company}/jobs/{shortcode}
 
 Pagination via paging.next token field.
 No authentication required for published postings.
+Detail endpoint returns description, requirements, benefits as HTML.
 """
 import time
 from typing import Any
@@ -14,6 +15,7 @@ from typing import Any
 from .base import BaseHarvester, MIN_DELAY_API
 
 PAGE_SIZE = 100
+DETAIL_URL = "https://apply.workable.com/api/v1/widget/accounts/{slug}/jobs/{shortcode}"
 
 
 class WorkableHarvester(BaseHarvester):
@@ -94,6 +96,38 @@ class WorkableHarvester(BaseHarvester):
             or f"https://apply.workable.com/{slug}/j/{shortcode}"
         )
 
+        # ── Fetch full description from detail endpoint ────────────────────
+        description = requirements = benefits = ""
+        city = state = country = ""
+        salary_min = salary_max = None
+        salary_currency, salary_period, salary_raw = "USD", "", ""
+        if shortcode:
+            try:
+                detail = self._get(DETAIL_URL.format(slug=slug, shortcode=shortcode))
+                if isinstance(detail, dict) and "error" not in detail:
+                    description  = detail.get("description") or ""
+                    requirements = detail.get("requirements") or ""
+                    benefits     = detail.get("benefits") or ""
+                    # Richer location from detail
+                    dloc = detail.get("location") or {}
+                    city    = dloc.get("city") or ""
+                    state   = dloc.get("region") or ""
+                    country = dloc.get("country") or ""
+                    # Salary from detail
+                    sal = detail.get("salary") or {}
+                    if sal:
+                        salary_min      = sal.get("salary_from") or None
+                        salary_max      = sal.get("salary_to") or None
+                        salary_currency = sal.get("salary_currency") or "USD"
+                        salary_period   = (sal.get("salary_unit") or "").upper()
+                        if salary_min and salary_max:
+                            salary_raw = f"{salary_currency} {salary_min:,}–{salary_max:,}/{salary_period or 'YEAR'}"
+            except Exception:
+                pass
+
+        from .greenhouse import _detect_experience_level
+        exp_level = _detect_experience_level(job.get("title") or "", description[:500])
+
         return {
             "external_id": str(job.get("id") or shortcode),
             "original_url": app_url,
@@ -103,21 +137,21 @@ class WorkableHarvester(BaseHarvester):
             "department": dept,
             "team": "",
             "location_raw": location_raw,
-            "city": "",
-            "state": "",
-            "country": "",
+            "city": city,
+            "state": state,
+            "country": country,
             "is_remote": is_remote,
             "location_type": location_type,
             "employment_type": employment_type,
-            "experience_level": "UNKNOWN",
-            "salary_min": None,
-            "salary_max": None,
-            "salary_currency": "USD",
-            "salary_period": "",
-            "salary_raw": "",
-            "description": "",
-            "requirements": "",
-            "benefits": "",
+            "experience_level": exp_level,
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "salary_currency": salary_currency,
+            "salary_period": salary_period,
+            "salary_raw": salary_raw,
+            "description": description,
+            "requirements": requirements,
+            "benefits": benefits,
             "posted_date_raw": job.get("created_at") or "",
             "closing_date": "",
             "raw_payload": job,
