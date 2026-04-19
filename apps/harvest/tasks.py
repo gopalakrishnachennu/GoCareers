@@ -1416,18 +1416,12 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             logger.info("Jarvis company match by domain: %s → %s", root_domain, match.name)
             return match
 
-    # ── 2. Exact name ────────────────────────────────────────────────────────
-    if company_name:
-        try:
-            company = Company.objects.get(name__iexact=company_name)
-            logger.info("Jarvis company match by exact name: %s", company.name)
-            return company
-        except Company.DoesNotExist:
-            pass
-        except Company.MultipleObjectsReturned:
-            return Company.objects.filter(name__iexact=company_name).first()
-
-    # ── 3. Word-by-word fuzzy scan ───────────────────────────────────────────
+    # ── 2. Word-by-word fuzzy scan ───────────────────────────────────────────
+    # NOTE: intentionally skipping a plain exact-name match here.
+    # If a previous Jarvis run created a stub company (e.g. "Bayview Asset
+    # Management"), an exact match would return that stub instead of the
+    # real "Bayview" company. The word scan is smarter: it checks each
+    # significant word independently and prefers the shorter / canonical name.
     # Handles variants like:
     #   "BRA 3M do Brasil Ltda." → finds "3M"   (first_word "BRA" wouldn't work)
     #   "Bayview Asset Management" → finds "Bayview"
