@@ -31,13 +31,41 @@ def _str_val(val) -> str:
     JSON-LD fields like addressCountry / addressRegion can be either:
       - a plain string:  "US"
       - a schema.org object:  {"@type": "Country", "name": "United States"}
-    This helper extracts the "name" key for objects, or returns str(val).
+      - a list:  ["US", "Remote"]
+    This helper extracts the "name" key for objects, joins lists, or returns str(val).
     """
     if not val:
         return ""
+    if isinstance(val, list):
+        return ", ".join(_str_val(v) for v in val if v)
     if isinstance(val, dict):
         return str(val.get("name") or val.get("@id") or "")
     return str(val)
+
+
+def _safe_text(val) -> str:
+    """Coerce any value (str, list, dict, None) to a safe string."""
+    if val is None:
+        return ""
+    if isinstance(val, list):
+        return "\n".join(_safe_text(v) for v in val if v)
+    if isinstance(val, dict):
+        return str(val.get("text") or val.get("content") or val.get("name") or "")
+    return str(val)
+
+
+def _html_to_text(html_str: str) -> str:
+    """Strip HTML tags and return clean readable text."""
+    if not html_str or not isinstance(html_str, str):
+        return _safe_text(html_str)
+    if "<" not in html_str:
+        return html_str.strip()
+    soup = BeautifulSoup(html_str, "html.parser")
+    for br in soup.find_all(["br", "p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6", "tr"]):
+        br.insert_before("\n")
+    text = soup.get_text()
+    lines = [line.strip() for line in text.splitlines()]
+    return "\n".join(line for line in lines if line).strip()
 
 
 # Use an honest, human-readable UA — same policy as the bulk harvesters.
@@ -116,8 +144,8 @@ class JobJarvis:
                     result.update(api_data)
                     result["strategy"] = f"api:{platform_slug}"
                     if result.get("description"):
-                        # Description present — we're done.
                         _enrich_inferred(result)
+                        _sanitize_result(result)
                         return result
                     # No description yet — keep metadata, continue to HTML fetch
                     logger.debug(
@@ -169,8 +197,9 @@ class JobJarvis:
             else:
                 result["strategy"] = "jsonld"
             _enrich_inferred(result)
-            desc = (result.get("description") or "").strip()
+            desc = _safe_text(result.get("description") or "").strip()
             if desc:
+                _sanitize_result(result)
                 return result
             logger.debug(
                 "Jarvis: JSON-LD matched but no description — falling through to HTML scrape (%s)",
@@ -195,6 +224,7 @@ class JobJarvis:
             else:
                 result["strategy"] = "html_scrape"
             _enrich_inferred(result)
+            _sanitize_result(result)
             return result
 
         result["error"] = (
@@ -1538,6 +1568,27 @@ def _safe_float(val: Any) -> Optional[float]:
         return float(val)
     except (TypeError, ValueError):
         return None
+
+
+def _sanitize_result(result: dict) -> None:
+    """Clean all string fields: coerce lists to strings, strip HTML from descriptions."""
+    _TEXT_FIELDS = (
+        "title", "company_name", "department", "team",
+        "location_raw", "city", "state", "country",
+        "employment_type", "experience_level",
+        "salary_raw", "salary_currency", "salary_period",
+        "posted_date_raw", "closing_date_raw", "external_id",
+        "original_url", "apply_url", "error", "strategy",
+    )
+    for k in _TEXT_FIELDS:
+        v = result.get(k)
+        if v is not None and not isinstance(v, str):
+            result[k] = _safe_text(v).strip()
+
+    for k in ("description", "requirements", "benefits"):
+        v = result.get(k)
+        if v is not None:
+            result[k] = _html_to_text(_safe_text(v))
 
 
 def _enrich_inferred(result: dict) -> None:

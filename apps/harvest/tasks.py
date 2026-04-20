@@ -1636,7 +1636,19 @@ def backfill_descriptions_task(
             _time.sleep(DELAY_BETWEEN)
             continue
 
-        if (data.get("error") or "").strip() and not (data.get("description") or "").strip():
+        def _s(val) -> str:
+            """Coerce any value to a safe string."""
+            if val is None:
+                return ""
+            if isinstance(val, list):
+                return "\n".join(_s(v) for v in val if v)
+            if isinstance(val, dict):
+                return str(val.get("text") or val.get("content") or val.get("name") or "")
+            return str(val)
+
+        err_str = _s(data.get("error")).strip()
+        desc_str = _s(data.get("description")).strip()
+        if err_str and not desc_str:
             skipped += 1
             recent_log[-1]["status"] = "skipped"
             _time.sleep(DELAY_BETWEEN)
@@ -1644,15 +1656,14 @@ def backfill_descriptions_task(
 
         update_fields = {}
 
-        desc = (data.get("description") or "").strip()
-        if desc:
-            update_fields["description"] = desc[:50000]
+        if desc_str:
+            update_fields["description"] = desc_str[:50000]
 
-        req = (data.get("requirements") or "").strip()
+        req = _s(data.get("requirements")).strip()
         if req:
             update_fields["requirements"] = req[:20000]
 
-        ben = (data.get("benefits") or "").strip()
+        ben = _s(data.get("benefits")).strip()
         if ben:
             update_fields["benefits"] = ben[:10000]
 
@@ -1662,17 +1673,17 @@ def backfill_descriptions_task(
                 update_fields[field] = v
 
         for field in ("salary_currency", "salary_period", "salary_raw"):
-            v = (data.get(field) or "").strip()
+            v = _s(data.get(field)).strip()
             if v:
                 update_fields[field] = v[:256]
 
         for field in ("employment_type", "experience_level"):
-            v = (data.get(field) or "").strip()
+            v = _s(data.get(field)).strip()
             if v and v != "UNKNOWN":
                 update_fields[field] = v
 
         for field in ("department", "city", "state", "country", "location_raw"):
-            v = (data.get(field) or "").strip()
+            v = _s(data.get(field)).strip()
             if v:
                 update_fields[field] = v[:256]
 
@@ -1707,8 +1718,8 @@ def backfill_descriptions_task(
             RawJob.objects.filter(pk=job.pk).update(**update_fields)
             updated += 1
             recent_log[-1]["status"] = "updated"
-            recent_log[-1]["desc_len"] = len(desc)
-            recent_log[-1]["strategy"] = (data.get("strategy") or "")[:30]
+            recent_log[-1]["desc_len"] = len(update_fields.get("description") or "")
+            recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
             logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])
         else:
             skipped += 1
