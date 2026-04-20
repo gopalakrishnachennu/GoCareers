@@ -71,23 +71,24 @@ class SmokeTestHarvestCommandTests(TestCase):
 class JarvisPlatformApiExtractionTests(SimpleTestCase):
     """Verify Jarvis _platform_api paths populate description (backfill relies on this)."""
 
-    def test_workday_cxs_payload_maps_job_description(self):
+    def test_workday_detail_api_maps_job_description(self):
         jarvis = JobJarvis()
         wd_url = (
             "https://acme.wd1.myworkdayjobs.com/en-US/Search/job/"
             "Remote-Engineer_R_99999"
         )
-        fake_job = {
-            "title": "Remote Engineer",
-            "externalPath": "/job/Remote-Engineer_R_99999",
-            "locationsText": "Remote",
-            "bulletFields": ["R_99999"],
-            "jobDescription": {"content": "<p>Workday JD body</p>"},
+        detail_resp = {
+            "jobPostingInfo": {
+                "title": "Remote Engineer",
+                "location": "Remote",
+                "externalJobId": "R_99999",
+                "jobDescription": "<p>Workday JD body</p>",
+            },
         }
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {"jobPostings": [fake_job]}
-        with patch.object(jarvis._session, "post", return_value=mock_resp):
+        mock_resp.json.return_value = detail_resp
+        with patch.object(jarvis._session, "get", return_value=mock_resp):
             out = jarvis._workday(wd_url)
         self.assertIsNotNone(out)
         self.assertIn("Workday JD body", out.get("description", ""))
