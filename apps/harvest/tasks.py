@@ -1569,7 +1569,7 @@ def backfill_descriptions_task(
 
         q = RawJob.objects.filter(
             Q(description="") | Q(description__isnull=True),
-        ).exclude(original_url="")
+        ).exclude(original_url="").exclude(original_url__isnull=True)
         if platform_slug:
             q = q.filter(platform_slug=platform_slug)
         return q
@@ -1648,16 +1648,18 @@ def backfill_descriptions_task(
 
         err_str = _s(data.get("error")).strip()
         desc_str = _s(data.get("description")).strip()
-        if err_str and not desc_str:
+
+        if not desc_str:
+            # No description extracted — mark with a placeholder so we don't
+            # re-try this URL forever. A single space distinguishes "tried and
+            # failed" from "never attempted" (empty string).
+            RawJob.objects.filter(pk=job.pk, description="").update(description=" ")
             skipped += 1
             recent_log[-1]["status"] = "skipped"
             _time.sleep(DELAY_BETWEEN)
             continue
 
-        update_fields = {}
-
-        if desc_str:
-            update_fields["description"] = desc_str[:50000]
+        update_fields = {"description": desc_str[:50000]}
 
         req = _s(data.get("requirements")).strip()
         if req:
@@ -1697,33 +1699,29 @@ def backfill_descriptions_task(
             merged.update(job.raw_payload or {})
             update_fields["raw_payload"] = merged
 
-        if update_fields:
-            from .enrichments import extract_enrichments
-            merged_for_enrich = {
-                "title": job.title,
-                "description": update_fields.get("description") or job.description,
-                "requirements": update_fields.get("requirements") or job.requirements,
-                "benefits": update_fields.get("benefits") or job.benefits,
-                "department": job.department,
-                "location_raw": job.location_raw,
-                "employment_type": job.employment_type,
-                "experience_level": job.experience_level,
-                "salary_raw": job.salary_raw,
-                "company_name": job.company_name,
-                "posted_date": str(job.posted_date) if job.posted_date else "",
-            }
-            enriched = extract_enrichments(merged_for_enrich)
-            update_fields.update(enriched)
+        from .enrichments import extract_enrichments
+        merged_for_enrich = {
+            "title": job.title,
+            "description": update_fields.get("description") or job.description,
+            "requirements": update_fields.get("requirements") or job.requirements,
+            "benefits": update_fields.get("benefits") or job.benefits,
+            "department": job.department,
+            "location_raw": job.location_raw,
+            "employment_type": job.employment_type,
+            "experience_level": job.experience_level,
+            "salary_raw": job.salary_raw,
+            "company_name": job.company_name,
+            "posted_date": str(job.posted_date) if job.posted_date else "",
+        }
+        enriched = extract_enrichments(merged_for_enrich)
+        update_fields.update(enriched)
 
-            RawJob.objects.filter(pk=job.pk).update(**update_fields)
-            updated += 1
-            recent_log[-1]["status"] = "updated"
-            recent_log[-1]["desc_len"] = len(update_fields.get("description") or "")
-            recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
-            logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])
-        else:
-            skipped += 1
-            recent_log[-1]["status"] = "skipped"
+        RawJob.objects.filter(pk=job.pk).update(**update_fields)
+        updated += 1
+        recent_log[-1]["status"] = "updated"
+        recent_log[-1]["desc_len"] = len(desc_str)
+        recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
+        logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])
 
         update_task_progress(
             self,
