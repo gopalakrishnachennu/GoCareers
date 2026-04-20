@@ -812,7 +812,7 @@ def fetch_raw_jobs_for_company_task(
         try:
             backfill_descriptions_task.apply_async(
                 kwargs={
-                    "batch_size": 1000,
+                    "batch_size": 200,
                     "platform_slug": platform_s,
                     "offset": 0,
                 },
@@ -1529,29 +1529,29 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 
 # ─── Description Backfill ────────────────────────────────────────────────────
 
-@shared_task(bind=True, name="harvest.backfill_descriptions")
+@shared_task(bind=True, name="harvest.backfill_descriptions", soft_time_limit=7200, time_limit=7500)
 def backfill_descriptions_task(
     self,
-    batch_size: int = 1000,
+    batch_size: int = 200,
     platform_slug: str | None = None,
     offset: int = 0,
     _chain_depth: int = 0,
     _skip_streak: int = 0,
 ):
     """
-    For every RawJob that has no description, fetch the original_url with
-    the Jarvis engine and save extracted fields. Runs until all jobs are
-    done — auto-chains with no hardcoded limit on total jobs.
+    Fetch JDs for every RawJob that has no description. Processes batch_size
+    jobs then immediately chains the next batch. Runs until all done.
 
-    Safe to run multiple times (idempotent). Can target a single platform_slug.
-    Progress is streamed to the task-progress widget.
+    soft_time_limit=7200 (2 hrs) prevents Celery from killing the task.
+    Each batch of 200 takes ~80s, well within any platform limit.
     """
     import time as _time
+    from celery.exceptions import SoftTimeLimitExceeded
 
     from .jarvis import JobJarvis
     from .models import RawJob
 
-    DELAY_BETWEEN = 0.4  # seconds between requests
+    DELAY_BETWEEN = 0.3  # seconds between requests
 
     if offset:
         logger.warning(
@@ -1631,8 +1631,10 @@ def backfill_descriptions_task(
         return d
 
     jobs = list(qs.order_by("pk")[:batch_size])
+    _time_limit_hit = False
 
-    for idx, job in enumerate(jobs, start=1):
+    try:
+      for idx, job in enumerate(jobs, start=1):
         _push_log({
             "pk": job.pk,
             "title": (job.title or "")[:60],
@@ -1651,6 +1653,8 @@ def backfill_descriptions_task(
 
         try:
             data = jarvis.ingest(job.original_url)
+        except SoftTimeLimitExceeded:
+            raise
         except Exception as exc:
             logger.warning("Backfill failed for job %s (%s): %s", job.pk, job.original_url, exc)
             failed += 1
@@ -1755,6 +1759,10 @@ def backfill_descriptions_task(
         )
         _time.sleep(DELAY_BETWEEN)
 
+    except SoftTimeLimitExceeded:
+        logger.warning("Backfill hit time limit after %d jobs — chaining next batch", updated + skipped + failed)
+        _time_limit_hit = True
+
     remaining_n = _qs_missing_description().count()
     skip_streak_next = _skip_streak + 1 if (updated == 0 and failed == 0) else 0
     result = {
@@ -1768,9 +1776,8 @@ def backfill_descriptions_task(
         "skip_streak": skip_streak_next,
     }
 
-    # Queue next chunk — runs until every job with a URL has been attempted.
-    # Jobs that fail get a placeholder so they exit the queryset.
-    should_chain = remaining_n > 0 and len(jobs) > 0
+    # Always chain if jobs remain — never stop, even after time limit.
+    should_chain = remaining_n > 0
     if should_chain:
         try:
             backfill_descriptions_task.apply_async(
