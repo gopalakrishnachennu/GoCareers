@@ -264,6 +264,33 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertIsNotNone(out)
         self.assertIn("Taleo JD body", out.get("description", ""))
 
+    def test_ultipro_embedded_json_in_html(self):
+        jarvis = JobJarvis()
+        url = (
+            "https://recruiting.ultipro.com/INT1043EXCUR/JobBoard/"
+            "ad5e5978-552f-4ef7-90c8-70ebb0a57994/OpportunityDetail"
+            "?opportunityId=c19385b5-7296-4f1d-88d8-3cbf7507693f"
+        )
+        html = (
+            "<html><script>\n"
+            'var opportunity = new US.Opportunity.CandidateOpportunityDetail('
+            '{"Title":"Finance Intern",'
+            '"Description":"<p>UKG UltiPro full JD body with enough text for tests.</p>",'
+            '"Locations":[{"LocalizedDescription":"Scottsdale HQ",'
+            '"Address":{"City":"Scottsdale","State":{"Code":"AZ"},"Country":{"Code":"USA"}}}]}'
+            ");\n</script></html>"
+        )
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.text = html
+        mock_resp.url = url
+        with patch.object(jarvis._session, "get", return_value=mock_resp):
+            out = jarvis._ultipro(url)
+        self.assertIsNotNone(out)
+        self.assertIn("UKG UltiPro full JD body", out.get("description", ""))
+        self.assertEqual(out.get("title"), "Finance Intern")
+        self.assertIn("Scottsdale", out.get("location_raw", ""))
+
     def test_oracle_ce_rest_api(self):
         jarvis = JobJarvis()
         url = "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/300001"
@@ -278,11 +305,14 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         mock_resp = MagicMock()
         mock_resp.raise_for_status = MagicMock()
         mock_resp.json.return_value = api_resp
-        with patch.object(jarvis._session, "get", return_value=mock_resp):
+        with patch.object(jarvis._session, "get", return_value=mock_resp) as mock_get:
             out = jarvis._oracle(url)
         self.assertIsNotNone(out)
         self.assertIn("Oracle JD body", out.get("description", ""))
         self.assertEqual(out.get("title"), "Oracle Dev")
+        finder = mock_get.call_args.kwargs.get("params", {}).get("finder", "")
+        self.assertIn("ById;", finder)
+        self.assertNotIn("findReqDetails", finder)
 
     def test_dayforce_job_detail_api(self):
         jarvis = JobJarvis()

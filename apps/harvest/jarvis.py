@@ -54,6 +54,24 @@ def _safe_text(val) -> str:
     return str(val)
 
 
+def _extract_ultipro_embedded_opportunity(html: str) -> Optional[dict]:
+    """
+    Parse the JSON object passed to ``CandidateOpportunityDetail(...)`` in UltiPro HTML.
+    """
+    marker = "CandidateOpportunityDetail("
+    idx = html.find(marker)
+    if idx < 0:
+        return None
+    brace_start = html.find("{", idx + len(marker))
+    if brace_start < 0:
+        return None
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(html, brace_start)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
 def _html_to_text(html_str: str) -> str:
     """Strip HTML tags and return clean readable text."""
     if not html_str or not isinstance(html_str, str):
@@ -89,7 +107,7 @@ PLATFORM_PATTERNS: dict[str, list[str]] = {
     "jobvite":         ["jobs.jobvite.com"],
     "taleo":           ["taleo.net/careersection"],
     "oracle":          [".oraclecloud.com/hcmUI/CandidateExperience"],
-    "ultipro":         ["recruiting.ultipro.com"],
+    "ultipro":         ["recruiting.ultipro.com", "recruiting.ukg.net"],
     "dayforce":        ["jobs.dayforcehcm.com"],
     "breezy":          [".breezy.hr/p/"],
     "teamtailor":      [".teamtailor.com/jobs/"],
@@ -959,10 +977,11 @@ class JobJarvis:
             f"https://{subdomain}.oraclecloud.com"
             f"/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
         )
+        # Oracle Fusion CE expects finder name "ById" (not findReqDetails — that returns HTTP 400).
         params = {
             "onlyData": "true",
             "expand": "all",
-            "finder": f"findReqDetails;Id={req_id},siteNumber={site_id}",
+            "finder": f"ById;Id={req_id},siteNumber={site_id}",
         }
         try:
             resp = self._session.get(
@@ -999,11 +1018,15 @@ class JobJarvis:
 
     def _ultipro(self, url: str) -> Optional[dict]:
         """
-        UltiPro OpportunityDetail — fetch single-job HTML or JSON.
-        URL: .../recruiting.ultipro.com/{code}/JobBoard/{guid}/OpportunityDetail?opportunityId={id}
+        UltiPro / UKG Pro — job detail page embeds full JSON in a script:
+
+          var opportunity = new US.Opportunity.CandidateOpportunityDetail({...});
+
+        The legacy JSON route ``.../GetOpportunityDetail?opportunityId=`` often returns 404;
+        the public list API only returns BriefDescription, not the full JD.
         """
         m = re.search(
-            r"recruiting\.ultipro\.com/([^/]+)/JobBoard/([^/]+)"
+            r"(?:recruiting\.ultipro\.com|recruiting\.ukg\.net)/([^/]+)/JobBoard/([^/]+)"
             r"/OpportunityDetail\?opportunityId=([^&#]+)",
             url, re.I,
         )
@@ -1011,55 +1034,69 @@ class JobJarvis:
             return None
         company_code, board_guid, opp_id = m.group(1), m.group(2), m.group(3)
 
-        detail_api = (
-            f"https://recruiting.ultipro.com/{company_code}/JobBoard/{board_guid}"
-            f"/OpportunityDetail/GetOpportunityDetail?opportunityId={opp_id}"
-        )
+        parsed = urlparse(url)
+        host = (parsed.netloc or "recruiting.ultipro.com").lower()
+        scheme = parsed.scheme or "https"
+        referer = f"{scheme}://{host}/{company_code}/JobBoard/{board_guid}"
+
         try:
             resp = self._session.get(
-                detail_api, timeout=self.timeout,
+                url,
+                timeout=self.timeout,
                 headers={
-                    "Accept": "application/json, text/plain, */*",
-                    "User-Agent": _JARVIS_UA,
+                    "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+                    "Referer": referer,
                 },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-        except Exception:
-            return self._ultipro_html_fallback(url)
-
-        if not isinstance(data, dict):
-            return self._ultipro_html_fallback(url)
-
-        title = data.get("Title") or data.get("title") or ""
-        desc = data.get("Description") or data.get("description") or ""
-        loc = data.get("Location") or data.get("location") or ""
-
-        if not desc:
-            return self._ultipro_html_fallback(url)
-
-        return {
-            "title": title,
-            "company_name": company_code.replace("-", " ").title(),
-            "location_raw": loc if isinstance(loc, str) else "",
-            "description": desc,
-            "external_id": opp_id,
-            "original_url": url,
-            "apply_url": url,
-            "raw_payload": data,
-        }
-
-    def _ultipro_html_fallback(self, url: str) -> Optional[dict]:
-        """Fetch the OpportunityDetail page and scrape HTML."""
-        try:
-            resp = self._session.get(
-                url, timeout=self.timeout,
-                headers={"Accept": "text/html,application/xhtml+xml"},
             )
             resp.raise_for_status()
         except Exception:
             return None
-        return None  # let generic HTML scrape handle it
+
+        data = _extract_ultipro_embedded_opportunity(resp.text)
+        if not data:
+            return None
+
+        title = data.get("Title") or data.get("title") or ""
+        desc = (
+            data.get("Description")
+            or data.get("description")
+            or data.get("BriefDescription")
+            or data.get("briefDescription")
+            or ""
+        )
+        loc_raw = ""
+        locs = data.get("Locations") or []
+        if locs and isinstance(locs[0], dict):
+            loc_raw = (
+                (locs[0].get("LocalizedDescription") or "").strip()
+                or (locs[0].get("LocalizedName") or "").strip()
+            )
+            addr = locs[0].get("Address") or {}
+            if isinstance(addr, dict) and not loc_raw:
+                parts = [
+                    addr.get("City"),
+                    (addr.get("State") or {}).get("Code")
+                    if isinstance(addr.get("State"), dict)
+                    else addr.get("State"),
+                    (addr.get("Country") or {}).get("Code")
+                    if isinstance(addr.get("Country"), dict)
+                    else addr.get("Country"),
+                ]
+                loc_raw = ", ".join(str(p) for p in parts if p)
+
+        if not desc:
+            return None
+
+        return {
+            "title": title,
+            "company_name": company_code.replace("-", " ").title(),
+            "location_raw": loc_raw if isinstance(loc_raw, str) else "",
+            "description": desc,
+            "external_id": opp_id,
+            "original_url": resp.url or url,
+            "apply_url": resp.url or url,
+            "raw_payload": data,
+        }
 
     # ── Dayforce ──────────────────────────────────────────────────────────────
 
