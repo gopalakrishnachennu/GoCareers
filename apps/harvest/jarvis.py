@@ -131,6 +131,27 @@ class JobJarvis:
         self.timeout = timeout
         self._session = requests.Session()
         self._session.headers.update({"User-Agent": _JARVIS_UA})
+        try:
+            from django.conf import settings
+
+            from .http_limits import JarvisFetchGate
+
+            self._gate = JarvisFetchGate(
+                max_global=max(1, int(getattr(settings, "JARVIS_HTTP_MAX_GLOBAL", 200))),
+                max_per_host=max(1, int(getattr(settings, "JARVIS_HTTP_MAX_PER_HOST", 12))),
+                retry_max=max(0, int(getattr(settings, "JARVIS_HTTP_RETRY_MAX", 3))),
+                retry_base_sec=float(getattr(settings, "JARVIS_HTTP_RETRY_BASE_SEC", 0.5)),
+            )
+        except Exception:
+            from .http_limits import JarvisFetchGate
+
+            self._gate = JarvisFetchGate(200, 12, 3, 0.5)
+
+    def _http_get(self, url: str, **kwargs):
+        return self._gate.request(self._session, "GET", url, **kwargs)
+
+    def _http_post(self, url: str, **kwargs):
+        return self._gate.request(self._session, "POST", url, **kwargs)
 
     # ── Main entry point ──────────────────────────────────────────────────────
 
@@ -254,7 +275,7 @@ class JobJarvis:
     # ── HTTP ──────────────────────────────────────────────────────────────────
 
     def _fetch(self, url: str) -> tuple[str, str]:
-        resp = self._session.get(
+        resp = self._http_get(
             url,
             timeout=self.timeout,
             allow_redirects=True,
@@ -341,7 +362,7 @@ class JobJarvis:
             search_url = f"{cxs_base}/jobs"
             payload = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": job_id}
             try:
-                resp = self._session.post(search_url, json=payload, timeout=self.timeout)
+                resp = self._http_post(search_url, json=payload, timeout=self.timeout)
                 if resp.ok:
                     postings = (resp.json() or {}).get("jobPostings") or []
                     for job in postings:
@@ -381,7 +402,7 @@ class JobJarvis:
     def _workday_detail(self, detail_url: str, original_url: str, full_subdomain: str) -> Optional[dict]:
         """GET a Workday CXS detail endpoint and extract job info."""
         try:
-            resp = self._session.get(detail_url, timeout=self.timeout, headers={
+            resp = self._http_get(detail_url, timeout=self.timeout, headers={
                 "Accept": "application/json",
             })
             if not resp.ok:
@@ -440,7 +461,7 @@ class JobJarvis:
             "?questions=true"
         )
         try:
-            resp = self._session.get(api_url, timeout=self.timeout)
+            resp = self._http_get(api_url, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -485,7 +506,7 @@ class JobJarvis:
         company_slug, job_id = m.group(1), m.group(2)
         api_url = f"https://api.lever.co/v0/postings/{company_slug}/{job_id}"
         try:
-            resp = self._session.get(api_url, timeout=self.timeout)
+            resp = self._http_get(api_url, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -537,7 +558,7 @@ class JobJarvis:
         api_url = "https://api.ashbyhq.com/posting-api/job-board/ashby"
         payload = {"organizationHostedJobsPageName": company_slug}
         try:
-            resp = self._session.post(api_url, json=payload, timeout=self.timeout)
+            resp = self._http_post(api_url, json=payload, timeout=self.timeout)
             resp.raise_for_status()
             jobs = (resp.json() or {}).get("jobPostings") or []
             job = next((j for j in jobs if j.get("id") == job_id), None)
@@ -575,7 +596,7 @@ class JobJarvis:
         company_slug, job_shortcode = m.group(1), m.group(2)
         api_url = f"https://apply.workable.com/api/v1/accounts/{company_slug}/jobs/{job_shortcode}"
         try:
-            resp = self._session.get(api_url, timeout=self.timeout)
+            resp = self._http_get(api_url, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -623,7 +644,7 @@ class JobJarvis:
         host_slug, job_id = m.group(1), m.group(2)
         detail_url = f"https://{host_slug}.bamboohr.com/careers/{job_id}/detail"
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url,
                 timeout=self.timeout,
                 headers={
@@ -679,7 +700,7 @@ class JobJarvis:
         slug, job_id = m.group(1), m.group(2)
         detail_url = f"https://api.smartrecruiters.com/v1/companies/{slug}/postings/{job_id}"
         try:
-            resp = self._session.get(detail_url, timeout=self.timeout)
+            resp = self._http_get(detail_url, timeout=self.timeout)
             resp.raise_for_status()
             detail = resp.json()
         except Exception:
@@ -734,7 +755,7 @@ class JobJarvis:
         tenant, opening_slug = m.group(1), m.group(2)
         api_url = f"https://{tenant}.recruitee.com/api/offers/"
         try:
-            resp = self._session.get(api_url, timeout=self.timeout)
+            resp = self._http_get(api_url, timeout=self.timeout)
             resp.raise_for_status()
             data = resp.json()
         except Exception:
@@ -788,7 +809,7 @@ class JobJarvis:
         tenant, job_id = m.group(1), m.group(2)
         detail_url = f"https://{tenant}.icims.com/jobs/{job_id}/job"
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url, timeout=self.timeout,
                 headers={
                     "Accept": "text/html,application/xhtml+xml",
@@ -850,7 +871,7 @@ class JobJarvis:
         company_slug, job_id = m.group(1), m.group(2)
         detail_url = f"https://jobs.jobvite.com/{company_slug}/job/{job_id}"
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url, timeout=self.timeout,
                 headers={"Accept": "text/html,application/xhtml+xml"},
             )
@@ -907,7 +928,7 @@ class JobJarvis:
             f"/jobdetail.ftl?job={job_ref}&lang=en"
         )
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url, timeout=self.timeout,
                 headers={"Accept": "text/html,application/xhtml+xml", "User-Agent": _JARVIS_UA},
             )
@@ -984,7 +1005,7 @@ class JobJarvis:
             "finder": f"ById;Id={req_id},siteNumber={site_id}",
         }
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 api_url, params=params, timeout=self.timeout,
                 headers={"Accept": "application/json"},
             )
@@ -1040,7 +1061,7 @@ class JobJarvis:
         referer = f"{scheme}://{host}/{company_code}/JobBoard/{board_guid}"
 
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 url,
                 timeout=self.timeout,
                 headers={
@@ -1116,7 +1137,7 @@ class JobJarvis:
 
         detail_url = f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/{job_id}"
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url, timeout=self.timeout,
                 headers={
                     "Accept": "application/json, text/plain, */*",
@@ -1164,7 +1185,7 @@ class JobJarvis:
         tenant, position_slug = m.group(1), m.group(2)
         detail_url = f"https://{tenant}.breezy.hr/p/{position_slug}"
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 detail_url, timeout=self.timeout,
                 headers={"Accept": "text/html,application/xhtml+xml"},
             )
@@ -1214,7 +1235,7 @@ class JobJarvis:
             return None
         tenant = m.group(1)
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 url, timeout=self.timeout,
                 headers={"Accept": "text/html,application/xhtml+xml"},
             )
@@ -1264,7 +1285,7 @@ class JobJarvis:
         Fetch and scrape the server-rendered HTML.
         """
         try:
-            resp = self._session.get(
+            resp = self._http_get(
                 url, timeout=self.timeout,
                 headers={"Accept": "text/html,application/xhtml+xml"},
             )

@@ -226,6 +226,18 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1    # fair task distribution
 # by default which the worker doesn't listen to.
 CELERY_TASK_DEFAULT_QUEUE = "default"
 
+# Jarvis outbound HTTP (per worker process). Tune with load tests; multiply by Celery workers for cluster totals.
+# Higher throughput targets need higher max_global + enough worker concurrency; per-host protects 429/blocks.
+JARVIS_HTTP_MAX_GLOBAL = config('JARVIS_HTTP_MAX_GLOBAL', default=200, cast=int)
+JARVIS_HTTP_MAX_PER_HOST = config('JARVIS_HTTP_MAX_PER_HOST', default=12, cast=int)
+JARVIS_HTTP_RETRY_MAX = config('JARVIS_HTTP_RETRY_MAX', default=3, cast=int)
+JARVIS_HTTP_RETRY_BASE_SEC = config('JARVIS_HTTP_RETRY_BASE_SEC', default=0.5, cast=float)
+
+# JD backfill: pause between jobs inside a chunk (global/per-host semaphores in Jarvis do most rate limiting).
+HARVEST_BACKFILL_INTER_JOB_DELAY_SEC = config(
+    'HARVEST_BACKFILL_INTER_JOB_DELAY_SEC', default=0.05, cast=float
+)
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

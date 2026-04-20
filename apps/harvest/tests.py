@@ -381,3 +381,39 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
             out = jarvis._zoho(url)
         self.assertIsNotNone(out)
         self.assertIn("Zoho JD body", out.get("description", ""))
+
+
+class JarvisFetchGateTests(SimpleTestCase):
+    """JarvisFetchGate: retries and concurrency wrapper for outbound HTTP."""
+
+    def test_retries_502_then_success(self):
+        from unittest.mock import MagicMock, patch
+
+        from apps.harvest.http_limits import JarvisFetchGate
+
+        gate = JarvisFetchGate(50, 10, 3, 0.01)
+        session = MagicMock()
+        bad = MagicMock()
+        bad.status_code = 502
+        good = MagicMock()
+        good.status_code = 200
+        session.get.side_effect = [bad, good]
+        with patch("apps.harvest.http_limits.time.sleep"):
+            r = gate.request(session, "GET", "https://example.com/job/1")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(session.get.call_count, 2)
+
+    def test_no_retry_on_404(self):
+        from unittest.mock import MagicMock, patch
+
+        from apps.harvest.http_limits import JarvisFetchGate
+
+        gate = JarvisFetchGate(50, 10, 3, 0.01)
+        session = MagicMock()
+        nf = MagicMock()
+        nf.status_code = 404
+        session.get.return_value = nf
+        with patch("apps.harvest.http_limits.time.sleep"):
+            r = gate.request(session, "GET", "https://example.com/missing")
+        self.assertEqual(r.status_code, 404)
+        self.assertEqual(session.get.call_count, 1)

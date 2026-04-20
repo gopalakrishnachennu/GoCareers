@@ -26,7 +26,11 @@ logger = logging.getLogger(__name__)
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
 BACKFILL_LOCK_STALE_MINUTES = 45
 BACKFILL_MAX_PARALLEL = 8
-BACKFILL_DELAY_SEC = 0.3  # politeness between HTTP fetches within one worker
+def _backfill_inter_job_delay_sec() -> float:
+    """Pause between JD fetches in a chunk; Jarvis per-host/global limits handle burst control."""
+    from django.conf import settings
+
+    return float(getattr(settings, "HARVEST_BACKFILL_INTER_JOB_DELAY_SEC", 0.05))
 
 
 def _backfill_str(val) -> str:
@@ -1759,7 +1763,7 @@ def _backfill_descriptions_chunk_impl(
             failed += 1
         if progress_hook:
             progress_hook("job_done", job=job, entry=entry, lu=updated, ls=skipped, lf=failed)
-        _time.sleep(BACKFILL_DELAY_SEC)
+        _time.sleep(_backfill_inter_job_delay_sec())
 
     return {
         "claimed": len(jobs),
