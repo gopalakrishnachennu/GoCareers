@@ -812,7 +812,7 @@ def fetch_raw_jobs_for_company_task(
         try:
             backfill_descriptions_task.apply_async(
                 kwargs={
-                    "batch_size": min(jobs_new, 500),
+                    "batch_size": 1000,
                     "platform_slug": platform_s,
                     "offset": 0,
                 },
@@ -1532,7 +1532,7 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 @shared_task(bind=True, name="harvest.backfill_descriptions")
 def backfill_descriptions_task(
     self,
-    batch_size: int = 200,
+    batch_size: int = 1000,
     platform_slug: str | None = None,
     offset: int = 0,
     _chain_depth: int = 0,
@@ -1540,13 +1540,10 @@ def backfill_descriptions_task(
 ):
     """
     For every RawJob that has no description, fetch the original_url with
-    the Jarvis engine (JSON-LD → HTML scrape) and save the extracted fields:
-    description, requirements, benefits, salary_min/max, employment_type,
-    experience_level, department, city, state, country, skills.
+    the Jarvis engine and save extracted fields. Runs until all jobs are
+    done — auto-chains with no hardcoded limit on total jobs.
 
-    Safe to run multiple times (idempotent — skips jobs that already have
-    a description). Can be targeted at a single platform_slug.
-
+    Safe to run multiple times (idempotent). Can target a single platform_slug.
     Progress is streamed to the task-progress widget.
     """
     import time as _time
@@ -1554,8 +1551,8 @@ def backfill_descriptions_task(
     from .jarvis import JobJarvis
     from .models import RawJob
 
-    DELAY_BETWEEN = 0.6  # seconds between requests — polite rate
-    MAX_CHAIN_DEPTH = 600  # safety cap (~120k jobs at batch_size 200)
+    DELAY_BETWEEN = 0.4  # seconds between requests — polite but faster
+    MAX_CHAIN_DEPTH = 5000  # safety cap (effectively unlimited for ~100k jobs)
 
     if offset:
         logger.warning(
