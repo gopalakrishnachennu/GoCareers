@@ -1529,7 +1529,7 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 
 # ─── Description Backfill ────────────────────────────────────────────────────
 
-@shared_task(bind=True, name="harvest.backfill_descriptions", soft_time_limit=7200, time_limit=7500)
+@shared_task(bind=True, name="harvest.backfill_descriptions", soft_time_limit=86400, time_limit=90000)
 def backfill_descriptions_task(
     self,
     batch_size: int = 200,
@@ -1539,11 +1539,11 @@ def backfill_descriptions_task(
     _skip_streak: int = 0,
 ):
     """
-    Fetch JDs for every RawJob that has no description. Processes batch_size
-    jobs then immediately chains the next batch. Runs until all done.
+    Fetch JDs for ALL RawJobs that have no description. ONE long-running
+    task — no chaining, no race conditions. Loops internally until every
+    job is attempted, then exits.
 
-    soft_time_limit=7200 (2 hrs) prevents Celery from killing the task.
-    Each batch of 200 takes ~80s, well within any platform limit.
+    soft_time_limit=86400 (24 hrs). time_limit=90000 (25 hrs).
     """
     import time as _time
     from celery.exceptions import SoftTimeLimitExceeded
@@ -1570,51 +1570,41 @@ def backfill_descriptions_task(
             q = q.filter(platform_slug=platform_slug)
         return q
 
-    qs = _qs_missing_description()
-    total = qs.count()
+    total = _qs_missing_description().count()
     if total == 0:
         return {"message": "All jobs already have descriptions.", "updated": 0}
 
-    update_task_progress(
-        self,
-        current=0,
-        total=min(batch_size, total),
-        message=f"Found {total} jobs without description (batch {batch_size}, chain depth {_chain_depth})…",
-    )
-
     jarvis = JobJarvis()
     updated = skipped = failed = 0
+    processed = 0
     recent_log: list[dict] = []
     _LOG_MAX = 25
     _start_time = _time.monotonic()
+
+    def _s(val) -> str:
+        if val is None: return ""
+        if isinstance(val, list): return "\n".join(_s(v) for v in val if v)
+        if isinstance(val, dict): return str(val.get("text") or val.get("content") or val.get("name") or "")
+        return str(val)
 
     def _push_log(entry: dict) -> None:
         recent_log.append(entry)
         if len(recent_log) > _LOG_MAX:
             recent_log.pop(0)
 
-    def _make_detail(idx_val: int, cur_job=None) -> dict:
+    def _make_detail(cur_job=None) -> dict:
         elapsed = _time.monotonic() - _start_time
-        speed = idx_val / elapsed if elapsed > 0 else 0
-        remaining_this_batch = len(jobs) - idx_val
-        remaining_all = total - (updated + skipped + failed)
-        eta_secs = int(remaining_all / speed) if speed > 0 else 0
+        done = updated + skipped + failed
+        speed = done / elapsed if elapsed > 0 else 0
+        remaining = total - done
+        eta_secs = int(remaining / speed) if speed > 0 else 0
         eta_min = eta_secs // 60
         eta_hrs = eta_min // 60
-        if eta_hrs > 0:
-            eta_str = f"~{eta_hrs}h {eta_min % 60}m"
-        elif eta_min > 0:
-            eta_str = f"~{eta_min}m"
-        else:
-            eta_str = f"~{eta_secs}s"
-
+        eta_str = f"~{eta_hrs}h {eta_min % 60}m" if eta_hrs > 0 else (f"~{eta_min}m" if eta_min > 0 else f"~{eta_secs}s")
         d = {
             "updated": updated, "skipped": skipped, "failed": failed,
-            "remaining_global": remaining_all,
-            "remaining_batch": remaining_this_batch,
-            "chain_depth": _chain_depth,
-            "batch_size": batch_size,
-            "batch_num": _chain_depth + 1,
+            "remaining_global": remaining,
+            "batch_num": 1,
             "speed": round(speed, 1),
             "elapsed_secs": int(elapsed),
             "eta": eta_str,
@@ -1630,174 +1620,118 @@ def backfill_descriptions_task(
             }
         return d
 
-    jobs = list(qs.order_by("pk")[:batch_size])
-    _time_limit_hit = False
+    update_task_progress(self, current=0, total=total,
+        message=f"Starting — {total} jobs without description…")
 
-    try:
-      for idx, job in enumerate(jobs, start=1):
-        _push_log({
-            "pk": job.pk,
-            "title": (job.title or "")[:60],
-            "company": (job.company_name or "")[:40],
-            "platform": job.platform_slug or "",
-            "url": (job.original_url or "")[:120],
-            "status": "processing",
-        })
-        update_task_progress(
-            self,
-            current=idx - 1,
-            total=len(jobs),
-            message=f"Fetching JD for: {(job.title or 'Untitled')[:50]} ({job.platform_slug or 'unknown'})",
-            detail=_make_detail(idx - 1, job),
-        )
+    # ONE continuous loop — fetch batch_size rows at a time from DB,
+    # process them all, then fetch the next batch_size. No chaining.
+    while True:
+        jobs = list(_qs_missing_description().order_by("pk")[:batch_size])
+        if not jobs:
+            break
 
-        try:
-            data = jarvis.ingest(job.original_url)
-        except SoftTimeLimitExceeded:
-            raise
-        except Exception as exc:
-            logger.warning("Backfill failed for job %s (%s): %s", job.pk, job.original_url, exc)
-            failed += 1
-            recent_log[-1]["status"] = "failed"
-            recent_log[-1]["reason"] = str(exc)[:80]
-            RawJob.objects.filter(pk=job.pk, description="").update(description=" ")
-            _time.sleep(DELAY_BETWEEN)
-            continue
+        for job in jobs:
+            processed += 1
+            _push_log({
+                "pk": job.pk,
+                "title": (job.title or "")[:60],
+                "company": (job.company_name or "")[:40],
+                "platform": job.platform_slug or "",
+                "url": (job.original_url or "")[:120],
+                "status": "processing",
+            })
+            update_task_progress(self, current=updated + skipped + failed, total=total,
+                message=f"Fetching JD for: {(job.title or 'Untitled')[:50]} ({job.platform_slug or 'unknown'})",
+                detail=_make_detail(job))
 
-        def _s(val) -> str:
-            """Coerce any value to a safe string."""
-            if val is None:
-                return ""
-            if isinstance(val, list):
-                return "\n".join(_s(v) for v in val if v)
-            if isinstance(val, dict):
-                return str(val.get("text") or val.get("content") or val.get("name") or "")
-            return str(val)
+            try:
+                data = jarvis.ingest(job.original_url)
+            except SoftTimeLimitExceeded:
+                logger.warning("Backfill time limit — processed %d jobs", processed)
+                return {"updated": updated, "skipped": skipped, "failed": failed,
+                        "remaining": _qs_missing_description().count()}
+            except Exception as exc:
+                logger.warning("Backfill failed for job %s: %s", job.pk, exc)
+                failed += 1
+                recent_log[-1]["status"] = "failed"
+                recent_log[-1]["reason"] = str(exc)[:80]
+                RawJob.objects.filter(pk=job.pk, description="").update(description=" ")
+                _time.sleep(DELAY_BETWEEN)
+                continue
 
-        err_str = _s(data.get("error")).strip()
-        desc_str = _s(data.get("description")).strip()
+            desc_str = _s(data.get("description")).strip()
 
-        if not desc_str:
-            RawJob.objects.filter(pk=job.pk, description="").update(description=" ")
-            skipped += 1
-            recent_log[-1]["status"] = "skipped"
-            recent_log[-1]["reason"] = (err_str or "No description in response")[:80]
+            if not desc_str:
+                RawJob.objects.filter(pk=job.pk, description="").update(description=" ")
+                skipped += 1
+                recent_log[-1]["status"] = "skipped"
+                recent_log[-1]["reason"] = (_s(data.get("error")).strip() or "No description")[:80]
+                recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
+                _time.sleep(DELAY_BETWEEN)
+                continue
+
+            update_fields = {"description": desc_str[:50000]}
+
+            for f, mx in (("requirements", 20000), ("benefits", 10000)):
+                v = _s(data.get(f)).strip()
+                if v: update_fields[f] = v[:mx]
+
+            for f in ("salary_min", "salary_max"):
+                v = data.get(f)
+                if v is not None: update_fields[f] = v
+
+            for f in ("salary_currency", "salary_period", "salary_raw"):
+                v = _s(data.get(f)).strip()
+                if v: update_fields[f] = v[:256]
+
+            for f in ("employment_type", "experience_level"):
+                v = _s(data.get(f)).strip()
+                if v and v != "UNKNOWN": update_fields[f] = v
+
+            for f in ("department", "city", "state", "country", "location_raw"):
+                v = _s(data.get(f)).strip()
+                if v: update_fields[f] = v[:256]
+
+            for f in ("is_remote", "location_type"):
+                v = data.get(f)
+                if v is not None and v not in ("", "UNKNOWN"): update_fields[f] = v
+
+            if data.get("raw_payload"):
+                merged = dict(data["raw_payload"])
+                merged.update(job.raw_payload or {})
+                update_fields["raw_payload"] = merged
+
+            from .enrichments import extract_enrichments
+            update_fields.update(extract_enrichments({
+                "title": job.title,
+                "description": update_fields.get("description") or job.description,
+                "requirements": update_fields.get("requirements") or job.requirements,
+                "benefits": update_fields.get("benefits") or job.benefits,
+                "department": job.department, "location_raw": job.location_raw,
+                "employment_type": job.employment_type, "experience_level": job.experience_level,
+                "salary_raw": job.salary_raw, "company_name": job.company_name,
+                "posted_date": str(job.posted_date) if job.posted_date else "",
+            }))
+
+            RawJob.objects.filter(pk=job.pk).update(**update_fields)
+            updated += 1
+            recent_log[-1]["status"] = "updated"
+            recent_log[-1]["desc_len"] = len(desc_str)
             recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
+            logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])
+
+            update_task_progress(self, current=updated + skipped + failed, total=total,
+                message=f"Updated {updated} / {processed} processed (failed {failed}, skipped {skipped})",
+                detail=_make_detail())
             _time.sleep(DELAY_BETWEEN)
-            continue
-
-        update_fields = {"description": desc_str[:50000]}
-
-        req = _s(data.get("requirements")).strip()
-        if req:
-            update_fields["requirements"] = req[:20000]
-
-        ben = _s(data.get("benefits")).strip()
-        if ben:
-            update_fields["benefits"] = ben[:10000]
-
-        for field in ("salary_min", "salary_max"):
-            v = data.get(field)
-            if v is not None:
-                update_fields[field] = v
-
-        for field in ("salary_currency", "salary_period", "salary_raw"):
-            v = _s(data.get(field)).strip()
-            if v:
-                update_fields[field] = v[:256]
-
-        for field in ("employment_type", "experience_level"):
-            v = _s(data.get(field)).strip()
-            if v and v != "UNKNOWN":
-                update_fields[field] = v
-
-        for field in ("department", "city", "state", "country", "location_raw"):
-            v = _s(data.get(field)).strip()
-            if v:
-                update_fields[field] = v[:256]
-
-        for field in ("is_remote", "location_type"):
-            v = data.get(field)
-            if v is not None and v not in ("", "UNKNOWN"):
-                update_fields[field] = v
-
-        if data.get("raw_payload"):
-            merged = dict(data["raw_payload"])
-            merged.update(job.raw_payload or {})
-            update_fields["raw_payload"] = merged
-
-        from .enrichments import extract_enrichments
-        merged_for_enrich = {
-            "title": job.title,
-            "description": update_fields.get("description") or job.description,
-            "requirements": update_fields.get("requirements") or job.requirements,
-            "benefits": update_fields.get("benefits") or job.benefits,
-            "department": job.department,
-            "location_raw": job.location_raw,
-            "employment_type": job.employment_type,
-            "experience_level": job.experience_level,
-            "salary_raw": job.salary_raw,
-            "company_name": job.company_name,
-            "posted_date": str(job.posted_date) if job.posted_date else "",
-        }
-        enriched = extract_enrichments(merged_for_enrich)
-        update_fields.update(enriched)
-
-        RawJob.objects.filter(pk=job.pk).update(**update_fields)
-        updated += 1
-        recent_log[-1]["status"] = "updated"
-        recent_log[-1]["desc_len"] = len(desc_str)
-        recent_log[-1]["strategy"] = _s(data.get("strategy"))[:30]
-        logger.info("Backfill updated job %s (%s)", job.pk, job.title[:60])
-
-        update_task_progress(
-            self,
-            current=idx,
-            total=len(jobs),
-            message=f"Updated {updated} / {idx} processed (failed {failed}, skipped {skipped})",
-            detail=_make_detail(idx),
-        )
-        _time.sleep(DELAY_BETWEEN)
-
-    except SoftTimeLimitExceeded:
-        logger.warning("Backfill hit time limit after %d jobs — chaining next batch", updated + skipped + failed)
-        _time_limit_hit = True
 
     remaining_n = _qs_missing_description().count()
-    skip_streak_next = _skip_streak + 1 if (updated == 0 and failed == 0) else 0
     result = {
-        "updated": updated,
-        "skipped": skipped,
-        "failed": failed,
-        "total_processed": len(jobs),
-        "total_without_desc_start": total,
-        "remaining": remaining_n,
-        "chain_depth": _chain_depth,
-        "skip_streak": skip_streak_next,
+        "updated": updated, "skipped": skipped, "failed": failed,
+        "total_processed": processed, "remaining": remaining_n,
+        "chained_next": False,
     }
-
-    # Always chain if jobs remain — never stop, even after time limit.
-    should_chain = remaining_n > 0
-    if should_chain:
-        try:
-            backfill_descriptions_task.apply_async(
-                kwargs={
-                    "batch_size": batch_size,
-                    "platform_slug": platform_slug,
-                    "offset": 0,
-                    "_chain_depth": _chain_depth + 1,
-                    "_skip_streak": skip_streak_next,
-                },
-                countdown=2,
-            )
-            result["chained_next"] = True
-        except Exception as exc:
-            logger.warning("Could not chain backfill_descriptions_task: %s", exc)
-            result["chained_next"] = False
-    else:
-        result["chained_next"] = False
-
-    logger.info("Backfill descriptions complete: %s", result)
+    logger.info("Backfill descriptions FINISHED: %s", result)
     return result
 
 
