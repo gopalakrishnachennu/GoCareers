@@ -1551,8 +1551,7 @@ def backfill_descriptions_task(
     from .jarvis import JobJarvis
     from .models import RawJob
 
-    DELAY_BETWEEN = 0.4  # seconds between requests — polite but faster
-    MAX_CHAIN_DEPTH = 5000  # safety cap (effectively unlimited for ~100k jobs)
+    DELAY_BETWEEN = 0.4  # seconds between requests
 
     if offset:
         logger.warning(
@@ -1747,15 +1746,9 @@ def backfill_descriptions_task(
         "skip_streak": skip_streak_next,
     }
 
-    # Queue next chunk without offset (rows already updated drop out of the queryset).
-    # Stop after many consecutive no-progress rounds to avoid an infinite Celery loop
-    # when every URL is blocked or unsupported.
-    should_chain = (
-        remaining_n > 0
-        and _chain_depth < MAX_CHAIN_DEPTH
-        and len(jobs) > 0
-        and skip_streak_next < 20
-    )
+    # Queue next chunk — runs until every job with a URL has been attempted.
+    # Jobs that fail get a placeholder so they exit the queryset.
+    should_chain = remaining_n > 0 and len(jobs) > 0
     if should_chain:
         try:
             backfill_descriptions_task.apply_async(

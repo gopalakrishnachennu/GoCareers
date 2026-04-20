@@ -421,6 +421,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "salary_raw": (job.salary_raw or "")[:20],
                     "posted_date": str(job.posted_date) if job.posted_date else "",
                     "sync_status": job.sync_status or "",
+                    "has_jd": bool(job.description and len(job.description.strip()) > 1),
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
                 })
 
@@ -467,6 +468,12 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             qs = qs.filter(is_remote=True)
         elif remote_f == "0":
             qs = qs.filter(is_remote=False)
+
+        jd_f = self.request.GET.get("has_jd", "").strip()
+        if jd_f == "1":
+            qs = qs.exclude(Q(description="") | Q(description__isnull=True) | Q(description=" "))
+        elif jd_f == "0":
+            qs = qs.filter(Q(description="") | Q(description__isnull=True) | Q(description=" "))
 
         date_from = self.request.GET.get("date_from", "").strip()
         if date_from:
@@ -523,6 +530,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
+        ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
 
