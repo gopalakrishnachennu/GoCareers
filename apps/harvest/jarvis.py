@@ -278,12 +278,12 @@ class JobJarvis:
 
     def _workday(self, url: str) -> Optional[dict]:
         """
-        Extract a single Workday job via the CXS **detail** API.
+        Extract a single Workday job description.
 
-        The detail endpoint returns full jobPostingInfo with description:
-          GET https://{sub}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{path}
-
-        where {path} is /job/... or /details/... from the original URL.
+        Two-phase approach:
+          1. GET the detail endpoint (fastest, returns full JD if job is live)
+          2. If detail 404s, POST search with job ID → get externalPath → GET detail
+          3. If search has no results, fall through to HTML/JSON-LD scrape
         """
         m = re.search(
             r"([\w.-]+)\.myworkdayjobs\.com"
@@ -298,19 +298,76 @@ class JobJarvis:
         full_subdomain = m.group(1)
         jobboard = m.group(2)
         job_path = m.group(3)
-
         tenant = re.sub(r"\.wd\d+$", "", full_subdomain, flags=re.I)
+        cxs_base = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}"
 
-        # Single-job detail endpoint — returns full description
-        detail_url = (
-            f"https://{full_subdomain}.myworkdayjobs.com"
-            f"/wday/cxs/{tenant}/{jobboard}{job_path}"
-        )
+        # ── Phase 1: direct detail GET ────────────────────────────────────────
+        detail_url = f"{cxs_base}{job_path}"
+        result = self._workday_detail(detail_url, url, full_subdomain)
+        if result and result.get("description"):
+            return result
+
+        # ── Phase 2: search by job ID, then detail ────────────────────────────
+        # Extract anything that looks like a job ID from the URL
+        job_id = ""
+        id_m = re.search(r"[/_]((?:R|JR|REQ)\w+)", url, re.I)
+        if id_m:
+            job_id = id_m.group(1)
+        else:
+            # Last segment after final underscore
+            id_m = re.search(r"_([^/_?#]+)$", url.split("?")[0])
+            if id_m:
+                job_id = id_m.group(1)
+
+        if job_id:
+            search_url = f"{cxs_base}/jobs"
+            payload = {"appliedFacets": {}, "limit": 5, "offset": 0, "searchText": job_id}
+            try:
+                resp = self._session.post(search_url, json=payload, timeout=self.timeout)
+                if resp.ok:
+                    postings = (resp.json() or {}).get("jobPostings") or []
+                    for job in postings:
+                        ext_path = job.get("externalPath", "")
+                        if not ext_path:
+                            continue
+                        result = self._workday_detail(
+                            f"{cxs_base}{ext_path}", url, full_subdomain,
+                        )
+                        if result and result.get("description"):
+                            return result
+                        # Even if detail fails, extract from search result
+                        desc = _safe_text(
+                            (job.get("jobDescription") or {}).get("content", "")
+                            or (job.get("jobPostingDescription") or {}).get("content", "")
+                            or job.get("shortDescription", "")
+                        )
+                        if desc:
+                            loc = job.get("locationsText", "")
+                            return {
+                                "title": job.get("title", ""),
+                                "company_name": full_subdomain.split(".")[0].replace("-", " ").title(),
+                                "location_raw": loc,
+                                "is_remote": "remote" in loc.lower(),
+                                "location_type": _infer_location_type(loc),
+                                "description": desc,
+                                "external_id": _safe_text((job.get("bulletFields") or [""])[0]),
+                                "original_url": url,
+                                "apply_url": url,
+                                "raw_payload": job,
+                            }
+            except Exception:
+                pass
+
+        return result  # may be partial data without description → falls through to HTML
+
+    def _workday_detail(self, detail_url: str, original_url: str, full_subdomain: str) -> Optional[dict]:
+        """GET a Workday CXS detail endpoint and extract job info."""
         try:
             resp = self._session.get(detail_url, timeout=self.timeout, headers={
                 "Accept": "application/json",
             })
-            resp.raise_for_status()
+            if not resp.ok:
+                return None
             data = resp.json()
         except Exception:
             return None
@@ -318,7 +375,6 @@ class JobJarvis:
         if not isinstance(data, dict):
             return None
 
-        # jobPostingInfo contains the full description
         info = data.get("jobPostingInfo") or data
         description = (
             _safe_text(info.get("jobDescription"))
@@ -340,13 +396,13 @@ class JobJarvis:
         return {
             "title": title,
             "company_name": company,
-            "location_raw": loc,
-            "is_remote": "remote" in loc.lower(),
-            "location_type": _infer_location_type(loc),
+            "location_raw": _safe_text(loc),
+            "is_remote": "remote" in _safe_text(loc).lower(),
+            "location_type": _infer_location_type(_safe_text(loc)),
             "description": description,
             "external_id": _safe_text(ext_id),
-            "original_url": url,
-            "apply_url": url,
+            "original_url": original_url,
+            "apply_url": original_url,
             "raw_payload": data,
         }
 

@@ -86,13 +86,61 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
             },
         }
         mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
+        mock_resp.ok = True
         mock_resp.json.return_value = detail_resp
         with patch.object(jarvis._session, "get", return_value=mock_resp):
             out = jarvis._workday(wd_url)
         self.assertIsNotNone(out)
         self.assertIn("Workday JD body", out.get("description", ""))
         self.assertEqual(out.get("title"), "Remote Engineer")
+
+    def test_workday_search_fallback_when_detail_404s(self):
+        jarvis = JobJarvis()
+        wd_url = (
+            "https://3m.wd1.myworkdayjobs.com/Search/job/"
+            "US-MN/Engineer_R01049764"
+        )
+        # Detail returns 404
+        detail_404 = MagicMock()
+        detail_404.ok = False
+        detail_404.status_code = 404
+
+        # Search returns a result with description in search data
+        search_resp = MagicMock()
+        search_resp.ok = True
+        search_resp.json.return_value = {
+            "jobPostings": [{
+                "title": "Manufacturing Engineer",
+                "externalPath": "/job/US-MN/Engineer_R01049764",
+                "locationsText": "Maplewood, MN",
+                "bulletFields": ["R01049764"],
+                "jobDescription": {"content": "<p>Workday search JD</p>"},
+            }]
+        }
+
+        # Detail for correct path returns full JD
+        detail_ok = MagicMock()
+        detail_ok.ok = True
+        detail_ok.json.return_value = {
+            "jobPostingInfo": {
+                "title": "Manufacturing Engineer",
+                "location": "Maplewood, MN",
+                "jobDescription": "<p>Full Workday JD from detail</p>",
+            }
+        }
+
+        call_count = {"n": 0}
+        def mock_get(*a, **kw):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                return detail_404  # first detail call fails
+            return detail_ok  # second detail call succeeds
+
+        with patch.object(jarvis._session, "get", side_effect=mock_get):
+            with patch.object(jarvis._session, "post", return_value=search_resp):
+                out = jarvis._workday(wd_url)
+        self.assertIsNotNone(out)
+        self.assertIn("Full Workday JD", out.get("description", ""))
 
     def test_smartrecruiters_detail_maps_sections(self):
         jarvis = JobJarvis()
