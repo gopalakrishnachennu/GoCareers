@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db.models import Count
 
-from .models import CompanyPlatformLabel, HarvestRun, HarvestedJob, JobBoardPlatform
+from .models import CompanyPlatformLabel, JobBoardPlatform, RawJob, PlatformConfig
 
 
 @admin.register(JobBoardPlatform)
@@ -28,28 +28,16 @@ class CompanyPlatformLabelAdmin(admin.ModelAdmin):
     readonly_fields = ["detected_at", "last_checked_at", "verified_at"]
 
 
-@admin.register(HarvestRun)
-class HarvestRunAdmin(admin.ModelAdmin):
-    list_display = [
-        "pk",
-        "run_type",
-        "platform",
-        "status",
-        "triggered_by",
-        "started_at",
-        "jobs_new",
-        "detection_detected",
-        "jobs_fetched",
-        "jobs_failed",
-    ]
-    list_filter = ["run_type", "status", "triggered_by"]
-    readonly_fields = ["started_at", "finished_at"]
+@admin.register(RawJob)
+class RawJobAdmin(admin.ModelAdmin):
+    list_display = ["title", "company_name", "platform_slug", "sync_status", "employment_type", "fetched_at", "is_active"]
+    list_filter = ["platform_slug", "sync_status", "employment_type", "is_active"]
+    search_fields = ["title", "company_name", "url_hash"]
+    raw_id_fields = ["company"]
+    readonly_fields = ["url_hash", "fetched_at", "updated_at"]
 
 
-@admin.register(HarvestedJob)
-class HarvestedJobAdmin(admin.ModelAdmin):
-    list_display = ["title", "company_name", "platform", "location", "sync_status", "fetched_at", "is_active"]
-    list_filter = ["platform", "sync_status", "is_active", "job_type"]
-    search_fields = ["title", "company_name"]
-    raw_id_fields = ["company", "synced_to_job", "harvest_run"]
-    readonly_fields = ["url_hash", "fetched_at", "expires_at"]
+@admin.register(PlatformConfig)
+class PlatformConfigAdmin(admin.ModelAdmin):
+    list_display = ["platform", "auto_backfill", "backfill_priority", "fetch_cadence_hours", "inter_request_delay_ms", "is_active"]
+    list_filter = ["auto_backfill", "is_active"]

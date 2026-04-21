@@ -227,19 +227,14 @@ def detect_company_platforms_task(
     """
     Run 3-step platform detection for companies without labels (or stale ones).
     Step 1: URL Pattern → Step 2: HTTP HEAD → Step 3: HTML Parse
-
-    Persists a HarvestRun (run_type=DETECTION) so Run Monitor shows progress and results.
+    Phase 5: audit goes to PipelineEvent instead of HarvestRun.
     """
     from django.contrib.auth import get_user_model
+    from jobs.models import PipelineEvent
 
     from companies.models import Company
-    from .models import HarvestRun, JobBoardPlatform, CompanyPlatformLabel
+    from .models import JobBoardPlatform, CompanyPlatformLabel
     from .detectors import run_detection_pipeline, extract_tenant
-
-    User = get_user_model()
-    triggered_user = None
-    if triggered_user_id:
-        triggered_user = User.objects.filter(pk=triggered_user_id).first()
 
     stale_threshold = timezone.now() - timedelta(days=7)
 
@@ -257,25 +252,9 @@ def detect_company_platforms_task(
         )
         company_ids = list(set(stale_ids + unlabeled_ids))[:batch_size]
 
-    run = HarvestRun.objects.create(
-        run_type=HarvestRun.RunType.DETECTION,
-        platform=None,
-        triggered_by=HarvestRun.TriggerType.MANUAL,
-        triggered_user=triggered_user,
-        celery_task_id=self.request.id or "",
-        companies_targeted=len(company_ids),
-        detection_total=0,
-        detection_detected=0,
-        status=HarvestRun.Status.RUNNING,
-    )
-
     if not company_ids:
-        now = timezone.now()
-        run.finished_at = now
-        run.status = HarvestRun.Status.SUCCESS
-        run.save(update_fields=["finished_at", "status"])
         logger.info("No companies need platform detection.")
-        return {"detected": 0, "total": 0, "harvest_run_id": run.pk}
+        return {"detected": 0, "total": 0}
 
     companies = Company.objects.filter(id__in=company_ids).order_by("id")
     company_list = list(companies)
@@ -283,12 +262,7 @@ def detect_company_platforms_task(
     detected = 0
     errors: list[str] = []
 
-    update_task_progress(
-        self,
-        current=0,
-        total=total_n,
-        message="Starting platform detection…",
-    )
+    update_task_progress(self, current=0, total=total_n, message="Starting platform detection…")
 
     try:
         for idx, company in enumerate(company_list, start=1):
@@ -322,50 +296,28 @@ def detect_company_platforms_task(
 
             time.sleep(2.0)
             update_task_progress(
-                self,
-                current=idx,
-                total=total_n,
+                self, current=idx, total=total_n,
                 message=f"{idx}/{total_n} · {(company.name or str(company.pk))[:60]}",
             )
 
-        now = timezone.now()
-        run.finished_at = now
-        run.detection_detected = detected
-        run.detection_total = len(company_ids)
-        run.companies_targeted = len(company_ids)
-        if errors:
-            run.status = HarvestRun.Status.PARTIAL if detected else HarvestRun.Status.FAILED
-            run.error_log = "\n".join(errors[:50])
-        else:
-            run.status = HarvestRun.Status.SUCCESS
-        run.save(
-            update_fields=[
-                "finished_at",
-                "status",
-                "detection_detected",
-                "detection_total",
-                "companies_targeted",
-                "error_log",
-            ]
+        status = "SUCCESS" if not errors else ("PARTIAL" if detected else "FAILED")
+        PipelineEvent.record(
+            task_name="harvest.detect_company_platforms",
+            celery_id=self.request.id or "",
+            status=PipelineEvent.Status.SUCCESS if status == "SUCCESS" else PipelineEvent.Status.FAILED,
+            meta={"detected": detected, "total": len(company_ids), "errors": errors[:10]},
         )
         logger.info("Detection done: %s/%s detected.", detected, len(company_ids))
-        return {"detected": detected, "total": len(company_ids), "harvest_run_id": run.pk}
+        return {"detected": detected, "total": len(company_ids)}
 
     except Exception as e:
         logger.exception("detect_company_platforms_task failed: %s", e)
-        run.finished_at = timezone.now()
-        run.status = HarvestRun.Status.FAILED
-        run.detection_detected = detected
-        run.detection_total = len(company_ids)
-        run.error_log = (str(e)[:1500] + ("\n" + "\n".join(errors[:20]) if errors else ""))[:4000]
-        run.save(
-            update_fields=[
-                "finished_at",
-                "status",
-                "detection_detected",
-                "detection_total",
-                "error_log",
-            ]
+        PipelineEvent.record(
+            task_name="harvest.detect_company_platforms",
+            celery_id=self.request.id or "",
+            status=PipelineEvent.Status.FAILED,
+            error=str(e)[:2000],
+            meta={"detected": detected, "total": len(company_ids)},
         )
         raise
 
@@ -379,22 +331,23 @@ def harvest_jobs_task(
     triggered_by: str = "SCHEDULED",
     triggered_user_id: int | None = None,
 ):
-    """Harvest jobs from all enabled platforms or a specific one."""
+    """Harvest jobs from all enabled platforms → write directly to RawJob (Phase 5)."""
+    import hashlib as _hashlib
     from django.contrib.auth import get_user_model
+    from jobs.models import PipelineEvent
 
-    from .models import JobBoardPlatform, CompanyPlatformLabel, HarvestRun, HarvestedJob
+    from .models import JobBoardPlatform, CompanyPlatformLabel, RawJob
     from .harvesters import get_harvester
     from .normalizer import normalize_job_data
+    from .rate_limiter import throttle as _throttle
 
     tb = triggered_by if triggered_by in ("SCHEDULED", "MANUAL") else "SCHEDULED"
-    triggered_user = None
-    if triggered_user_id:
-        User = get_user_model()
-        triggered_user = User.objects.filter(pk=triggered_user_id).first()
 
     qs = JobBoardPlatform.objects.filter(is_enabled=True)
     if platform_slug:
         qs = qs.filter(slug=platform_slug)
+
+    total_new = total_dup = total_fail = 0
 
     for platform in qs:
         labels_qs = CompanyPlatformLabel.objects.filter(
@@ -406,16 +359,9 @@ def harvest_jobs_task(
         if not labels_list:
             continue
 
-        run = HarvestRun.objects.create(
-            run_type=HarvestRun.RunType.HARVEST,
-            platform=platform,
-            triggered_by=tb,
-            triggered_user=triggered_user,
-            celery_task_id=self.request.id or "",
-            companies_targeted=len(labels_list),
-        )
-
         harvester = get_harvester(platform.slug)
+        if harvester is None:
+            continue
         is_scraper = platform.slug in HTML_SCRAPE_PLATFORMS
         inter_delay = INTER_COMPANY_DELAY_SCRAPE if is_scraper else INTER_COMPANY_DELAY_API
 
@@ -424,56 +370,64 @@ def harvest_jobs_task(
         consecutive_failures = 0
 
         total_l = len(labels_list)
-        update_task_progress(
-            self,
-            current=0,
-            total=total_l,
-            message=f"Harvest {platform.name}: starting…",
-        )
+        update_task_progress(self, current=0, total=total_l, message=f"Harvest {platform.name}: starting…")
 
         for i, label in enumerate(labels_list, start=1):
-            # Circuit breaker — stop hammering after repeated failures
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                logger.warning(
-                    "[HARVEST] Circuit breaker: %d consecutive failures on %s — stopping run",
-                    consecutive_failures, platform.name,
-                )
-                errors.append(
-                    f"Circuit breaker tripped after {consecutive_failures} consecutive failures"
-                )
+                logger.warning("[HARVEST] Circuit breaker on %s after %d failures", platform.name, consecutive_failures)
                 break
 
             company = label.company
             tenant_id = label.tenant_id or ""
+            _throttle(platform.slug)
             try:
                 raw_jobs = harvester.fetch_jobs(company, tenant_id, since_hours=since_hours)
-
                 if not raw_jobs:
                     consecutive_failures += 1
                 else:
-                    consecutive_failures = 0   # reset on success
+                    consecutive_failures = 0
 
                 for raw in raw_jobs:
                     try:
-                        normalized = normalize_job_data(raw, platform, company, run)
+                        normalized = normalize_job_data(raw, platform, company, harvest_run=None)
                         original_url = normalized.get("original_url", "")
                         url_hash = normalized.get("url_hash", "")
                         if not original_url or not url_hash:
                             continue
 
-                        existing = HarvestedJob.objects.filter(
-                            platform=platform, url_hash=url_hash
-                        ).first()
-
-                        if existing:
-                            existing.fetched_at = timezone.now()
-                            existing.expires_at = timezone.now() + timedelta(hours=24)
-                            existing.is_active = True
-                            existing.save(update_fields=["fetched_at", "expires_at", "is_active"])
-                            jobs_dup += 1
-                        else:
-                            HarvestedJob.objects.create(**normalized)
+                        # Map HarvestedJob-shaped dict → RawJob fields
+                        rj_defaults = {
+                            "company": company,
+                            "job_platform": platform,
+                            "platform_slug": platform.slug,
+                            "external_id": normalized.get("external_id", "")[:512],
+                            "original_url": original_url[:1024],
+                            "title": normalized.get("title", "")[:512],
+                            "company_name": normalized.get("company_name", company.name)[:256],
+                            "location_raw": normalized.get("location", "")[:512],
+                            "is_remote": normalized.get("is_remote", False) or False,
+                            "employment_type": normalized.get("job_type", "UNKNOWN"),
+                            "department": normalized.get("department", "")[:256],
+                            "salary_min": normalized.get("salary_min"),
+                            "salary_max": normalized.get("salary_max"),
+                            "salary_currency": normalized.get("salary_currency", "USD")[:8],
+                            "salary_raw": normalized.get("salary_raw", "")[:256],
+                            "description": normalized.get("description_text", "")[:50000],
+                            "requirements": normalized.get("requirements_text", ""),
+                            "benefits": normalized.get("benefits_text", ""),
+                            "posted_date": normalized.get("posted_date"),
+                            "raw_payload": normalized.get("raw_payload", {}),
+                            "sync_status": "PENDING",
+                            "is_active": True,
+                        }
+                        _, created = RawJob.objects.update_or_create(
+                            url_hash=url_hash,
+                            defaults=rj_defaults,
+                        )
+                        if created:
                             jobs_new += 1
+                        else:
+                            jobs_dup += 1
                     except Exception as e:
                         jobs_fail += 1
                         errors.append(str(e)[:200])
@@ -483,30 +437,25 @@ def harvest_jobs_task(
                 consecutive_failures += 1
                 errors.append(f"Company {company.id} ({company.name}): {str(e)[:150]}")
 
-            # Respectful inter-company delay regardless of success/failure
             time.sleep(inter_delay)
-            update_task_progress(
-                self,
-                current=i,
-                total=total_l,
-                message=f"{platform.name}: {i}/{total_l}",
-            )
+            update_task_progress(self, current=i, total=total_l, message=f"{platform.name}: {i}/{total_l}")
 
-        run.finished_at = timezone.now()
-        run.status = "SUCCESS" if not errors else ("PARTIAL" if jobs_new > 0 else "FAILED")
-        run.jobs_fetched = jobs_new + jobs_dup + jobs_fail
-        run.jobs_new = jobs_new
-        run.jobs_duplicate = jobs_dup
-        run.jobs_failed = jobs_fail
-        run.error_log = "\n".join(errors[:50])
-        run.save()
+        total_new += jobs_new; total_dup += jobs_dup; total_fail += jobs_fail
 
+        # Audit via PipelineEvent instead of HarvestRun
+        status = "SUCCESS" if not errors else ("PARTIAL" if jobs_new > 0 else "FAILED")
+        PipelineEvent.record(
+            task_name="harvest.harvest_jobs",
+            celery_id=self.request.id or "",
+            status=PipelineEvent.Status.SUCCESS if status == "SUCCESS" else PipelineEvent.Status.FAILED,
+            meta={"platform": platform.slug, "new": jobs_new, "dup": jobs_dup, "fail": jobs_fail,
+                  "errors": errors[:10], "trigger": tb},
+        )
         platform.last_harvested_at = timezone.now()
         platform.save(update_fields=["last_harvested_at"])
+        logger.info("Harvest %s: +%d new, %d dup, %d fail", platform.name, jobs_new, jobs_dup, jobs_fail)
 
-        logger.info(f"Harvest {platform.name}: +{jobs_new} new, {jobs_dup} dup, {jobs_fail} fail")
-
-    return {"status": "complete"}
+    return {"new": total_new, "dup": total_dup, "fail": total_fail}
 
 
 @shared_task(bind=True, name="harvest.check_portal_health")
@@ -1224,24 +1173,24 @@ def validate_raw_job_urls_task(
 
 @shared_task(name="harvest.cleanup_harvested_jobs")
 def cleanup_harvested_jobs_task():
-    """Delete expired HarvestedJobs and old HarvestRun records."""
-    from .models import HarvestedJob, HarvestRun
+    """Phase 5: clean expired RawJob rows (HarvestedJob/HarvestRun removed)."""
+    from .models import RawJob
 
     now = timezone.now()
-
-    expired, _ = HarvestedJob.objects.filter(
+    expired, _ = RawJob.objects.filter(
         expires_at__lt=now,
         sync_status__in=["PENDING", "SKIPPED"],
-    ).delete()
+        is_active=True,
+    ).update(is_active=False), 0  # soft-delete, not hard delete
 
     old_cutoff = now - timedelta(days=30)
-    old_runs, _ = HarvestRun.objects.filter(
-        started_at__lt=old_cutoff,
-        status__in=["SUCCESS", "FAILED", "PARTIAL"],
+    purged, _ = RawJob.objects.filter(
+        is_active=False,
+        fetched_at__lt=old_cutoff,
     ).delete()
 
-    logger.info(f"Cleanup: {expired} expired jobs, {old_runs} old runs deleted.")
-    return {"expired_jobs": expired, "old_runs": old_runs}
+    logger.info("Cleanup: %d RawJobs deactivated, %d purged.", expired[0] if isinstance(expired, tuple) else 0, purged)
+    return {"deactivated": expired[0] if isinstance(expired, tuple) else expired, "purged": purged}
 
 
 def _mirror_raw_job_sync_status(url_hash: str, sync_status: str) -> None:
@@ -1258,10 +1207,13 @@ def _mirror_raw_job_sync_status(url_hash: str, sync_status: str) -> None:
 
 @shared_task(bind=True, name="harvest.sync_harvested_to_pool")
 def sync_harvested_to_pool_task(self, max_jobs: int = 100):
-    """Promote pending HarvestedJobs to internal Job model (status=POOL)."""
-    from .models import HarvestedJob
+    """Promote pending RawJobs to the Job pool (Phase 5 — reads RawJob, not HarvestedJob)."""
+    from .models import RawJob
     from jobs.models import Job
+    from jobs.dedup import find_existing_job_by_url
+    from jobs.quality import compute_quality_score
     from django.contrib.auth import get_user_model
+    from django.utils import timezone as _tz
 
     User = get_user_model()
     system_user = User.objects.filter(is_superuser=True).first()
@@ -1270,79 +1222,59 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
         return {"synced": 0}
 
     pending = list(
-        HarvestedJob.objects.filter(
-            sync_status="PENDING",
-            is_active=True,
-            company__isnull=False,
-        )
+        RawJob.objects.filter(sync_status="PENDING", is_active=True, company__isnull=False)
         .exclude(original_url="")
-        .select_related("company", "platform")[:max_jobs]
+        .select_related("company", "job_platform")[:max_jobs]
     )
 
     synced = skipped = failed = 0
     total_n = len(pending)
     if total_n:
-        update_task_progress(self, current=0, total=total_n, message="Sync to job pool…")
+        update_task_progress(self, current=0, total=total_n, message="Sync RawJobs to pool…")
 
-    for idx, hj in enumerate(pending, start=1):
-        # Phase 4: cross-company dedup by url_hash first, then fall back to exact link match.
-        from jobs.dedup import find_existing_job_by_url
+    for idx, rj in enumerate(pending, start=1):
         existing = (
-            (Job.objects.filter(url_hash=hj.url_hash, is_archived=False).first() if hj.url_hash else None)
-            or find_existing_job_by_url(hj.original_url)
-            or Job.objects.filter(original_link=hj.original_url).first()
+            (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
+            or find_existing_job_by_url(rj.original_url)
+            or Job.objects.filter(original_link=rj.original_url).first()
         )
         if existing:
-            hj.synced_to_job = existing
-            hj.sync_status = "SKIPPED"
-            hj.save(update_fields=["synced_to_job", "sync_status"])
-            _mirror_raw_job_sync_status(hj.url_hash, "SKIPPED")
+            RawJob.objects.filter(pk=rj.pk).update(sync_status="SKIPPED")
             skipped += 1
             continue
 
         try:
-            from jobs.quality import compute_quality_score
-            from django.utils import timezone as _tz
+            platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
             with transaction.atomic():
                 job = Job.objects.create(
-                    title=hj.title,
-                    company=hj.company_name,
-                    company_obj=hj.company,
-                    location=hj.location or "",
-                    description=hj.description_text or hj.title,
-                    original_link=hj.original_url,
-                    salary_range=hj.salary_raw or "",
-                    job_type=hj.job_type if hj.job_type != "UNKNOWN" else "FULL_TIME",
+                    title=rj.title,
+                    company=rj.company_name or (rj.company.name if rj.company else ""),
+                    company_obj=rj.company,
+                    location=rj.location_raw or "",
+                    description=rj.description or rj.title,
+                    original_link=rj.original_url,
+                    salary_range=rj.salary_raw or "",
+                    job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
                     status="POOL",
                     stage=Job.Stage.VETTED,
                     stage_changed_at=_tz.now(),
-                    url_hash=hj.url_hash or "",
-                    job_source=f"HARVESTED_{hj.platform.slug.upper()}",
+                    url_hash=rj.url_hash or "",
+                    job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
                     posted_by=system_user,
                 )
                 job.quality_score = compute_quality_score(job)
                 Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
-                hj.synced_to_job = job
-                hj.sync_status = "SYNCED"
-                hj.save(update_fields=["synced_to_job", "sync_status"])
-                _mirror_raw_job_sync_status(hj.url_hash, "SYNCED")
+                RawJob.objects.filter(pk=rj.pk).update(sync_status="SYNCED")
                 synced += 1
         except Exception as e:
-            hj.sync_status = "FAILED"
-            hj.save(update_fields=["sync_status"])
-            _mirror_raw_job_sync_status(hj.url_hash, "FAILED")
-            logger.error(f"Sync failed for HarvestedJob {hj.id}: {e}")
+            RawJob.objects.filter(pk=rj.pk).update(sync_status="FAILED")
+            logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
             failed += 1
 
         if total_n:
-            update_task_progress(
-                self,
-                current=idx,
-                total=total_n,
-                message=f"Sync {idx}/{total_n}",
-            )
+            update_task_progress(self, current=idx, total=total_n, message=f"Sync {idx}/{total_n}")
 
-    logger.info(f"Sync: {synced} synced, {skipped} skipped, {failed} failed.")
+    logger.info("Sync: %d synced, %d skipped, %d failed.", synced, skipped, failed)
     return {"synced": synced, "skipped": skipped, "failed": failed}
 
 

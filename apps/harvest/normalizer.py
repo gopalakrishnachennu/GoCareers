@@ -62,8 +62,8 @@ def normalize_job_data(
     company,
     harvest_run,
 ) -> dict[str, Any]:
-    """Convert raw harvester output dict to HarvestedJob field values."""
-    from .models import HarvestedJob
+    """Convert raw harvester output dict to normalized field values (Phase 5: no HarvestedJob)."""
+    _VALID_JOB_TYPES = {"FULL_TIME", "PART_TIME", "CONTRACT", "INTERNSHIP", "UNKNOWN"}
 
     original_url = raw_job.get("original_url", "").strip()
     url_hash = compute_url_hash(original_url) if original_url else ""
@@ -82,9 +82,8 @@ def normalize_job_data(
     description_html = raw_job.get("description_html", "")
     description_text = raw_job.get("description_text", "") or strip_html(description_html)
 
-    valid_types = {c[0] for c in HarvestedJob.JobType.choices}
     job_type = raw_job.get("job_type", "UNKNOWN")
-    if job_type not in valid_types:
+    if job_type not in _VALID_JOB_TYPES:
         job_type = "UNKNOWN"
 
     expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=24)
@@ -101,7 +100,6 @@ def normalize_job_data(
             pass
 
     return {
-        "harvest_run": harvest_run,
         "company": company,
         "platform": platform,
         "external_id": str(raw_job.get("external_id", ""))[:500],

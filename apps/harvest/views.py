@@ -21,8 +21,6 @@ from .models import (
     CompanyFetchRun,
     CompanyPlatformLabel,
     FetchBatch,
-    HarvestRun,
-    HarvestedJob,
     JobBoardPlatform,
     RawJob,
 )
@@ -163,22 +161,25 @@ class ScheduleConfigView(SuperuserRequiredMixin, TemplateView):
 # ── Run Monitor ────────────────────────────────────────────────────────────────
 
 class RunMonitorView(SuperuserRequiredMixin, ListView):
+    """Phase 5: monitor now uses RawJob + PipelineEvent (HarvestRun removed)."""
     template_name = "harvest/settings_monitor.html"
     context_object_name = "runs"
     paginate_by = 30
 
     def get_queryset(self):
-        return HarvestRun.objects.select_related("platform", "triggered_user").order_by("-started_at")
+        from jobs.models import PipelineEvent
+        return PipelineEvent.objects.filter(task_name="harvest.harvest_jobs").order_by("-occurred_at")
 
     def get_context_data(self, **kwargs):
+        from .models import RawJob
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "monitor"
         ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True)
-        ctx["total_harvested"] = HarvestedJob.objects.filter(is_active=True).count()
-        ctx["pending_sync"] = HarvestedJob.objects.filter(sync_status="PENDING").count()
-        ctx["synced_count"] = HarvestedJob.objects.filter(sync_status="SYNCED").count()
-        ctx["total_runs"] = HarvestRun.objects.count()
-        ctx["running_runs"] = HarvestRun.objects.filter(status="RUNNING").count()
+        ctx["total_harvested"] = RawJob.objects.filter(is_active=True).count()
+        ctx["pending_sync"] = RawJob.objects.filter(sync_status="PENDING").count()
+        ctx["synced_count"] = RawJob.objects.filter(sync_status="SYNCED").count()
+        ctx["total_runs"] = 0
+        ctx["running_runs"] = 0
         return ctx
 
 
