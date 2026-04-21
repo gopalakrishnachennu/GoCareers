@@ -1649,7 +1649,15 @@ def _backfill_process_one_job(job, jarvis):
     desc_str = _backfill_str(data.get("description")).strip()
 
     if not desc_str:
-        RawJob.objects.filter(pk=job.pk).update(description=" ", jd_backfill_locked_at=None)
+        upd: dict = {"description": " ", "jd_backfill_locked_at": None}
+        pl = {}
+        if data.get("raw_payload"):
+            # Prefer newest API/Jarvis payload over stale DB rows (fixes SmartRecruiters active flag).
+            pl = {**(job.raw_payload or {}), **dict(data["raw_payload"])}
+            upd["raw_payload"] = pl
+        if isinstance(pl, dict) and pl.get("active") is False:
+            upd["is_active"] = False
+        RawJob.objects.filter(pk=job.pk).update(**upd)
         log = {
             **log_base,
             "status": "skipped",
@@ -1691,9 +1699,11 @@ def _backfill_process_one_job(job, jarvis):
             update_fields[f] = v
 
     if data.get("raw_payload"):
-        merged = dict(data["raw_payload"])
-        merged.update(job.raw_payload or {})
-        update_fields["raw_payload"] = merged
+        # Prefer fresh Jarvis/API keys over older harvest list payloads (e.g. active, sections).
+        merged_pl = {**(job.raw_payload or {}), **dict(data["raw_payload"])}
+        update_fields["raw_payload"] = merged_pl
+        if isinstance(merged_pl, dict) and merged_pl.get("active") is False:
+            update_fields["is_active"] = False
 
     update_fields.update(extract_enrichments({
         "title": job.title,

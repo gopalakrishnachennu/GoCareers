@@ -1,6 +1,7 @@
 import json
 import logging
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.db.models import Count, F, Q, Value
@@ -53,15 +54,19 @@ def raw_jobs_missing_description_count() -> int:
 
 
 def raw_jobs_missing_jd_expired_count() -> int:
-    """Subset of missing-JD rows that look expired (closed/delisted)."""
+    """Subset of missing-JD rows that look expired (aligned with RawJob.is_expired_listing)."""
     today = timezone.now().date()
     now = timezone.now()
+    stale_days = max(30, int(getattr(settings, "HARVEST_JD_STALE_DAYS", 120)))
+    stale_cutoff = today - timedelta(days=stale_days)
     return (
         _raw_jobs_missing_jd_base_qs()
         .filter(
             Q(expires_at__lt=now)
             | Q(closing_date__lt=today)
-            | Q(is_active=False),
+            | Q(is_active=False)
+            | Q(raw_payload__active=False)
+            | Q(posted_date__lt=stale_cutoff),
         )
         .count()
     )

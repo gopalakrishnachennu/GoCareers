@@ -237,6 +237,8 @@ JARVIS_HTTP_RETRY_BASE_SEC = config('JARVIS_HTTP_RETRY_BASE_SEC', default=0.5, c
 HARVEST_BACKFILL_INTER_JOB_DELAY_SEC = config(
     'HARVEST_BACKFILL_INTER_JOB_DELAY_SEC', default=0.05, cast=float
 )
+# Missing-JD rows with posted_date older than this are labeled "expired" (stale listings). Override via env.
+HARVEST_JD_STALE_DAYS = config('HARVEST_JD_STALE_DAYS', default=120, cast=int)
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'

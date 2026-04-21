@@ -10,7 +10,7 @@ Detail endpoint returns jobAd.sections with full description HTML.
 """
 import re
 import time
-from typing import Any
+from typing import Any, Optional
 
 from .base import BaseHarvester, MIN_DELAY_API
 
@@ -141,6 +141,7 @@ class SmartRecruitersHarvester(BaseHarvester):
 
         # ── Fetch full description from detail endpoint ────────────────────
         description = requirements = benefits = ""
+        detail: Optional[dict] = None
         if api_posting_id:
             try:
                 detail = self._get(DETAIL_URL.format(slug=slug, job_id=api_posting_id))
@@ -153,6 +154,10 @@ class SmartRecruitersHarvester(BaseHarvester):
                 pass  # fall through — description stays empty, no crash
 
         experience_level = _detect_experience_level(p.get("name") or "", description[:500])
+
+        raw_payload = dict(p)
+        if isinstance(detail, dict) and detail and "error" not in detail:
+            raw_payload["active"] = detail.get("active", True)
 
         return {
             "external_id": job_id,
@@ -180,5 +185,5 @@ class SmartRecruitersHarvester(BaseHarvester):
             "benefits": benefits,
             "posted_date_raw": p.get("releasedDate") or "",
             "closing_date": "",
-            "raw_payload": p,
+            "raw_payload": raw_payload,
         }

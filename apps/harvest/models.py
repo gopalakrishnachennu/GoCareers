@@ -701,9 +701,12 @@ class RawJob(models.Model):
 
     def is_expired_listing(self) -> bool:
         """
-        Best-effort: job is no longer open (closed date passed, explicit expiry, or delisted).
-        Used to label missing JD rows as expired instead of a generic 'No'.
+        Best-effort: job is no longer open (closed date passed, explicit expiry, delisted,
+        ATS says inactive, or posting is very stale with no JD text).
+
+        Keep in sync with ``raw_jobs_missing_jd_expired_count`` in ``harvest.views``.
         """
+        from django.conf import settings
         from django.utils import timezone
 
         now = timezone.now()
@@ -714,6 +717,16 @@ class RawJob(models.Model):
             return True
         if not self.is_active:
             return True
+
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        # SmartRecruiters (and similar) detail API: {"active": false}
+        if payload.get("active") is False:
+            return True
+
+        stale_days = max(30, int(getattr(settings, "HARVEST_JD_STALE_DAYS", 120)))
+        if self.posted_date and self.posted_date < today - timedelta(days=stale_days):
+            return True
+
         return False
 
     def jd_browser_label(self) -> str:
