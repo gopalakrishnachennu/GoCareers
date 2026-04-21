@@ -993,9 +993,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         tab_raw = None
 
         if tab == 'raw':
-            qs = RawJob.objects.select_related('company', 'platform').order_by('-created_at')
+            qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
             if q:
-                qs = qs.filter(Q(title__icontains=q) | Q(company__name__icontains=q))
+                qs = qs.filter(Q(title__icontains=q) | Q(company_name__icontains=q))
             tab_raw = qs[:200]
 
         elif tab == 'pool':
