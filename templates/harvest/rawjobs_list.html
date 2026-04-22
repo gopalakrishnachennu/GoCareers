@@ -1,38 +1,26 @@
 {% extends 'base.html' %}
 {% block content %}
 
-<!-- ══════════════════════════════════════════════════════════════════════════
-     HARVEST ENGINE — Raw Jobs  |  Modern Admin Dashboard UI
-═══════════════════════════════════════════════════════════════════════════ -->
-<div style="min-height:100vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+{% include 'jobs/_pipeline_subnav.html' %}
 
-  <!-- ── Hero / Header ──────────────────────────────────────────────────── -->
-  <div style="background:#0f172a;border-bottom:1px solid #1e293b;">
-    <div style="max-width:1600px;margin:0 auto;padding:0 24px;">
+<!-- Raw Jobs page header -->
+<div class="flex items-center justify-between mb-6 px-1">
+  <div>
+    <h1 class="text-2xl font-bold text-gray-900">Raw Jobs</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Harvested job listings — track sync status, browse by company, inspect batches.</p>
+  </div>
+  <div class="flex gap-2">
+    <a href="{% url 'harvest-rawjobs-batches' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Batch History</a>
+    <a href="{% url 'harvest-rawjobs-stats' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
+    <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
+      <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm">
+        Sync to Vet Queue
+      </button>
+    </form>
+  </div>
+</div>
 
-      <!-- Top bar -->
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 0 0;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#22c55e,#16a34a);display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">🌾</div>
-          <div>
-            <h1 style="color:#f8fafc;font-size:20px;font-weight:700;margin:0;letter-spacing:-0.3px;">Harvest Engine</h1>
-            <p style="color:#64748b;font-size:12px;margin:2px 0 0;">Job Board Platform Detection &amp; Career Portal Management</p>
-          </div>
-        </div>
-        <a href="{% url 'admin-dashboard' %}" style="color:#94a3b8;font-size:12px;text-decoration:none;display:flex;align-items:center;gap:4px;padding:6px 12px;border-radius:6px;border:1px solid #1e293b;transition:all .15s;" onmouseover="this.style.color='#f8fafc';this.style.borderColor='#334155';" onmouseout="this.style.color='#94a3b8';this.style.borderColor='#1e293b';">
-          ← Admin Dashboard
-        </a>
-      </div>
-
-      <!-- Tab nav -->
-      <div style="display:flex;gap:0;margin-top:20px;border-bottom:1px solid #1e293b;">
-        <a href="{% url 'harvest-platforms' %}" style="padding:10px 20px;font-size:13px;font-weight:500;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s;" onmouseover="this.style.color='#cbd5e1';" onmouseout="this.style.color='#64748b';">🗂 Platform Registry</a>
-        <a href="{% url 'harvest-schedule' %}" style="padding:10px 20px;font-size:13px;font-weight:500;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s;" onmouseover="this.style.color='#cbd5e1';" onmouseout="this.style.color='#64748b';">⏰ Schedule</a>
-        <a href="{% url 'harvest-monitor' %}" style="padding:10px 20px;font-size:13px;font-weight:500;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s;" onmouseover="this.style.color='#cbd5e1';" onmouseout="this.style.color='#64748b';">📊 Run Monitor</a>
-        <a href="{% url 'harvest-labels' %}" style="padding:10px 20px;font-size:13px;font-weight:500;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s;" onmouseover="this.style.color='#cbd5e1';" onmouseout="this.style.color='#64748b';">🏷 Company Labels</a>
-        <a href="{% url 'harvest-rawjobs' %}" style="padding:10px 20px;font-size:13px;font-weight:600;color:#38bdf8;text-decoration:none;border-bottom:2px solid #38bdf8;white-space:nowrap;">📋 Raw Jobs</a>
-        <a href="{% url 'harvest-jarvis' %}" style="padding:10px 20px;font-size:13px;font-weight:500;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;transition:color .15s;" onmouseover="this.style.color='#cbd5e1';" onmouseout="this.style.color='#64748b';">🤖 Jarvis</a>
-      </div>
+<div style="min-height:60vh;background:#f8fafc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
 
       <!-- Stat cards -->
       <div style="display:grid;grid-template-columns:repeat(9,1fr);gap:10px;padding:20px 0 24px;" id="stat-cards">
@@ -110,14 +98,11 @@
         </div>
 
       </div>
-      <p style="margin:0;padding:0 0 20px;color:#94a3b8;font-size:11px;line-height:1.5;max-width:960px;">
-        <strong style="color:#cbd5e1;">Pool sync:</strong>
+      <p style="margin:0;padding:0 0 20px;color:#64748b;font-size:11px;line-height:1.5;max-width:960px;">
+        <strong style="color:#374151;">Pool sync:</strong>
         Synced, Pending, and Failed track promotion into the internal job pool. When
-        <span style="color:#cbd5e1;">harvest.sync_harvested_to_pool</span> runs, any <strong style="color:#e2e8f0;">RawJob</strong> with the same URL hash as a processed harvested listing is updated to match. Rows that never go through that pipeline (typical bulk raw harvest) remain Pending until matched.
+        <span style="color:#374151;">harvest.sync_harvested_to_pool</span> runs, any <strong style="color:#111827;">RawJob</strong> with the same URL hash as a processed harvested listing is updated to match. Rows that never go through that pipeline remain Pending until matched.
       </p>
-    </div>
-  </div>
-  <!-- end hero -->
 
   <!-- ── Body ───────────────────────────────────────────────────────────── -->
   <div style="max-width:1600px;margin:0 auto;padding:24px 24px 64px;">

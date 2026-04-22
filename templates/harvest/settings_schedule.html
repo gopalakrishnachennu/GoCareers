@@ -1,28 +1,15 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="container mx-auto px-4 py-8 max-w-7xl">
+
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<div class="container mx-auto px-4 max-w-7xl">
 
   <!-- Header -->
-  <div class="flex items-start justify-between mb-6">
-    <div>
-      <div class="flex items-center gap-3 mb-1">
-        <span class="text-3xl">🌾</span>
-        <h1 class="text-2xl font-bold text-gray-900">Harvest Engine</h1>
-      </div>
-      <p class="text-sm text-gray-500 ml-10">Job Board Platform Detection &amp; Automated Job Harvesting Service</p>
-    </div>
-    <a href="{% url 'admin-dashboard' %}" class="text-sm text-blue-600 hover:text-blue-800 font-medium">&larr; Admin Dashboard</a>
-  </div>
-
-  <!-- Tab Nav -->
-  <div class="flex border-b border-gray-200 mb-6 overflow-x-auto">
-    <a href="{% url 'harvest-platforms' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">🗂️ Platform Registry</a>
-    <a href="{% url 'harvest-schedule' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-blue-600 text-blue-600">⏰ Schedule</a>
-    <a href="{% url 'harvest-monitor' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">📊 Run Monitor</a>
-    <a href="{% url 'harvest-labels' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">🏷️ Company Labels</a>
-    <a href="{% url 'harvest-rawjobs' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">📋 Raw Jobs</a>
-    <a href="{% url 'harvest-jarvis' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">🤖 Jarvis</a>
+  <div class="mb-6">
+    <h1 class="text-2xl font-bold text-gray-900">Schedule</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Automated Celery Beat tasks — trigger manually or let the schedule run them.</p>
   </div>
 
   {% if messages %}

@@ -47,33 +47,9 @@
 }
 </style>
 
+{% include 'jobs/_pipeline_subnav.html' %}
+
 <div style="min-height:100vh;background:#0b1120;">
-
-  <!-- ── Header ─────────────────────────────────────────────────────────── -->
-  <div style="background:#0f172a;border-bottom:1px solid #1e293b;">
-    <div style="max-width:1100px;margin:0 auto;padding:0 24px;">
-      <div style="display:flex;align-items:center;justify-content:space-between;padding:20px 0 0;">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div style="width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,#38bdf8,#6366f1);display:flex;align-items:center;justify-content:center;font-size:18px;">🤖</div>
-          <div>
-            <h1 style="color:#f8fafc;font-size:20px;font-weight:700;margin:0;">Harvest Engine</h1>
-            <p style="color:#64748b;font-size:12px;margin:2px 0 0;">Job Jarvis</p>
-          </div>
-        </div>
-        <a href="{% url 'harvest-rawjobs' %}" style="color:#94a3b8;font-size:12px;text-decoration:none;padding:6px 12px;border-radius:6px;border:1px solid #1e293b;">← Raw Jobs</a>
-      </div>
-
-      <!-- Tabs -->
-      <div style="display:flex;margin-top:20px;border-bottom:1px solid #1e293b;overflow-x:auto;">
-        <a href="{% url 'harvest-platforms' %}"    style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;">🗂 Platforms</a>
-        <a href="{% url 'harvest-schedule' %}"     style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;">⏰ Schedule</a>
-        <a href="{% url 'harvest-monitor' %}"      style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;">📊 Monitor</a>
-        <a href="{% url 'harvest-labels' %}"       style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;">🏷 Labels</a>
-        <a href="{% url 'harvest-rawjobs' %}"      style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;white-space:nowrap;">📋 Raw Jobs</a>
-        <a href="{% url 'harvest-jarvis' %}"       style="padding:10px 20px;font-size:13px;font-weight:700;color:#38bdf8;text-decoration:none;border-bottom:2px solid #38bdf8;white-space:nowrap;">🤖 Jarvis</a>
-      </div>
-    </div>
-  </div>
 
   <!-- ── Hero section ───────────────────────────────────────────────────── -->
   <div style="max-width:700px;margin:0 auto;padding:56px 24px 40px;">

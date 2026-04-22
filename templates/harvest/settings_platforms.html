@@ -1,28 +1,21 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="container mx-auto px-4 py-8 max-w-7xl">
+
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<div class="container mx-auto px-4 max-w-7xl">
 
   <!-- Header -->
   <div class="flex items-start justify-between mb-6">
     <div>
-      <div class="flex items-center gap-3 mb-1">
-        <span class="text-3xl">🌾</span>
-        <h1 class="text-2xl font-bold text-gray-900">Harvest Engine</h1>
-      </div>
-      <p class="text-sm text-gray-500 ml-10">Job Board Platform Detection &amp; Automated Job Harvesting Service</p>
+      <h1 class="text-2xl font-bold text-gray-900">Platform Registry</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Configure ATS platforms — the detection engine matches company career URLs against these patterns.</p>
     </div>
-    <a href="{% url 'admin-dashboard' %}" class="text-sm text-blue-600 hover:text-blue-800 font-medium">&larr; Admin Dashboard</a>
-  </div>
-
-  <!-- Tab Nav -->
-  <div class="flex border-b border-gray-200 mb-6 overflow-x-auto">
-    <a href="{% url 'harvest-platforms' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-blue-600 text-blue-600">🗂️ Platform Registry</a>
-    <a href="{% url 'harvest-schedule' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">⏰ Schedule</a>
-    <a href="{% url 'harvest-monitor' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">📊 Run Monitor</a>
-    <a href="{% url 'harvest-labels' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">🏷️ Company Labels</a>
-    <a href="{% url 'harvest-rawjobs' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">📋 Raw Jobs</a>
-    <a href="{% url 'harvest-jarvis' %}" class="px-5 py-3 text-sm font-medium whitespace-nowrap border-b-2 border-transparent text-gray-500 hover:text-gray-900 hover:border-gray-300">🤖 Jarvis</a>
+    <a href="{% url 'harvest-platform-create' %}" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 inline-flex items-center gap-2 shadow-sm">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+      Add Platform
+    </a>
   </div>
 
   <!-- Stats Row -->
@@ -43,15 +36,6 @@
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Company Labels</p>
       <a href="{% url 'harvest-labels' %}" class="text-sm font-semibold text-blue-600 hover:underline">View All →</a>
     </div>
-  </div>
-
-  <!-- Action Bar -->
-  <div class="flex items-center justify-between mb-5">
-    <p class="text-sm text-gray-500">Configure known ATS platforms. The detection engine matches company career URLs against these patterns.</p>
-    <a href="{% url 'harvest-platform-create' %}" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 inline-flex items-center gap-2 shadow-sm">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
-      Add Platform
-    </a>
   </div>
 
   <!-- Messages -->

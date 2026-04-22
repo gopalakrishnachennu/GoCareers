@@ -1,42 +1,42 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="container mx-auto px-4 py-8">
+
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<div class="container mx-auto px-4">
     <div class="flex items-center justify-between mb-6">
         <div>
             <h1 class="text-2xl font-bold text-gray-900">Companies</h1>
-            <p class="text-sm text-gray-600">Client organisations aggregated from all jobs and submissions.</p>
+            <p class="text-sm text-gray-500 mt-0.5">Client organisations aggregated from all jobs and submissions.</p>
         </div>
-        <div class="flex items-center gap-3 flex-wrap justify-end">
+        <div class="flex items-center gap-2 flex-wrap justify-end">
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
             <a href="{% url 'company-duplicate-review' %}"
-                class="px-4 py-2 rounded-lg border border-amber-200 bg-amber-50 text-sm font-medium text-amber-800 hover:bg-amber-100">
-                Possible duplicates
+                class="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-sm font-medium text-amber-800 hover:bg-amber-100 transition">
+                Duplicates
             </a>
             <a href="{% url 'company-import-csv' %}"
-                class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
                 Import CSV
             </a>
             <a href="{% url 'company-import-domains' %}"
-                class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
                 Import domains
             </a>
             <a href="{% url 'company-import-linkedin' %}"
-                class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
                 Import LinkedIn
             </a>
             <a href="{% url 'company-export-csv' %}?{{ pagination_query }}"
-                class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
                 Export CSV
             </a>
             <a href="{% url 'company-create' %}"
-                class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+                class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 shadow-sm transition">
                 + Add Company
             </a>
             {% endif %}
-            <a href="{% url 'admin-dashboard' %}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">
-                &larr; Back to Admin Dashboard
-            </a>
         </div>
     </div>
 
