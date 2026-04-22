@@ -894,13 +894,55 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
     template_name = "harvest/jarvis.html"
 
     def get_context_data(self, **kwargs):
+        from django.utils import timezone
+        from django.db.models import Count
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "jarvis"
-        ctx["recent_jarvis"] = (
-            RawJob.objects.filter(platform_slug="jarvis")
-            .select_related("company")
-            .order_by("-fetched_at")[:10]
+
+        jarvis_qs = RawJob.objects.filter(platform_slug="jarvis")
+        today = timezone.now().date()
+
+        # Core metrics
+        ctx["jarvis_total"]   = jarvis_qs.count()
+        ctx["jarvis_today"]   = jarvis_qs.filter(fetched_at__date=today).count()
+        ctx["jarvis_synced"]  = jarvis_qs.filter(sync_status="SYNCED").count()
+        ctx["jarvis_pending"] = jarvis_qs.filter(sync_status="PENDING").count()
+        ctx["jarvis_failed"]  = jarvis_qs.filter(sync_status="FAILED").count()
+        ctx["jarvis_skipped"] = jarvis_qs.filter(sync_status="SKIPPED").count()
+        total = ctx["jarvis_total"] or 1
+        ctx["jarvis_success_rate"] = round(ctx["jarvis_synced"] / total * 100)
+
+        # This week
+        week_start = today - timezone.timedelta(days=today.weekday())
+        ctx["jarvis_this_week"] = jarvis_qs.filter(fetched_at__date__gte=week_start).count()
+
+        # Platform breakdown from detected_ats stored in raw_payload
+        # Fall back to grouping by job_platform name for those with a matched platform
+        recent_all = (
+            jarvis_qs
+            .select_related("company", "job_platform")
+            .order_by("-fetched_at")[:200]
         )
+        platform_counts: dict[str, int] = {}
+        for rj in recent_all:
+            detected = (
+                (rj.raw_payload or {}).get("jarvis_detected_ats")
+                or (rj.job_platform.name if rj.job_platform else None)
+                or "Unknown"
+            )
+            key = detected.strip().title() if detected else "Unknown"
+            platform_counts[key] = platform_counts.get(key, 0) + 1
+        ctx["jarvis_platform_breakdown"] = sorted(
+            platform_counts.items(), key=lambda x: x[1], reverse=True
+        )[:6]
+
+        # Recent imports (more items for the new sidebar)
+        ctx["recent_jarvis"] = list(
+            jarvis_qs
+            .select_related("company", "job_platform")
+            .order_by("-fetched_at")[:15]
+        )
+
         ctx["platforms_supported"] = [
             "Greenhouse", "Lever", "Ashby", "Workday", "Workable",
             "LinkedIn", "Indeed", "SmartRecruiters", "BambooHR", "Any career page",
