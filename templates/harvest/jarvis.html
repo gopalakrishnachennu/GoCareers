@@ -99,12 +99,10 @@
     </div>
   </div>
 
-  {# ── Two-column layout ────────────────────────────────────────────────────── #}
+  <!-- Two-column layout: left = analysis panel, right = metrics sidebar -->
   <div style="display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start;">
 
-    {# ════════════════════════════════════════════════════════════
-       LEFT: Main analysis panel
-    ════════════════════════════════════════════════════════════ #}
+    <!-- LEFT: Main analysis panel -->
     <div>
 
       {# URL input card #}
@@ -257,11 +255,9 @@
         </div>
       </div>
 
-    </div>{# end left column #}
+    </div><!-- end left column -->
 
-    {# ════════════════════════════════════════════════════════════
-       RIGHT: Metrics sidebar
-    ════════════════════════════════════════════════════════════ #}
+    <!-- RIGHT: Metrics sidebar -->
     <div style="display:flex;flex-direction:column;gap:16px;position:sticky;top:24px;">
 
       {# Stat grid 2×3 #}
@@ -362,10 +358,10 @@
         </div>
       </div>
 
-    </div>{# end right sidebar #}
+    </div><!-- end right sidebar -->
 
-  </div>{# end two-column #}
-</div></div>{# end outer shell #}
+  </div><!-- end two-column grid -->
+</div></div><!-- end outer shell -->
 
 <script>
 (function () {
