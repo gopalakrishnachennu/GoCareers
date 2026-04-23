@@ -179,36 +179,36 @@
             <span class="badge-green text-[10px]">Always on</span>
           </div>
 
-          <div class="flex justify-center text-gray-300 text-base leading-none">↓ same task</div>
+          <div class="flex justify-center text-gray-300 text-base leading-none">↓ same task · ~1ms/job</div>
 
-          <!-- Step 2: JD backfill inline -->
-          <label class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer
-                        {% if cfg.auto_backfill_jd %}bg-blue-50 border border-blue-200{% else %}bg-gray-50 border border-gray-200 opacity-60{% endif %}">
-            <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0
-                         {% if cfg.auto_backfill_jd %}bg-blue-600 text-white{% else %}bg-gray-300 text-gray-500{% endif %}">2</span>
-            <div class="flex-1 min-w-0">
-              <p class="text-xs font-semibold text-gray-800">Fetch JDs <span class="font-normal text-gray-400">(inline)</span></p>
-              <p class="text-[11px] text-gray-500">Fetches full job description for new jobs that don't have one yet</p>
-            </div>
-            <input type="checkbox" name="auto_backfill_jd" value="1"
-                   {% if cfg.auto_backfill_jd %}checked{% endif %}
-                   class="w-4 h-4 rounded text-blue-600 border-gray-300 shrink-0">
-          </label>
-
-          <div class="flex justify-center text-gray-300 text-base leading-none">↓ same task</div>
-
-          <!-- Step 3: enrich inline -->
+          <!-- Step 2: enrich inline -->
           <label class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer
                         {% if cfg.auto_enrich %}bg-purple-50 border border-purple-200{% else %}bg-gray-50 border border-gray-200 opacity-60{% endif %}">
             <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0
-                         {% if cfg.auto_enrich %}bg-purple-600 text-white{% else %}bg-gray-300 text-gray-500{% endif %}">3</span>
+                         {% if cfg.auto_enrich %}bg-purple-600 text-white{% else %}bg-gray-300 text-gray-500{% endif %}">2</span>
             <div class="flex-1 min-w-0">
-              <p class="text-xs font-semibold text-gray-800">Enrich <span class="font-normal text-gray-400">(inline)</span></p>
-              <p class="text-[11px] text-gray-500">Extracts skills, category, exp. level — pure CPU, ~1ms/job</p>
+              <p class="text-xs font-semibold text-gray-800">Enrich <span class="font-normal text-gray-400">(inline · zero HTTP)</span></p>
+              <p class="text-[11px] text-gray-500">Skills, category, exp level, visa, salary — pure Python, no network calls</p>
             </div>
             <input type="checkbox" name="auto_enrich" value="1"
                    {% if cfg.auto_enrich %}checked{% endif %}
                    class="w-4 h-4 rounded text-purple-600 border-gray-300 shrink-0">
+          </label>
+
+          <div class="flex justify-center text-gray-300 text-base leading-none">↓ 15s later · 1 worker</div>
+
+          <!-- Step 3: JD backfill background -->
+          <label class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer
+                        {% if cfg.auto_backfill_jd %}bg-blue-50 border border-blue-200{% else %}bg-gray-50 border border-gray-200 opacity-60{% endif %}">
+            <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0
+                         {% if cfg.auto_backfill_jd %}bg-blue-600 text-white{% else %}bg-gray-300 text-gray-500{% endif %}">3</span>
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-gray-800">Fetch JDs <span class="font-normal text-gray-400">(background · 1 worker)</span></p>
+              <p class="text-[11px] text-gray-500">Fetches missing descriptions via Jarvis — rate-limited, never spikes CPU</p>
+            </div>
+            <input type="checkbox" name="auto_backfill_jd" value="1"
+                   {% if cfg.auto_backfill_jd %}checked{% endif %}
+                   class="w-4 h-4 rounded text-blue-600 border-gray-300 shrink-0">
           </label>
 
           <div class="flex justify-center text-gray-300 text-base leading-none">↓ 60s after batch</div>
@@ -219,8 +219,8 @@
             <span class="w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0
                          {% if cfg.auto_sync_to_pool %}bg-green-600 text-white{% else %}bg-gray-300 text-gray-500{% endif %}">4</span>
             <div class="flex-1 min-w-0">
-              <p class="text-xs font-semibold text-gray-800">Sync to Vet Queue <span class="font-normal text-gray-400">(background)</span></p>
-              <p class="text-[11px] text-gray-500">Promotes fully-enriched jobs to the pool — runs once after batch finishes</p>
+              <p class="text-xs font-semibold text-gray-800">Sync to Vet Queue <span class="font-normal text-gray-400">(background · once)</span></p>
+              <p class="text-[11px] text-gray-500">Promotes enriched jobs to the pool — runs once after the whole batch finishes</p>
             </div>
             <input type="checkbox" name="auto_sync_to_pool" value="1"
                    {% if cfg.auto_sync_to_pool %}checked{% endif %}
@@ -229,8 +229,9 @@
         </div>
 
         <p class="text-[11px] text-gray-400 italic">
-          Steps 2 + 3 run <strong>inside the same company task</strong> — no separate tasks, no delays.
-          Already-synced jobs are never duplicated. Jobs that already have descriptions skip step 2 automatically.
+          Step 2 runs <strong>inside the company task</strong> (pure Python, no HTTP — safe for parallel workers).
+          Steps 3 + 4 are lightweight background tasks — they don't compete with the app server.
+          Already-synced jobs are never duplicated.
         </p>
       </div>
 

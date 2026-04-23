@@ -902,24 +902,16 @@ def fetch_raw_jobs_for_company_task(
         label_pk, jobs_new, jobs_updated, jobs_failed,
     )
 
-    # ── Inline pipeline: JD fetch + enrich in the SAME task ──────────────────
+    # ── Inline pipeline: enrich only (safe — pure Python, zero HTTP) ────────────
     #
-    # We do everything right here, in one pass, instead of queuing separate tasks.
+    # Enrich runs inline because it's pure Python regex/keyword extraction — ~1 ms/job,
+    # no HTTP, no Playwright, no CPU spikes.
     #
-    #  • JD backfill  — for each new job with no description, fetch it NOW via Jarvis.
-    #                   Jobs that already have a description (Greenhouse, Lever, Ashby…)
-    #                   are skipped instantly (zero HTTP calls), so it's always safe.
-    #                   Uses jd_backfill_locked_at so the standalone backfill task never
-    #                   double-processes the same row.
+    # JD backfill (Jarvis/Playwright/HTTP) does NOT run inline — it would spike CPU and
+    # cause 502s on the app server.  It fires as a separate background task below,
+    # scoped to THIS platform so it's focused and doesn't scan the whole DB.
     #
-    #  • Enrich       — pure Python, no HTTP. Runs on ALL new jobs after JD fetch.
-    #                   ~1 ms per job. Fills skills, category, exp level, visa, etc.
-    #
-    # When to use the standalone backfill/enrich tasks (the buttons in the GUI):
-    #   - To re-process OLD jobs that existed before this pipeline was deployed.
-    #   - When a run's soft time limit fires mid-fetch and some jobs were left unprocessed.
-    #
-    # All steps gated by HarvestEngineConfig flags so any step can be disabled from GUI.
+    # Gated by HarvestEngineConfig flags so either step can be disabled from the GUI.
     if new_raw_job_pks:
         try:
             from .models import HarvestEngineConfig as _EngCfg, RawJob
@@ -927,58 +919,14 @@ def fetch_raw_jobs_for_company_task(
 
             _pipe_cfg = _EngCfg.get()
 
-            # Re-load the jobs we just created (we need the full objects for JD + enrich)
+            # Re-load only the jobs we just created
             new_jobs = list(
                 RawJob.objects.filter(pk__in=new_raw_job_pks).select_related("company")
             )
 
-            jd_fetched = jd_skipped = jd_failed = enriched = 0
-
-            # ── Inline JD fetch ──────────────────────────────────────────────
-            if _pipe_cfg.auto_backfill_jd:
-                from .jarvis import JobJarvis
-                jarvis = JobJarvis()
-
-                # Only jobs with no real description need a JD fetch
-                needs_jd = [j for j in new_jobs if not (j.description or "").strip()]
-
-                for job in needs_jd:
-                    try:
-                        # Claim the lock so the standalone backfill task skips this row
-                        locked = RawJob.objects.filter(
-                            pk=job.pk, jd_backfill_locked_at__isnull=True
-                        ).update(jd_backfill_locked_at=timezone.now())
-                        if not locked:
-                            jd_skipped += 1
-                            continue  # another worker already claimed it
-
-                        job.refresh_from_db()
-                        outcome, _ = _backfill_process_one_job(job, jarvis)
-                        if outcome == "updated":
-                            jd_fetched += 1
-                            job.refresh_from_db(fields=["description", "requirements", "benefits"])
-                        else:
-                            jd_skipped += 1
-                    except SoftTimeLimitExceeded:
-                        # Task is almost out of time — unlock remaining rows and bail out.
-                        # The standalone backfill task will pick them up later.
-                        remaining_pks = [j.pk for j in needs_jd if j.pk > job.pk]
-                        if remaining_pks:
-                            RawJob.objects.filter(pk__in=remaining_pks).update(
-                                jd_backfill_locked_at=None
-                            )
-                        logger.warning(
-                            "Inline JD fetch soft time limit at label %s — %d jobs left for backfill",
-                            label_pk, len(remaining_pks),
-                        )
-                        break
-                    except Exception as jd_exc:
-                        logger.warning("Inline JD fetch failed for job %s: %s", job.pk, jd_exc)
-                        RawJob.objects.filter(pk=job.pk).update(jd_backfill_locked_at=None)
-                        jd_failed += 1
-
             # ── Inline enrich (pure Python, ~1 ms/job, no HTTP) ─────────────
-            if _pipe_cfg.auto_enrich:
+            enriched = 0
+            if _pipe_cfg.auto_enrich and new_jobs:
                 ENRICH_FIELDS = [
                     "skills", "tech_stack", "job_category",
                     "years_required", "years_required_max", "education_required",
@@ -990,13 +938,7 @@ def fetch_raw_jobs_for_company_task(
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:
                     if job.skills or job.job_category:
-                        continue  # already enriched (e.g. updated row, not newly created)
-                    # Refresh description if it was just fetched inline above
-                    if not (job.description or "").strip():
-                        try:
-                            job.refresh_from_db(fields=["description", "requirements"])
-                        except Exception:
-                            pass
+                        continue  # already enriched
                     enriched_data = extract_enrichments({
                         "title":        job.title or "",
                         "description":  job.description or "",
@@ -1007,14 +949,35 @@ def fetch_raw_jobs_for_company_task(
                             setattr(job, f, enriched_data[f])
                     bulk_enrich.append(job)
                     enriched += 1
-
                 if bulk_enrich:
                     RawJob.objects.bulk_update(bulk_enrich, ENRICH_FIELDS)
 
             logger.info(
-                "Inline pipeline done: label=%s jd_fetched=%d jd_skipped=%d jd_failed=%d enriched=%d",
-                label_pk, jd_fetched, jd_skipped, jd_failed, enriched,
+                "Inline enrich done: label=%s new_jobs=%d enriched=%d",
+                label_pk, len(new_jobs), enriched,
             )
+
+            # ── Background JD backfill — scoped to this platform, fires once ─
+            # This queues a SINGLE background task for the platform just harvested.
+            # The backfill task controls its own parallelism and rate limits so it
+            # never spikes CPU.  Only queued if there are new jobs without descriptions.
+            platform_s = (label.platform.slug if label and label.platform else "") or ""
+            if _pipe_cfg.auto_backfill_jd:
+                needs_jd_count = sum(1 for j in new_jobs if not (j.description or "").strip())
+                if needs_jd_count > 0:
+                    backfill_descriptions_task.apply_async(
+                        kwargs={
+                            "batch_size": min(needs_jd_count + 10, 100),  # focused batch
+                            "parallel_workers": 1,  # ONE worker — never spike CPU
+                            "platform_slug": platform_s or None,
+                        },
+                        countdown=15,  # 15 s after harvest — DB writes settle first
+                        queue="harvest",  # dedicated queue, doesn't compete with app
+                    )
+                    logger.info(
+                        "JD backfill queued for %d new %s jobs (bg task, 1 worker)",
+                        needs_jd_count, platform_s or "all",
+                    )
 
         except SoftTimeLimitExceeded:
             logger.warning("Inline pipeline aborted at soft time limit for label %s", label_pk)
