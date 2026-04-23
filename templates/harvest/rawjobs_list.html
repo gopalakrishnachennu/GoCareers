@@ -294,92 +294,145 @@
             {% endif %}
           </div>
 
-          <!-- Start New Batch -->
+          <!-- ════════════════════════════════════════════════════════
+               Smart Fetch Engine
+          ══════════════════════════════════════════════════════════ -->
           <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
-            <h2 style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 12px;">Start New Batch</h2>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+              <h2 style="font-size:13px;font-weight:700;color:#1e293b;margin:0;">Smart Fetch Engine</h2>
+              <span style="font-size:10px;color:#94a3b8;">Auto-pipeline: Fetch → Enrich → Sync</span>
+            </div>
+            <p style="font-size:11px;color:#64748b;margin:0 0 12px;line-height:1.5;">
+              Each fetch auto-runs: inline enrich → background JD fill → pool sync. No manual steps needed.
+            </p>
+
+            <!-- ── ⚡ QUICK SYNC (incremental, ~5-15 min) ─────────────────── -->
+            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="quick-sync-form" style="margin-bottom:8px;">
+              {% csrf_token %}
+              <input type="hidden" name="fetch_mode" value="quick">
+              <button type="button" onclick="confirmQuickSync()"
+                style="width:100%;padding:13px;background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:.2px;box-shadow:0 4px 14px rgba(2,132,199,.35);display:flex;align-items:center;justify-content:center;gap:10px;transition:all .2s;"
+                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(2,132,199,.45)';"
+                onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(2,132,199,.35)';">
+                <span style="font-size:18px;">⚡</span>
+                <div style="text-align:left;">
+                  <div>Quick Sync — New Jobs (25h)</div>
+                  <div style="font-size:10px;font-weight:500;opacity:.85;">Fast · ~5-15 min · incremental only</div>
+                </div>
+              </button>
+            </form>
+
+            <!-- ── 🌕 FULL CRAWL (all pages, 2hr cooldown) ─────────────────── -->
+            <div style="margin-bottom:10px;" id="full-crawl-wrapper">
+              <!-- Cooldown banner — shown when on cooldown -->
+              <div id="cooldown-banner" style="display:{% if cooldown_remaining_sec > 0 %}flex{% else %}none{% endif %};align-items:center;gap:10px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 14px;margin-bottom:0;">
+                <span style="font-size:18px;">⏱</span>
+                <div style="flex:1;">
+                  <div style="font-size:12px;font-weight:700;color:#92400e;">Full Crawl on Cooldown</div>
+                  <div style="font-size:11px;color:#b45309;">Next available in <strong id="cooldown-countdown">{{ cooldown_remaining_sec|default:0 }}s</strong>
+                    {% if last_full_batch %} · Last: {{ last_full_batch.name|truncatechars:30 }}{% endif %}
+                  </div>
+                </div>
+                <div style="font-size:10px;color:#d97706;background:#fef3c7;border-radius:6px;padding:4px 8px;white-space:nowrap;">Use Quick Sync ↑</div>
+              </div>
+              <!-- Full crawl button — hidden when on cooldown -->
+              <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="full-crawl-form" style="{% if cooldown_remaining_sec > 0 %}display:none;{% endif %}">
+                {% csrf_token %}
+                <input type="hidden" name="fetch_mode" value="full">
+                <button type="button" onclick="confirmFullCrawl()"
+                  style="width:100%;padding:13px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;border-radius:10px;font-size:14px;font-weight:800;cursor:pointer;letter-spacing:.2px;box-shadow:0 4px 14px rgba(220,38,38,.35);display:flex;align-items:center;justify-content:center;gap:10px;transition:all .2s;"
+                  onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(220,38,38,.45)';"
+                  onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(220,38,38,.35)';">
+                  <span style="font-size:18px;">🌕</span>
+                  <div style="text-align:left;">
+                    <div>Full Crawl — Every Platform, Every Company</div>
+                    <div style="font-size:10px;font-weight:500;opacity:.85;">Slow · 30-90 min · all pages · 2hr cooldown after</div>
+                  </div>
+                </button>
+              </form>
+            </div>
+
+            <!-- ── 💾 BULK SYNC TO POOL ─────────────────────────────────── -->
+            <form method="POST" action="{% url 'harvest-run-bulk-sync' %}" id="bulk-sync-form" style="margin-bottom:10px;">
+              {% csrf_token %}
+              <button type="button" onclick="confirmBulkSync()"
+                style="width:100%;padding:11px;background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.2px;box-shadow:0 3px 10px rgba(5,150,105,.30);display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;"
+                onmouseover="this.style.transform='translateY(-1px)';" onmouseout="this.style.transform='';">
+                <span style="font-size:16px;">💾</span>
+                <div style="text-align:left;">
+                  <div>Bulk Sync — {{ pending_jobs|default:0 }} Pending → Pool</div>
+                  <div style="font-size:10px;font-weight:500;opacity:.85;">Promotes up to 20,000 pending jobs (needs JD ≥50 chars)</div>
+                </div>
+              </button>
+            </form>
+
+            <!-- ── Divider ─────────────────────────────────────────────── -->
+            <div style="position:relative;margin:12px 0;">
+              <div style="border-top:1px solid #e2e8f0;"></div>
+              <span style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#fff;padding:0 10px;font-size:10px;color:#94a3b8;font-weight:500;">diagnostic tools</span>
+            </div>
 
             <!-- ██ TEST FETCH BUTTON ██ -->
-            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="test-fetch-form" style="margin-bottom:8px;">
+            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="test-fetch-form" style="margin-bottom:6px;">
               {% csrf_token %}
+              <input type="hidden" name="fetch_mode" value="test">
               <input type="hidden" name="test_mode" value="1">
               <input type="hidden" name="test_max_jobs" value="10">
               <input type="hidden" name="companies_per_platform" value="1">
               <button type="button" onclick="confirmTestFetch()"
-                style="width:100%;padding:11px;background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.3px;box-shadow:0 3px 10px rgba(8,145,178,.30);display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;"
-                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 5px 16px rgba(8,145,178,.40)';"
-                onmouseout="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(8,145,178,.30)';">
-                <span style="font-size:16px;">🧪</span>
-                <span>QUICK TEST — 1 Company, 10 Jobs / Platform</span>
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#0891b2,#0e7490);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🧪</span><span>Quick Test — 1 Co, 10 Jobs / Platform</span>
               </button>
             </form>
 
-            <!-- ██ PLATFORM CHECK BUTTON — 3 companies, skip GH+Lever ██ -->
-            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="platform-check-form" style="margin-bottom:10px;">
+            <!-- ██ PLATFORM CHECK BUTTON ██ -->
+            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="platform-check-form" style="margin-bottom:6px;">
               {% csrf_token %}
+              <input type="hidden" name="fetch_mode" value="test">
               <input type="hidden" name="test_mode" value="1">
               <input type="hidden" name="test_max_jobs" value="25">
               <input type="hidden" name="companies_per_platform" value="3">
               <input type="hidden" name="skip_platforms" value="greenhouse,lever">
               <button type="button" onclick="confirmPlatformCheck()"
-                style="width:100%;padding:11px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.3px;box-shadow:0 3px 10px rgba(124,58,237,.30);display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;"
-                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 5px 16px rgba(124,58,237,.40)';"
-                onmouseout="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(124,58,237,.30)';">
-                <span style="font-size:16px;">🔬</span>
-                <span>PLATFORM CHECK — 3 Companies, 25 Jobs / Platform</span>
-              </button>
-            </form>
-
-            <!-- ██ BIG RED FETCH ALL BUTTON ██ -->
-            <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="fetch-all-form" style="margin-bottom:14px;">
-              {% csrf_token %}
-              <input type="hidden" name="platform_slug" value="">
-              <input type="hidden" name="batch_name" value="FETCH ALL — {{ "now"|date:"Y-m-d H:i" }}">
-              <button type="button" onclick="confirmFetchAll()"
-                style="width:100%;padding:14px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;letter-spacing:.3px;box-shadow:0 4px 14px rgba(220,38,38,.35);display:flex;align-items:center;justify-content:center;gap:10px;transition:all .2s;"
-                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 6px 20px rgba(220,38,38,.45)';"
-                onmouseout="this.style.transform='';this.style.boxShadow='0 4px 14px rgba(220,38,38,.35)';">
-                <span style="font-size:20px;">⚡</span>
-                <span>FETCH ALL JOBS — Every Platform, Every Company</span>
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🔬</span><span>Platform Check — 3 Cos, 25 Jobs / Platform</span>
               </button>
             </form>
 
             <!-- ██ ENRICH EXISTING JOBS BUTTON ██ -->
-            <form method="POST" action="{% url 'harvest-run-enrich-existing' %}" id="enrich-existing-form" style="margin-bottom:8px;">
+            <form method="POST" action="{% url 'harvest-run-enrich-existing' %}" id="enrich-existing-form" style="margin-bottom:6px;">
               {% csrf_token %}
               <input type="hidden" name="batch_size" value="2000">
               <input type="hidden" name="only_unenriched" value="1">
               <button type="button" onclick="confirmEnrichExisting()"
-                style="width:100%;padding:11px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.3px;box-shadow:0 3px 10px rgba(124,58,237,.30);display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;"
-                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 5px 16px rgba(124,58,237,.40)';"
-                onmouseout="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(124,58,237,.30)';">
-                <span style="font-size:16px;">🧠</span>
-                <span>ENRICH EXISTING — Skills, Visa, Salary, Category…</span>
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🧠</span><span>Enrich Existing — Skills, Visa, Salary…</span>
               </button>
             </form>
 
             <!-- ██ BACKFILL DESCRIPTIONS BUTTON ██ -->
-            <form method="POST" action="{% url 'harvest-run-backfill-descriptions' %}" id="backfill-desc-form" style="margin-bottom:10px;">
+            <form method="POST" action="{% url 'harvest-run-backfill-descriptions' %}" id="backfill-desc-form" style="margin-bottom:6px;">
               {% csrf_token %}
               <input type="hidden" name="batch_size" value="200">
-              <input type="hidden" name="parallel_workers" value="4">
+              <input type="hidden" name="parallel_workers" value="1">
               <button type="button" onclick="confirmBackfillDesc()"
-                style="width:100%;padding:11px;background:linear-gradient(135deg,#0d9488,#0f766e);color:#fff;border:none;border-radius:10px;font-size:13px;font-weight:700;cursor:pointer;letter-spacing:.3px;box-shadow:0 3px 10px rgba(13,148,136,.30);display:flex;align-items:center;justify-content:center;gap:8px;transition:all .2s;"
-                onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 5px 16px rgba(13,148,136,.40)';"
-                onmouseout="this.style.transform='';this.style.boxShadow='0 3px 10px rgba(13,148,136,.30)';">
-                <span style="font-size:16px;">📝</span>
-                <span>BACKFILL JOB DESCRIPTIONS — Fetch JDs for jobs missing them</span>
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#0d9488,#0f766e);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>📝</span><span>Backfill JDs — Fetch Missing Descriptions</span>
               </button>
             </form>
 
-            <div style="position:relative;margin-bottom:14px;">
+            <div style="position:relative;margin:12px 0;">
               <div style="border-top:1px solid #e2e8f0;"></div>
-              <span style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#fff;padding:0 10px;font-size:11px;color:#94a3b8;font-weight:500;">or filter by platform</span>
+              <span style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#fff;padding:0 10px;font-size:10px;color:#94a3b8;font-weight:500;">or filter by platform</span>
             </div>
 
             <form method="POST" action="{% url 'harvest-run-fetch-batch' %}" id="batch-form">
               {% csrf_token %}
-              <div style="margin-bottom:10px;">
-                <label style="display:block;font-size:11px;font-weight:600;color:#64748b;margin-bottom:4px;">Platform Filter (optional)</label>
+              <div style="margin-bottom:8px;">
                 <select name="platform_slug" style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;color:#374151;">
                   <option value="">All platforms (live portals)</option>
                   {% for p in platforms %}
@@ -387,13 +440,10 @@
                   {% endfor %}
                 </select>
               </div>
-              <div style="margin-bottom:12px;">
-                <label style="display:block;font-size:11px;font-weight:600;color:#64748b;margin-bottom:4px;">Batch Name (optional)</label>
-                <input type="text" name="batch_name" placeholder="Auto-generated if empty" style="width:100%;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;color:#374151;box-sizing:border-box;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+                <button type="submit" name="fetch_mode" value="quick" style="padding:8px;background:#0284c7;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">⚡ Quick Sync</button>
+                <button type="submit" name="fetch_mode" value="full" style="padding:8px;background:#dc2626;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">🌕 Full Crawl</button>
               </div>
-              <button type="submit" style="width:100%;padding:9px;background:#0f172a;color:#f8fafc;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;" onmouseover="this.style.background='#1e293b';" onmouseout="this.style.background='#0f172a';">
-                🚀 Start Filtered Batch
-              </button>
             </form>
           </div>
 
@@ -508,6 +558,7 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Level</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Salary</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Posted</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Fetched</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">JD</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Sync</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Action</th>
@@ -550,7 +601,8 @@
                   {% elif job.salary_raw %}{{ job.salary_raw|truncatechars:16 }}
                   {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
-                <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">{{ job.posted_date|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;font-size:11px;">{{ job.posted_date|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;font-size:11px;" title="{{ job.fetched_at|date:'Y-m-d H:i:s' }}">{{ job.fetched_at|date:"M d, H:i" }}</td>
                 <td style="padding:9px 14px;text-align:center;">
                   {% if job.jd_browser_label == 'yes' %}
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;">✓ Yes</span>
@@ -575,7 +627,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="11" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="12" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -856,6 +908,38 @@ function setText(id, val) {
 // Start polling if a batch is running on page load
 {% if has_running_batch %}startPolling();{% endif %}
 
+// ─── Full Crawl cooldown countdown ────────────────────────────────────────────
+(function() {
+  let remaining = parseInt('{{ cooldown_remaining_sec|default:0 }}', 10) || 0;
+  const banner   = document.getElementById('cooldown-banner');
+  const fullForm = document.getElementById('full-crawl-form');
+  const countEl  = document.getElementById('cooldown-countdown');
+  if (!banner || !fullForm || !countEl) return;
+
+  function fmtTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  function tick() {
+    if (remaining <= 0) {
+      banner.style.display = 'none';
+      fullForm.style.display = '';
+      return;
+    }
+    countEl.textContent = fmtTime(remaining);
+    remaining--;
+    setTimeout(tick, 1000);
+  }
+
+  if (remaining > 0) {
+    banner.style.display = 'flex';
+    fullForm.style.display = 'none';
+    tick();
+  }
+})();
+
 // ─── Utilities ─────────────────────────────────────────────────────────────
 function getCsrfToken() {
   const el = document.querySelector('[name=csrfmiddlewaretoken]');
@@ -965,26 +1049,102 @@ function confirmStopBatch() {
   modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
 }
 
-// ─── Fetch ALL confirmation ────────────────────────────────────────────────
-function confirmFetchAll() {
+// ─── Quick Sync confirmation ───────────────────────────────────────────────
+function confirmQuickSync() {
   const modal = document.createElement('div');
   modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
   modal.innerHTML = `
-    <div style="background:#fff;border-radius:16px;padding:32px;max-width:420px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
+    <div style="background:#fff;border-radius:16px;padding:32px;max-width:440px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
       <div style="font-size:48px;margin-bottom:12px;">⚡</div>
-      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Fetch ALL Jobs?</h2>
-      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 24px;">
-        This will queue a background fetch for <strong>every live portal</strong> across all platforms and companies.<br><br>
-        Jobs will stream in as Celery workers process each company. You can monitor progress live on this page.
+      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Quick Sync — New Jobs (25h)</h2>
+      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 14px;">
+        Fetches only <strong>new/updated jobs from the last 25 hours</strong> from every live platform.<br><br>
+        Fast (5–15 min), lightweight, no cooldown. Use this for daily refreshes.
       </p>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;margin:0 0 20px;text-align:left;">
+        <p style="margin:0;font-size:12px;color:#1e40af;line-height:1.6;">
+          ✅ Auto-enriches new jobs inline (skills, visa, salary…)<br>
+          ✅ Auto-backfills JDs in background if needed<br>
+          ✅ Auto-syncs to pool 60s after batch completes<br>
+          ✅ Skips companies fetched within last 6h
+        </p>
+      </div>
       <div style="display:flex;gap:10px;justify-content:center;">
         <button onclick="this.closest('[style*=fixed]').remove();"
           style="padding:10px 24px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
           Cancel
         </button>
-        <button onclick="document.getElementById('fetch-all-form').submit();this.closest('[style*=fixed]').remove();"
-          style="padding:10px 28px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(220,38,38,.3);">
-          ⚡ Yes, Fetch Everything!
+        <button onclick="document.getElementById('quick-sync-form').submit();this.closest('[style*=fixed]').remove();"
+          style="padding:10px 28px;background:linear-gradient(135deg,#0284c7,#0369a1);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(2,132,199,.3);">
+          ⚡ Start Quick Sync
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+// ─── Full Crawl confirmation ───────────────────────────────────────────────
+function confirmFullCrawl() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:32px;max-width:440px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">🌕</div>
+      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Full Crawl — All Platforms</h2>
+      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 14px;">
+        Paginates through <strong>ALL jobs</strong> from every live company across every platform.<br><br>
+        Slow (30–90 min), exhaustive. 2-hour cooldown enforced after completion. Use for initial loads or weekly refreshes.
+      </p>
+      <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;margin:0 0 20px;text-align:left;">
+        <p style="margin:0;font-size:12px;color:#991b1b;line-height:1.6;">
+          ⚠️ This queues hundreds of tasks — existing running batches should be stopped first.<br>
+          ⚠️ A 2-hour cooldown will apply after this batch completes (use Quick Sync in the meantime).<br>
+          ✅ Auto-pipeline fires automatically (enrich → JD fill → pool sync)
+        </p>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button onclick="this.closest('[style*=fixed]').remove();"
+          style="padding:10px 24px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          Cancel
+        </button>
+        <button onclick="document.getElementById('full-crawl-form').submit();this.closest('[style*=fixed]').remove();"
+          style="padding:10px 28px;background:linear-gradient(135deg,#dc2626,#b91c1c);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(220,38,38,.3);">
+          🌕 Yes, Start Full Crawl
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+// ─── Bulk Sync confirmation ────────────────────────────────────────────────
+function confirmBulkSync() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:32px;max-width:440px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">💾</div>
+      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Bulk Sync to Pool</h2>
+      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 14px;">
+        Promotes up to <strong>20,000 pending RawJobs</strong> to the internal job pool in one shot.<br><br>
+        Quality gate: only jobs with a meaningful description (&gt;50 chars) are promoted.
+      </p>
+      <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;margin:0 0 20px;text-align:left;">
+        <p style="margin:0;font-size:12px;color:#15803d;line-height:1.6;">
+          ✅ Safe to run repeatedly — deduplicates by URL hash<br>
+          ✅ Jobs without descriptions are skipped (use JD Backfill first)<br>
+          ✅ Runs in the background (will not block the app)
+        </p>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button onclick="this.closest('[style*=fixed]').remove();"
+          style="padding:10px 24px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          Cancel
+        </button>
+        <button onclick="document.getElementById('bulk-sync-form').submit();this.closest('[style*=fixed]').remove();"
+          style="padding:10px 28px;background:linear-gradient(135deg,#059669,#047857);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(5,150,105,.3);">
+          💾 Yes, Bulk Sync Now
         </button>
       </div>
     </div>`;

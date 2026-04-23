@@ -995,7 +995,7 @@ def fetch_raw_jobs_for_company_task(
             _sync_cfg = _EngCfg3.get()
             if _sync_cfg.auto_sync_to_pool:
                 sync_harvested_to_pool_task.apply_async(
-                    kwargs={"max_jobs": 1000},
+                    kwargs={"max_jobs": 5000},
                     countdown=60,  # 60 s after last task — inline enrich is already done
                 )
                 logger.info("Auto-sync queued 60 s after batch #%s completion", batch.pk)

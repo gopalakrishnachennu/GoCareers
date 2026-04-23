@@ -145,11 +145,63 @@
 
   </div>
 
+  <!-- Auto-Setup Banner -->
+  <div class="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-5 mb-6 flex items-start gap-4">
+    <span class="text-3xl flex-shrink-0">🤖</span>
+    <div class="flex-1">
+      <h3 class="font-semibold text-blue-900 mb-1">Auto-configure Daily Schedule</h3>
+      <p class="text-sm text-blue-700 mb-3">
+        One click sets up 4 Celery Beat tasks: <strong>Daily Quick Sync (02:00)</strong>,
+        <strong>Weekly Full Crawl (Sun 03:00)</strong>, <strong>Daily Pool Sync (04:00)</strong>,
+        and <strong>Daily JD Backfill (05:00)</strong>. Fully hands-off after this.
+      </p>
+      <form method="post" action="{% url 'harvest-run-setup-schedule' %}">
+        {% csrf_token %}
+        <button type="submit"
+          class="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors shadow-sm">
+          🚀 Setup Auto-Schedule Now
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Schedule legend -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    {% for item in schedule_legend %}
+    <div class="bg-white border border-gray-200 rounded-lg p-4">
+      <div class="text-xs font-mono font-semibold text-gray-500 mb-1">{{ item.time }}</div>
+      <div class="text-sm font-semibold text-gray-900 mb-0.5">{{ item.name }}</div>
+      <div class="text-xs text-gray-500">{{ item.desc }}</div>
+    </div>
+    {% empty %}
+    <div class="bg-white border border-gray-200 rounded-lg p-4 col-span-4">
+      <div class="text-sm font-semibold text-gray-900 mb-1">Daily Quick Sync</div>
+      <div class="text-xs font-mono text-gray-500 mb-0.5">02:00 UTC · Every day</div>
+      <div class="text-xs text-gray-500">Incremental — new/updated jobs last 25h</div>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 col-span-4" style="margin-top:-12px;">
+      <div class="text-sm font-semibold text-gray-900 mb-1">Weekly Full Crawl</div>
+      <div class="text-xs font-mono text-gray-500 mb-0.5">03:00 UTC · Sunday</div>
+      <div class="text-xs text-gray-500">Paginate all jobs from all companies</div>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 col-span-4" style="margin-top:-12px;">
+      <div class="text-sm font-semibold text-gray-900 mb-1">Daily Pool Sync</div>
+      <div class="text-xs font-mono text-gray-500 mb-0.5">04:00 UTC · Every day</div>
+      <div class="text-xs text-gray-500">Promote up to 5,000 pending → job pool</div>
+    </div>
+    <div class="bg-white border border-gray-200 rounded-lg p-4 col-span-4" style="margin-top:-12px;">
+      <div class="text-sm font-semibold text-gray-900 mb-1">Daily JD Backfill</div>
+      <div class="text-xs font-mono text-gray-500 mb-0.5">05:00 UTC · Every day</div>
+      <div class="text-xs text-gray-500">Fetch missing job descriptions (1 worker)</div>
+    </div>
+    {% endfor %}
+  </div>
+
   <!-- Celery Beat Tasks -->
   <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
     <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
       <div>
-        <h3 class="font-semibold text-gray-900">Celery Beat Tasks</h3>
+        <h3 class="font-semibold text-gray-900">Active Celery Beat Tasks</h3>
         <p class="text-xs text-gray-500 mt-0.5">Harvest-related periodic tasks registered in Django Celery Beat</p>
       </div>
       <a href="/admin/django_celery_beat/periodictask/" class="text-xs text-blue-600 hover:underline font-medium">Manage in Admin →</a>
@@ -187,7 +239,10 @@
     <div class="p-8 text-center">
       <span class="text-3xl mb-2 block">⚠️</span>
       <p class="text-sm text-amber-700 font-medium">No harvest tasks found in Celery Beat</p>
-      <p class="text-xs text-gray-500 mt-1">Make sure Celery Beat is running and the beat_schedule in <code class="font-mono bg-gray-100 px-1 rounded">config/celery.py</code> is loaded.</p>
+      <p class="text-xs text-gray-500 mt-1">
+        Click <strong>"Setup Auto-Schedule Now"</strong> above to create them, or manage them in
+        <a href="/admin/django_celery_beat/periodictask/" class="text-blue-500 hover:underline">Django Admin</a>.
+      </p>
     </div>
     {% endif %}
   </div>

@@ -385,9 +385,23 @@ class RunHarvestNowView(SuperuserRequiredMixin, View):
 class RunSyncNowView(SuperuserRequiredMixin, View):
     def post(self, request):
         from .tasks import sync_harvested_to_pool_task
-        task = sync_harvested_to_pool_task.delay()
-        messages.success(request, f"Sync to job pool started (Task: {task.id[:8]}...)")
+        max_jobs = int(request.POST.get("max_jobs", "500") or "500")
+        task = sync_harvested_to_pool_task.delay(max_jobs=max_jobs)
+        messages.success(request, f"Sync to job pool started (max {max_jobs:,} jobs, Task: {task.id[:8]}...)")
         return redirect_with_task_progress("harvest-monitor", task.id, "Sync to job pool")
+
+
+class RunBulkSyncView(SuperuserRequiredMixin, View):
+    """POST — sync up to 20,000 pending RawJobs to the pool in one shot."""
+    def post(self, request):
+        from .tasks import sync_harvested_to_pool_task
+        task = sync_harvested_to_pool_task.delay(max_jobs=20000)
+        messages.success(
+            request,
+            f"Bulk sync started — up to 20,000 pending jobs → pool (Task: {task.id[:8]}…). "
+            "This runs in the background. Refresh to see progress.",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Bulk sync (20k jobs)")
 
 
 class RunCleanupNowView(SuperuserRequiredMixin, View):
@@ -578,6 +592,22 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
 
+        # Cooldown for Full Crawl button (2hr from last full batch)
+        COOLDOWN_HOURS = 2
+        last_full_batch = (
+            FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
+            .exclude(name__icontains="PLATFORM CHECK")
+            .exclude(name__icontains="QUICK SYNC")
+            .order_by("-created_at")
+            .first()
+        )
+        ctx["last_full_batch"] = last_full_batch
+        if last_full_batch:
+            elapsed_sec = (timezone.now() - last_full_batch.created_at).total_seconds()
+            ctx["cooldown_remaining_sec"] = max(0, int(COOLDOWN_HOURS * 3600 - elapsed_sec))
+        else:
+            ctx["cooldown_remaining_sec"] = 0
+
         return ctx
 
 
@@ -690,10 +720,48 @@ class TriggerCompanyFetchView(SuperuserRequiredMixin, View):
         return JsonResponse({"ok": True, "task_id": task.id})
 
 
+class FetchCooldownStatusView(SuperuserRequiredMixin, View):
+    """GET — JSON: cooldown status for the Full Crawl button."""
+    def get(self, request):
+        COOLDOWN_HOURS = 2
+        last_full = (
+            FetchBatch.objects.filter(
+                status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"],
+            )
+            .exclude(name__icontains="PLATFORM CHECK")
+            .exclude(name__icontains="QUICK SYNC")
+            .order_by("-created_at")
+            .first()
+        )
+        if not last_full:
+            return JsonResponse({"on_cooldown": False, "remaining_sec": 0, "last_batch_at": None})
+
+        elapsed = (timezone.now() - last_full.created_at).total_seconds()
+        cooldown_sec = COOLDOWN_HOURS * 3600
+        remaining = max(0, int(cooldown_sec - elapsed))
+        return JsonResponse({
+            "on_cooldown": remaining > 0,
+            "remaining_sec": remaining,
+            "last_batch_at": last_full.created_at.isoformat(),
+            "last_batch_name": last_full.name or f"Batch #{last_full.pk}",
+            "last_batch_status": last_full.status,
+        })
+
+
 class TriggerBatchFetchView(SuperuserRequiredMixin, View):
-    """POST — triggers a batch raw job fetch for all or filtered companies."""
+    """POST — triggers a batch raw job fetch for all or filtered companies.
+
+    fetch_mode:
+      "quick"  → incremental (since_hours=25, no fetch_all) — fast daily sync
+      "full"   → full crawl (fetch_all=True, all pages) — slow, 2hr cooldown enforced
+      "test"   → test mode (test_mode=1, companies_per_platform, test_max_jobs)
+      ""       → filtered batch (platform_slug selector form)
+    """
+    COOLDOWN_HOURS = 2
+
     def post(self, request):
         from .tasks import fetch_raw_jobs_batch_task
+        fetch_mode = request.POST.get("fetch_mode", "").strip()  # "quick" | "full" | "test" | ""
         platform_slug = request.POST.get("platform_slug", "").strip() or None
         batch_name = request.POST.get("batch_name", "").strip() or None
         test_mode = request.POST.get("test_mode", "") in ("1", "true", "True", "yes")
@@ -704,25 +772,91 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
         skip_raw = request.POST.get("skip_platforms", "").strip()
         skip_platforms = [s.strip() for s in skip_raw.split(",") if s.strip()] if skip_raw else []
 
-        task = fetch_raw_jobs_batch_task.delay(
-            platform_slug=platform_slug,
-            batch_name=batch_name,
-            triggered_user_id=request.user.id,
-            test_mode=test_mode,
-            test_max_jobs=test_max_jobs,
-            companies_per_platform=companies_per_platform,
-            skip_platforms=skip_platforms or None,
-            # Full batch (non-test) fetches ALL jobs from all pages for every company.
-            # Scheduled incremental runs don't pass fetch_all, so they use since_hours=25.
-            fetch_all=not test_mode,
-        )
-        if test_mode:
+        # ── Mode: Quick Sync ─────────────────────────────────────────────────
+        if fetch_mode == "quick":
+            ts = timezone.now().strftime("%Y-%m-%d %H:%M")
+            task = fetch_raw_jobs_batch_task.delay(
+                platform_slug=platform_slug or None,
+                batch_name=batch_name or f"Quick Sync (25h) — {ts}",
+                triggered_user_id=request.user.id,
+                test_mode=False,
+                fetch_all=False,        # incremental: since_hours=25 only
+                min_hours_since_fetch=6,
+            )
+            messages.success(
+                request,
+                f"Quick Sync started — fetching new/updated jobs from the last 25h "
+                f"(Task: {task.id[:8]}…). Much faster than a full crawl.",
+            )
+            return redirect_with_task_progress("harvest-rawjobs", task.id, "Quick Sync (25h)")
+
+        # ── Mode: Full Crawl — enforce 2-hour cooldown ────────────────────────
+        if fetch_mode == "full":
+            last_full = (
+                FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
+                .exclude(name__icontains="PLATFORM CHECK")
+                .exclude(name__icontains="QUICK SYNC")
+                .order_by("-created_at")
+                .first()
+            )
+            if last_full:
+                elapsed = (timezone.now() - last_full.created_at).total_seconds()
+                cooldown_sec = self.COOLDOWN_HOURS * 3600
+                remaining = max(0, int(cooldown_sec - elapsed))
+                if remaining > 0:
+                    mins = remaining // 60
+                    secs = remaining % 60
+                    messages.error(
+                        request,
+                        f"⏱ Full Crawl on cooldown — last batch ran {int(elapsed//60)} min ago. "
+                        f"Wait {mins}m {secs}s before starting another full crawl. "
+                        f"Use Quick Sync (25h) for an incremental update now.",
+                    )
+                    return redirect("harvest-rawjobs")
+            ts = timezone.now().strftime("%Y-%m-%d %H:%M")
+            task = fetch_raw_jobs_batch_task.delay(
+                platform_slug=platform_slug or None,
+                batch_name=batch_name or f"Full Crawl — {ts}",
+                triggered_user_id=request.user.id,
+                test_mode=False,
+                fetch_all=True,         # full pagination — all pages, all companies
+                min_hours_since_fetch=6,
+            )
+            messages.success(
+                request,
+                f"Full Crawl started — fetching ALL jobs from every platform "
+                f"(Task: {task.id[:8]}…). This may take 30–60+ minutes.",
+            )
+            return redirect_with_task_progress("harvest-rawjobs", task.id, "Full Crawl")
+
+        # ── Mode: Test / Platform Check ───────────────────────────────────────
+        if test_mode or fetch_mode == "test":
+            task = fetch_raw_jobs_batch_task.delay(
+                platform_slug=platform_slug,
+                batch_name=batch_name,
+                triggered_user_id=request.user.id,
+                test_mode=True,
+                test_max_jobs=test_max_jobs,
+                companies_per_platform=companies_per_platform,
+                skip_platforms=skip_platforms or None,
+                fetch_all=False,
+            )
             skip_note = f", skip: {', '.join(skip_platforms)}" if skip_platforms else ""
             messages.success(
                 request,
                 f"Platform check started — {companies_per_platform} co/platform, up to {test_max_jobs} jobs each{skip_note} (Task: {task.id[:8]}…)",
             )
             return redirect_with_task_progress("harvest-rawjobs", task.id, f"Platform check ({test_max_jobs} jobs/platform)")
+
+        # ── Mode: Filtered Batch (platform selector form) ─────────────────────
+        task = fetch_raw_jobs_batch_task.delay(
+            platform_slug=platform_slug,
+            batch_name=batch_name,
+            triggered_user_id=request.user.id,
+            test_mode=False,
+            skip_platforms=skip_platforms or None,
+            fetch_all=True,
+        )
         messages.success(
             request,
             f"Raw jobs batch fetch started"
@@ -1068,6 +1202,102 @@ class JarvisReScrapeView(SuperuserRequiredMixin, View):
         return JsonResponse({"ok": not bool(data.get("error")), "data": data})
 
 
+# ── Setup Celery Beat Schedule ─────────────────────────────────────────────────
+
+class SetupScheduleView(SuperuserRequiredMixin, View):
+    """POST — create/update Celery Beat PeriodicTasks for daily auto-harvest."""
+
+    def post(self, request):
+        try:
+            from django_celery_beat.models import CrontabSchedule, PeriodicTask
+            import json as _json
+
+            created = []
+            updated = []
+
+            # 1. Daily Quick Sync — 02:00 UTC every day (incremental, since_hours=25)
+            quick_cron, _ = CrontabSchedule.objects.get_or_create(
+                minute="0", hour="2", day_of_week="*",
+                day_of_month="*", month_of_year="*",
+            )
+            _, was_created = PeriodicTask.objects.update_or_create(
+                name="harvest.daily_quick_sync",
+                defaults={
+                    "crontab": quick_cron,
+                    "task": "harvest.fetch_raw_jobs_batch",
+                    "kwargs": _json.dumps({"fetch_all": False, "min_hours_since_fetch": 6, "batch_name": "Daily Quick Sync (auto)"}),
+                    "enabled": True,
+                    "description": "Daily incremental harvest — fetch new/updated jobs from last 25h. Runs at 02:00 UTC.",
+                },
+            )
+            (created if was_created else updated).append("Daily Quick Sync (02:00 UTC)")
+
+            # 2. Weekly Full Crawl — Sunday 03:00 UTC (fetch_all=True, respects 2hr cooldown on GUI only)
+            full_cron, _ = CrontabSchedule.objects.get_or_create(
+                minute="0", hour="3", day_of_week="0",
+                day_of_month="*", month_of_year="*",
+            )
+            _, was_created = PeriodicTask.objects.update_or_create(
+                name="harvest.weekly_full_crawl",
+                defaults={
+                    "crontab": full_cron,
+                    "task": "harvest.fetch_raw_jobs_batch",
+                    "kwargs": _json.dumps({"fetch_all": True, "min_hours_since_fetch": 0, "batch_name": "Weekly Full Crawl (auto)"}),
+                    "enabled": True,
+                    "description": "Weekly full crawl — paginate all jobs from all companies. Runs Sunday 03:00 UTC.",
+                },
+            )
+            (created if was_created else updated).append("Weekly Full Crawl (Sun 03:00 UTC)")
+
+            # 3. Daily sync to pool — 04:00 UTC (after harvest settles)
+            sync_cron, _ = CrontabSchedule.objects.get_or_create(
+                minute="0", hour="4", day_of_week="*",
+                day_of_month="*", month_of_year="*",
+            )
+            _, was_created = PeriodicTask.objects.update_or_create(
+                name="harvest.daily_pool_sync",
+                defaults={
+                    "crontab": sync_cron,
+                    "task": "harvest.sync_harvested_to_pool",
+                    "kwargs": _json.dumps({"max_jobs": 5000}),
+                    "enabled": True,
+                    "description": "Daily pool sync — promote up to 5,000 pending RawJobs to the job pool. Runs at 04:00 UTC.",
+                },
+            )
+            (created if was_created else updated).append("Daily Pool Sync (04:00 UTC)")
+
+            # 4. Daily JD backfill — 05:00 UTC
+            backfill_cron, _ = CrontabSchedule.objects.get_or_create(
+                minute="0", hour="5", day_of_week="*",
+                day_of_month="*", month_of_year="*",
+            )
+            _, was_created = PeriodicTask.objects.update_or_create(
+                name="harvest.daily_jd_backfill",
+                defaults={
+                    "crontab": backfill_cron,
+                    "task": "harvest.backfill_descriptions",
+                    "kwargs": _json.dumps({"batch_size": 200, "parallel_workers": 1}),
+                    "enabled": True,
+                    "description": "Daily JD backfill — fill missing descriptions. Runs at 05:00 UTC.",
+                },
+            )
+            (created if was_created else updated).append("Daily JD Backfill (05:00 UTC)")
+
+            msg_parts = []
+            if created:
+                msg_parts.append(f"Created: {', '.join(created)}")
+            if updated:
+                msg_parts.append(f"Updated: {', '.join(updated)}")
+            messages.success(request, "Schedule configured. " + " | ".join(msg_parts))
+
+        except ImportError:
+            messages.error(request, "django-celery-beat is not installed. Add it to requirements.txt.")
+        except Exception as exc:
+            messages.error(request, f"Schedule setup failed: {exc}")
+
+        return redirect("harvest-schedule")
+
+
 # ── Harvest Engine Config ──────────────────────────────────────────────────────
 
 class EngineConfigView(SuperuserRequiredMixin, View):
@@ -1099,6 +1329,20 @@ class EngineConfigView(SuperuserRequiredMixin, View):
         except Exception:
             pass
 
+        # Cooldown info for rawjobs page (also useful on engine page)
+        COOLDOWN_HOURS = 2
+        last_full_batch = (
+            FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
+            .exclude(name__icontains="PLATFORM CHECK")
+            .exclude(name__icontains="QUICK SYNC")
+            .order_by("-created_at")
+            .first()
+        )
+        cooldown_remaining_sec = 0
+        if last_full_batch:
+            elapsed = (timezone.now() - last_full_batch.created_at).total_seconds()
+            cooldown_remaining_sec = max(0, int(COOLDOWN_HOURS * 3600 - elapsed))
+
         ctx = {
             "cfg": cfg,
             "cpu_count": cpu_count,
@@ -1106,6 +1350,8 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "worker_stats": worker_stats,
             "active_tab": "engine",
             "concurrency_presets": [1, 2, 3, 4, 6, 8],
+            "last_full_batch": last_full_batch,
+            "cooldown_remaining_sec": cooldown_remaining_sec,
         }
         return TemplateResponse(request, self.template_name, ctx)
 
