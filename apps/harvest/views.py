@@ -1105,6 +1105,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "recommended_concurrency": recommended_concurrency,
             "worker_stats": worker_stats,
             "active_tab": "engine",
+            "concurrency_presets": [1, 2, 3, 4, 6, 8],
         }
         return TemplateResponse(request, self.template_name, ctx)
 

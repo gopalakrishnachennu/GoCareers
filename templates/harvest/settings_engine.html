@@ -95,11 +95,11 @@
           </div>
         </div>
         <div class="mt-3 flex gap-2">
-          {% for val in "1,2,3,4,6,8"|split:"," %}
+          {% for val in concurrency_presets %}
           <button type="button"
                   onclick="document.querySelector('[name=worker_concurrency]').value={{ val }}"
                   class="px-2.5 py-1 text-xs font-semibold rounded-lg border
-                         {% if cfg.worker_concurrency == val|add:0 %}bg-indigo-600 text-white border-indigo-600{% else %}bg-white text-gray-600 border-gray-200 hover:border-indigo-300{% endif %}">
+                         {% if cfg.worker_concurrency == val %}bg-indigo-600 text-white border-indigo-600{% else %}bg-white text-gray-600 border-gray-200 hover:border-indigo-300{% endif %}">
             {{ val }}
           </button>
           {% endfor %}
