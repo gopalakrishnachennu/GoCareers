@@ -40,12 +40,42 @@ services:
       - media_files:/app/media   # persist user uploads across deploys
     restart: unless-stopped
 
+  # ── General worker: handles UI-triggered tasks, approvals, validation ────────
+  # concurrency=3 on a 2-vCPU box — leaves headroom for web + postgres + redis.
   celery_worker:
     build: .
     image: ${IMAGE_WORKER:-consulting-worker:local}
-    # --concurrency=10: 10 parallel company fetches (all I/O-bound HTTP requests).
-    # Safe on 4 GB RAM — each prefork process uses ~200 MB → ~2 GB total for workers.
-    command: celery -A config worker -l info --concurrency=10 -Q default,batches,harvest
+    command: >
+      celery -A config worker -l info
+      --concurrency=3
+      -Q default
+      --hostname=worker@%h
+    environment:
+      DEBUG: "0"
+      SECRET_KEY: ${SECRET_KEY:-}
+      DATABASE_URL: ${DATABASE_URL:-postgres://consulting:${POSTGRES_PASSWORD:-change-me}@db:5432/${POSTGRES_DB:-consulting}}
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      CELERY_TASK_ALWAYS_EAGER: "0"
+    depends_on:
+      - db
+      - redis
+    restart: unless-stopped
+
+  # ── Harvest worker: dedicated to batch scraping — intentionally throttled ────
+  # concurrency=3 keeps CPU usage ≤80% on CX23 even during full 967-company scans.
+  # The fetch_raw_jobs_for_company task has rate_limit="6/m" so each worker slot
+  # processes ≤6 companies/min — total ≤18/min, ~54 min for a full scan vs
+  # the previous 10-worker all-at-once approach that pegged CPU at 200%.
+  celery_harvest:
+    build: .
+    image: ${IMAGE_WORKER:-consulting-worker:local}
+    command: >
+      celery -A config worker -l warning
+      --concurrency=3
+      -Q batches,harvest
+      --hostname=harvest@%h
+      --max-tasks-per-child=50
     environment:
       DEBUG: "0"
       SECRET_KEY: ${SECRET_KEY:-}

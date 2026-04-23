@@ -3,6 +3,7 @@ import time
 from datetime import timedelta
 
 from celery import shared_task
+from celery.exceptions import SoftTimeLimitExceeded
 from django.db import connection, models, transaction
 from django.db.models import F, IntegerField, Q, Value
 from django.db.models.functions import Coalesce, Length, Mod, Trim
@@ -553,7 +554,19 @@ def verify_all_portals_task(self):
     return {"queued": total}
 
 
-@shared_task(bind=True, name="harvest.fetch_raw_jobs_for_company", max_retries=2, default_retry_delay=60)
+@shared_task(
+    bind=True,
+    name="harvest.fetch_raw_jobs_for_company",
+    max_retries=2,
+    default_retry_delay=60,
+    # Hard cap: 8 min soft limit (raises SoftTimeLimitExceeded → graceful cleanup),
+    # 10 min hard kill. Prevents one hung company from blocking a worker slot forever.
+    soft_time_limit=480,
+    time_limit=600,
+    # Rate-limit: max 6 company fetches per worker per minute.
+    # At concurrency=3 this means ≤18 company fetches/min total — keeps CPU sane.
+    rate_limit="6/m",
+)
 def fetch_raw_jobs_for_company_task(
     self,
     label_pk: int,
@@ -691,6 +704,19 @@ def fetch_raw_jobs_for_company_task(
             FetchBatch.objects.filter(pk=batch.pk).update(
                 failed_companies=models.F("failed_companies") + 1
             )
+        return
+    except SoftTimeLimitExceeded:
+        # Task hit the 8-minute soft limit — mark as PARTIAL so the run is visible
+        # in the monitor and doesn't retry (it was already too slow once).
+        run.status = CompanyFetchRun.Status.PARTIAL
+        run.error_message = "Soft time limit exceeded (8 min) — task killed gracefully."
+        run.completed_at = timezone.now()
+        run.save(update_fields=["status", "error_message", "completed_at"])
+        if batch:
+            FetchBatch.objects.filter(pk=batch.pk).update(
+                failed_companies=models.F("failed_companies") + 1
+            )
+        logger.warning("fetch_raw_jobs_for_company_task: soft time limit hit for label %s", label_pk)
         return
     except Exception as exc:
         run.status = CompanyFetchRun.Status.FAILED
