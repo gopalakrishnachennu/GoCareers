@@ -37,10 +37,11 @@ WORKDAY_PATHS_FALLBACK = [
 ]
 
 PAGE_SIZE = 20
-# Max per-job detail calls per company fetch.
-# Keeps individual task runtime under control for large companies.
-# Jobs beyond this cap get descriptions via the background backfill task.
-DETAIL_FETCH_CAP = 80
+# Max per-job detail calls per company fetch (0 = unlimited).
+# Raised from 80: the CXS JSON API is fast (~0.5s/call), so fetching up to 300
+# inline adds ~5 min at most for the largest companies. Jobs beyond this cap
+# are caught by the background backfill task (which also uses the CXS API).
+DETAIL_FETCH_CAP = 300
 
 
 def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: str, ext_path: str) -> str:

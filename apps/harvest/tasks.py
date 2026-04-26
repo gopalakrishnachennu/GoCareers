@@ -50,26 +50,23 @@ def _supports_select_for_update_skip_locked() -> bool:
 
 
 def _backfill_eligible_queryset(platform_slug: str | None):
-    """Rows that still need a JD and are not actively claimed (unless lock is stale).
+    “””Rows that still need a JD and are not actively claimed (unless lock is stale).
 
-    Must match the Jobs Browser / stats rule: only trivial whitespace (or empty) counts
-    as “no JD”. Failed/skipped backfill sets ``description=' '`` — those rows must stay
-    eligible; the old filter ``description='' OR NULL`` excluded them forever.
-    """
+    Uses the indexed has_description column — avoids a full-table annotation scan.
+    The has_description field is kept in sync by save() and by all backfill update
+    paths, so it's safe to rely on here.
+    “””
     from .models import RawJob
 
     stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
     q = (
-        RawJob.objects.annotate(
-            _jd_len=Length(Trim(Coalesce(F("description"), Value("")))),
-        )
-        .filter(_jd_len__lte=1)
-        .exclude(original_url="")
+        RawJob.objects.filter(has_description=False)
+        .exclude(original_url=””)
         .exclude(original_url__isnull=True)
-    )
-    q = q.filter(
-        Q(jd_backfill_locked_at__isnull=True)
-        | Q(jd_backfill_locked_at__lt=stale_before),
+        .filter(
+            Q(jd_backfill_locked_at__isnull=True)
+            | Q(jd_backfill_locked_at__lt=stale_before),
+        )
     )
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
@@ -1723,6 +1720,48 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 
 # ─── Description Backfill ────────────────────────────────────────────────────
 
+def _fast_workday_description(job_url: str) -> str:
+    """Fetch a Workday JD directly via the CXS JSON API — no Jarvis/scraping needed.
+
+    Returns the description HTML string or '' on any failure.
+    Workday's CXS endpoint returns structured JSON at:
+      https://{subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}
+    """
+    import re as _re2
+    import requests as _req
+
+    m = _re2.match(
+        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
+        job_url,
+        _re2.I,
+    )
+    if not m:
+        return ""
+    full_subdomain = m.group(1)
+    jobboard = m.group(2)
+    ext_path = m.group(3).split("?")[0]
+    tenant = _re2.sub(r"\.wd\d+$", "", full_subdomain, flags=_re2.I)
+    cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
+    try:
+        resp = _req.get(cxs_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        info = data.get("jobPostingInfo") or data
+        for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
+            val = info.get(key) or data.get(key) or ""
+            if isinstance(val, dict):
+                val = val.get("content", "") or ""
+            val = str(val).strip()
+            if val:
+                return val
+    except Exception:
+        pass
+    return ""
+
+
 def _backfill_process_one_job(job, jarvis):
     """
     Fetch JD for a single RawJob row that was already claim-locked.
@@ -1735,9 +1774,10 @@ def _backfill_process_one_job(job, jarvis):
     from .models import RawJob
 
     fetch_url = (job.original_url or "").strip()
-    if (job.platform_slug or "").lower() == "smartrecruiters":
-        from .smartrecruiters_support import backfill_fetch_url_for_raw_job
+    platform = (job.platform_slug or "").lower()
 
+    if platform == "smartrecruiters":
+        from .smartrecruiters_support import backfill_fetch_url_for_raw_job
         fetch_url = backfill_fetch_url_for_raw_job(job) or fetch_url
 
     log_base = {
@@ -1748,20 +1788,40 @@ def _backfill_process_one_job(job, jarvis):
         "url": (fetch_url or "")[:120],
     }
 
-    try:
-        data = jarvis.ingest(fetch_url)
-    except SoftTimeLimitExceeded:
-        raise
-    except Exception as exc:
-        logger.warning("Backfill failed for job %s: %s", job.pk, exc)
-        RawJob.objects.filter(pk=job.pk).update(description=" ", jd_backfill_locked_at=None)
-        log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
-        return "failed", log
+    # Fast path: Workday CXS JSON API — no Jarvis/browser scraping needed.
+    # Falls back to Jarvis only if the CXS call returns nothing.
+    if platform == "workday":
+        cxs_desc = _fast_workday_description(fetch_url)
+        if cxs_desc:
+            data = {"description": cxs_desc, "strategy": "workday_cxs"}
+        else:
+            try:
+                data = jarvis.ingest(fetch_url)
+            except SoftTimeLimitExceeded:
+                raise
+            except Exception as exc:
+                logger.warning("Backfill (Workday fallback) failed for job %s: %s", job.pk, exc)
+                RawJob.objects.filter(pk=job.pk).update(
+                    description=" ", has_description=False, jd_backfill_locked_at=None
+                )
+                return "failed", {**log_base, "status": "failed", "reason": str(exc)[:80]}
+    else:
+        try:
+            data = jarvis.ingest(fetch_url)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:
+            logger.warning("Backfill failed for job %s: %s", job.pk, exc)
+            RawJob.objects.filter(pk=job.pk).update(
+                description=" ", has_description=False, jd_backfill_locked_at=None
+            )
+            log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
+            return "failed", log
 
     desc_str = _backfill_str(data.get("description")).strip()
 
     if not desc_str:
-        upd: dict = {"description": " ", "jd_backfill_locked_at": None}
+        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": None}
         pl = {}
         if data.get("raw_payload"):
             # Prefer newest API/Jarvis payload over stale DB rows (fixes SmartRecruiters active flag).
@@ -1778,7 +1838,7 @@ def _backfill_process_one_job(job, jarvis):
         }
         return "skipped", log
 
-    update_fields: dict = {"description": desc_str[:50000], "jd_backfill_locked_at": None}
+    update_fields: dict = {"description": desc_str[:50000], "has_description": True, "jd_backfill_locked_at": None}
 
     for f, mx in (("requirements", 20000), ("benefits", 10000)):
         v = _backfill_str(data.get(f)).strip()
