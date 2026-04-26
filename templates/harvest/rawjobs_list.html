@@ -10,6 +10,10 @@
     <p class="text-sm text-gray-500 mt-0.5">Harvested job listings — track sync status, browse by company, inspect batches.</p>
   </div>
   <div class="flex gap-2">
+    <a href="{% url 'harvest-tasks' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition flex items-center gap-1.5" title="Live task monitor">
+      <span style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;animation:pulse 1.5s infinite;"></span>
+      Tasks
+    </a>
     <a href="{% url 'harvest-rawjobs-batches' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Batch History</a>
     <a href="{% url 'harvest-rawjobs-stats' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
     <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}

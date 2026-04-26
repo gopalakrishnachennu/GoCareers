@@ -35,6 +35,8 @@ from .views import (
     ScheduleConfigView,
     SetupScheduleView,
     StopBatchView,
+    TaskMonitorAPIView,
+    TaskMonitorView,
     TriggerBatchFetchView,
     TriggerCompanyFetchView,
 )
@@ -50,6 +52,8 @@ urlpatterns = [
     path("schedule/", ScheduleConfigView.as_view(), name="harvest-schedule"),
     # Monitor
     path("monitor/", RunMonitorView.as_view(), name="harvest-monitor"),
+    path("tasks/", TaskMonitorView.as_view(), name="harvest-tasks"),
+    path("tasks/api/", TaskMonitorAPIView.as_view(), name="harvest-tasks-api"),
     # Labels
     path("labels/", CompanyLabelListView.as_view(), name="harvest-labels"),
     path("labels/<int:pk>/verify/", LabelVerifyView.as_view(), name="harvest-label-verify"),

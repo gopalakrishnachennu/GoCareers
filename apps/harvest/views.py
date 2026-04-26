@@ -1034,6 +1034,150 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress("harvest-rawjobs", task.id, f"Backfill descriptions ({label})")
 
 
+class TaskMonitorView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/task_monitor.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "monitor"
+        return ctx
+
+
+# Human-readable names for every task in the system
+_TASK_LABELS = {
+    "harvest.backfill_descriptions":              ("JD Backfill",         "#f97316"),
+    "harvest.backfill_descriptions_chunk":        ("JD Backfill Chunk",   "#f97316"),
+    "harvest.fetch_raw_jobs_batch":               ("Harvest Batch",       "#6366f1"),
+    "harvest.harvest_jobs":                       ("Harvest Jobs",        "#6366f1"),
+    "harvest.sync_harvested_to_pool":             ("Pool Sync",           "#10b981"),
+    "harvest.detect_company_platforms":           ("Platform Detection",  "#38bdf8"),
+    "harvest.verify_all_portals":                 ("Portal Verify",       "#a855f7"),
+    "harvest.enrich_existing_jobs":               ("Enrichment",          "#eab308"),
+    "harvest.backfill_platform_labels_from_jobs": ("Label Backfill",      "#64748b"),
+    "harvest.cleanup_harvested_jobs":             ("Cleanup",             "#64748b"),
+    "harvest.jarvis_ingest":                      ("Jarvis Import",       "#ec4899"),
+    "harvest.retry_failed_raw_jobs":              ("Retry Failed",        "#ef4444"),
+    "core.tasks.poll_email_ingest_task":          ("Email Ingest",        "#0ea5e9"),
+}
+
+
+class TaskMonitorAPIView(SuperuserRequiredMixin, View):
+    """GET — JSON snapshot of running tasks, recent history, workers, and key stats."""
+
+    def get(self, request):
+        from celery import current_app
+        from celery.result import AsyncResult
+
+        # ── Active tasks from all workers ────────────────────────────────────
+        active_tasks = []
+        try:
+            inspect = current_app.control.inspect(timeout=2)
+            active_map = inspect.active() or {}
+            for worker_name, tasks in active_map.items():
+                for t in tasks:
+                    task_id = t.get("id", "")
+                    name = t.get("name", "")
+                    label, color = _TASK_LABELS.get(name, (name.split(".")[-1].replace("_", " ").title(), "#64748b"))
+                    started = t.get("time_start")
+
+                    # Pull live progress from result backend
+                    percent, message, detail = 0, "Running…", {}
+                    try:
+                        res = AsyncResult(task_id)
+                        if res.state == "PROGRESS":
+                            meta = res.info or {}
+                            percent = meta.get("percent", 0)
+                            message = meta.get("message", "Running…")
+                            detail = meta.get("detail", {})
+                    except Exception:
+                        pass
+
+                    active_tasks.append({
+                        "id": task_id,
+                        "name": name,
+                        "label": label,
+                        "color": color,
+                        "worker": worker_name.split("@")[0],
+                        "percent": percent,
+                        "message": message[:120],
+                        "started": int(started) if started else None,
+                        "updated": detail.get("updated", 0),
+                        "skipped": detail.get("skipped", 0),
+                        "failed": detail.get("failed", 0),
+                        "speed": detail.get("speed", 0),
+                        "eta": detail.get("eta", ""),
+                        "remaining": detail.get("remaining_global", 0),
+                    })
+        except Exception:
+            pass
+
+        # ── Worker health ─────────────────────────────────────────────────────
+        workers = []
+        try:
+            stats_map = current_app.control.inspect(timeout=2).stats() or {}
+            for wname, info in stats_map.items():
+                pool = info.get("pool", {})
+                workers.append({
+                    "name": wname.split("@")[0] + "@" + wname.split("@")[1][:8],
+                    "concurrency": pool.get("max-concurrency", "?"),
+                    "processes": len(pool.get("processes", [])),
+                    "queues": [q["name"] for q in info.get("consumer", {}).get("queues", [])],
+                })
+        except Exception:
+            pass
+
+        # ── Recent task history ───────────────────────────────────────────────
+        recent = []
+        try:
+            from django_celery_results.models import TaskResult
+            qs = TaskResult.objects.exclude(
+                task_name="core.tasks.poll_email_ingest_task"
+            ).order_by("-date_done")[:30]
+            for t in qs:
+                name = t.task_name or ""
+                label, color = _TASK_LABELS.get(name, (name.split(".")[-1].replace("_", " ").title(), "#64748b"))
+                runtime = None
+                if t.date_done and t.date_created:
+                    runtime = int((t.date_done - t.date_created).total_seconds())
+                recent.append({
+                    "id": (t.task_id or "")[:8],
+                    "label": label,
+                    "color": color,
+                    "status": t.status or "UNKNOWN",
+                    "date_done": t.date_done.strftime("%b %d %H:%M") if t.date_done else "",
+                    "runtime_secs": runtime,
+                })
+        except Exception:
+            pass
+
+        # ── Key stats ─────────────────────────────────────────────────────────
+        stats = {}
+        try:
+            from .models import RawJob
+            from django.db.models import Count, Q
+            agg = RawJob.objects.aggregate(
+                total=Count("id"),
+                missing_jd=Count("id", filter=Q(has_description=False)),
+                pending_sync=Count("id", filter=Q(sync_status="PENDING")),
+                locked=Count("id", filter=Q(jd_backfill_locked_at__isnull=False)),
+            )
+            stats = {
+                "total_jobs": agg["total"],
+                "missing_jd": agg["missing_jd"],
+                "pending_sync": agg["pending_sync"],
+                "backfill_in_progress": agg["locked"],
+            }
+        except Exception:
+            pass
+
+        return JsonResponse({
+            "active": active_tasks,
+            "workers": workers,
+            "recent": recent,
+            "stats": stats,
+        })
+
+
 class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
     """GET ?filter=pending|missing_jd — company-level breakdown for a stat filter."""
 

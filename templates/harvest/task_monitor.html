@@ -1,0 +1,250 @@
+{% extends "base.html" %}
+{% block title %}Task Monitor{% endblock %}
+
+{% block content %}
+<div style="max-width:1200px;margin:0 auto;padding:24px 16px;">
+
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px;">
+    <div>
+      <h1 style="font-size:22px;font-weight:800;color:#0f172a;margin:0;">Task Monitor</h1>
+      <p style="color:#64748b;font-size:13px;margin:4px 0 0;">Live view of every background process running in the system</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span id="live-badge" style="display:flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;padding:5px 12px;border-radius:20px;font-size:12px;font-weight:700;">
+        <span id="pulse-dot" style="width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;animation:pulse 1.5s infinite;"></span>
+        LIVE
+      </span>
+      <span style="font-size:12px;color:#94a3b8;">Refreshes every 5s</span>
+    </div>
+  </div>
+
+  <!-- Stats row -->
+  <div id="stats-row" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px;">
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;">
+      <p style="font-size:11px;color:#94a3b8;margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Total Jobs</p>
+      <p id="stat-total" style="font-size:24px;font-weight:800;color:#0f172a;margin:0;">—</p>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;border-top:3px solid #f97316;">
+      <p style="font-size:11px;color:#94a3b8;margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Missing JD</p>
+      <p id="stat-missing-jd" style="font-size:24px;font-weight:800;color:#f97316;margin:0;">—</p>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;border-top:3px solid #6366f1;">
+      <p style="font-size:11px;color:#94a3b8;margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Pending Sync</p>
+      <p id="stat-pending-sync" style="font-size:24px;font-weight:800;color:#6366f1;margin:0;">—</p>
+    </div>
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;border-top:3px solid #0ea5e9;">
+      <p style="font-size:11px;color:#94a3b8;margin:0 0 4px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">JD Fetch Active</p>
+      <p id="stat-backfill" style="font-size:24px;font-weight:800;color:#0ea5e9;margin:0;">—</p>
+    </div>
+  </div>
+
+  <!-- Running tasks -->
+  <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;margin-bottom:24px;overflow:hidden;">
+    <div style="padding:14px 18px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;">
+      <h2 style="font-size:14px;font-weight:700;color:#0f172a;margin:0;">
+        Running Now
+        <span id="running-count" style="margin-left:8px;background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:600;">0</span>
+      </h2>
+      <span style="font-size:11px;color:#94a3b8;">Updated <span id="last-updated">—</span></span>
+    </div>
+    <div id="running-tasks" style="padding:16px;">
+      <p style="color:#94a3b8;font-size:13px;text-align:center;padding:24px 0;margin:0;">Loading…</p>
+    </div>
+  </div>
+
+  <!-- Workers + Recent side by side -->
+  <div style="display:grid;grid-template-columns:300px 1fr;gap:20px;align-items:start;">
+
+    <!-- Workers -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <div style="padding:14px 18px;border-bottom:1px solid #f1f5f9;">
+        <h2 style="font-size:14px;font-weight:700;color:#0f172a;margin:0;">Workers</h2>
+      </div>
+      <div id="workers-list" style="padding:12px;">
+        <p style="color:#94a3b8;font-size:13px;text-align:center;padding:12px 0;margin:0;">Loading…</p>
+      </div>
+    </div>
+
+    <!-- Recent history -->
+    <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+      <div style="padding:14px 18px;border-bottom:1px solid #f1f5f9;">
+        <h2 style="font-size:14px;font-weight:700;color:#0f172a;margin:0;">Recent History</h2>
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="background:#f8fafc;">
+              <th style="padding:8px 14px;text-align:left;font-weight:600;color:#64748b;white-space:nowrap;">Task</th>
+              <th style="padding:8px 14px;text-align:left;font-weight:600;color:#64748b;">Status</th>
+              <th style="padding:8px 14px;text-align:left;font-weight:600;color:#64748b;">Finished</th>
+              <th style="padding:8px 14px;text-align:right;font-weight:600;color:#64748b;">Runtime</th>
+            </tr>
+          </thead>
+          <tbody id="recent-tbody">
+            <tr><td colspan="4" style="padding:24px;text-align:center;color:#94a3b8;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<style>
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+@keyframes shimmer { 0%{background-position:-200% 0} 100%{background-position:200% 0} }
+.progress-bar-fill { transition: width .6s ease; }
+</style>
+
+<script>
+const API_URL = '{% url "harvest-tasks-api" %}';
+
+function fmt(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString();
+}
+function fmtRuntime(secs) {
+  if (!secs) return '—';
+  if (secs < 60) return secs + 's';
+  if (secs < 3600) return Math.floor(secs/60) + 'm ' + (secs%60) + 's';
+  return Math.floor(secs/3600) + 'h ' + Math.floor((secs%3600)/60) + 'm';
+}
+function statusBadge(s) {
+  const map = {
+    SUCCESS: ['#d1fae5','#065f46','✓ Success'],
+    FAILURE: ['#fee2e2','#991b1b','✗ Failed'],
+    REVOKED: ['#f1f5f9','#475569','⊘ Revoked'],
+    PROGRESS: ['#eff6ff','#1d4ed8','↻ Running'],
+    PENDING:  ['#fef9c3','#92400e','⏳ Pending'],
+  };
+  const [bg, fg, label] = map[s] || ['#f1f5f9','#64748b', s];
+  return `<span style="padding:2px 8px;background:${bg};color:${fg};border-radius:12px;font-weight:600;font-size:11px;">${label}</span>`;
+}
+
+function renderRunning(tasks) {
+  const el = document.getElementById('running-tasks');
+  document.getElementById('running-count').textContent = tasks.length;
+
+  if (!tasks.length) {
+    el.innerHTML = `<div style="text-align:center;padding:32px 0;color:#94a3b8;">
+      <div style="font-size:32px;margin-bottom:8px;">😴</div>
+      <p style="margin:0;font-size:13px;">No tasks running right now</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = tasks.map(t => {
+    const pct = Math.min(100, Math.max(0, t.percent || 0));
+    const startedAgo = t.started ? Math.round((Date.now()/1000) - t.started) : null;
+    const agoStr = startedAgo != null ? (startedAgo < 60 ? startedAgo+'s ago' : Math.floor(startedAgo/60)+'m ago') : '';
+
+    const statsRow = (t.updated || t.skipped || t.failed || t.speed) ? `
+      <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap;">
+        ${t.updated ? `<span style="font-size:11px;color:#10b981;font-weight:600;">✓ ${fmt(t.updated)} done</span>` : ''}
+        ${t.skipped ? `<span style="font-size:11px;color:#f59e0b;font-weight:600;">⊘ ${fmt(t.skipped)} skipped</span>` : ''}
+        ${t.failed  ? `<span style="font-size:11px;color:#ef4444;font-weight:600;">✗ ${fmt(t.failed)} failed</span>` : ''}
+        ${t.speed   ? `<span style="font-size:11px;color:#6366f1;font-weight:600;">⚡ ${t.speed} /s</span>` : ''}
+        ${t.remaining ? `<span style="font-size:11px;color:#64748b;font-weight:600;">${fmt(t.remaining)} left</span>` : ''}
+        ${t.eta     ? `<span style="font-size:11px;color:#64748b;">ETA ${t.eta}</span>` : ''}
+      </div>` : '';
+
+    return `
+    <div style="border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:12px;border-left:4px solid ${t.color};">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="width:8px;height:8px;border-radius:50%;background:${t.color};display:inline-block;animation:pulse 1.5s infinite;"></span>
+          <span style="font-weight:700;color:#0f172a;font-size:14px;">${t.label}</span>
+          <span style="font-size:11px;color:#94a3b8;background:#f8fafc;padding:2px 8px;border-radius:10px;">${t.worker}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:12px;color:#64748b;">${agoStr}</span>
+          <span style="font-size:13px;font-weight:700;color:${t.color};">${pct}%</span>
+        </div>
+      </div>
+      <!-- Progress bar -->
+      <div style="background:#f1f5f9;border-radius:4px;height:8px;overflow:hidden;margin-bottom:8px;">
+        <div class="progress-bar-fill" style="height:100%;background:${t.color};width:${pct}%;border-radius:4px;"></div>
+      </div>
+      <p style="font-size:12px;color:#475569;margin:0;">${t.message || 'Working…'}</p>
+      ${statsRow}
+    </div>`;
+  }).join('');
+}
+
+function renderWorkers(workers) {
+  const el = document.getElementById('workers-list');
+  if (!workers.length) {
+    el.innerHTML = '<p style="color:#ef4444;font-size:13px;text-align:center;padding:12px 0;margin:0;">No workers online</p>';
+    return;
+  }
+  el.innerHTML = workers.map(w => `
+    <div style="border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+        <span style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;"></span>
+        <span style="font-weight:700;color:#0f172a;font-size:12px;">${w.name}</span>
+      </div>
+      <div style="display:flex;gap:10px;font-size:11px;color:#64748b;flex-wrap:wrap;">
+        <span>Concurrency: <strong>${w.concurrency}</strong></span>
+        <span>Processes: <strong>${w.processes}</strong></span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;">
+        ${w.queues.map(q => `<span style="background:#f1f5f9;color:#475569;padding:1px 8px;border-radius:10px;font-size:10px;font-weight:600;">${q}</span>`).join('')}
+      </div>
+    </div>`).join('');
+}
+
+function renderRecent(rows) {
+  const tb = document.getElementById('recent-tbody');
+  if (!rows.length) {
+    tb.innerHTML = '<tr><td colspan="4" style="padding:24px;text-align:center;color:#94a3b8;">No history yet</td></tr>';
+    return;
+  }
+  tb.innerHTML = rows.map(r => `
+    <tr style="border-top:1px solid #f1f5f9;">
+      <td style="padding:8px 14px;">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${r.color};margin-right:6px;vertical-align:middle;"></span>
+        <span style="font-weight:600;color:#0f172a;">${r.label}</span>
+        <span style="color:#94a3b8;font-size:10px;margin-left:6px;">#${r.id}</span>
+      </td>
+      <td style="padding:8px 14px;">${statusBadge(r.status)}</td>
+      <td style="padding:8px 14px;color:#64748b;white-space:nowrap;">${r.date_done}</td>
+      <td style="padding:8px 14px;text-align:right;color:#64748b;">${fmtRuntime(r.runtime_secs)}</td>
+    </tr>`).join('');
+}
+
+async function refresh() {
+  try {
+    const resp = await fetch(API_URL);
+    if (!resp.ok) return;
+    const data = await resp.json();
+
+    // Stats
+    if (data.stats) {
+      document.getElementById('stat-total').textContent        = fmt(data.stats.total_jobs);
+      document.getElementById('stat-missing-jd').textContent   = fmt(data.stats.missing_jd);
+      document.getElementById('stat-pending-sync').textContent = fmt(data.stats.pending_sync);
+      document.getElementById('stat-backfill').textContent     = fmt(data.stats.backfill_in_progress);
+    }
+
+    renderRunning(data.active || []);
+    renderWorkers(data.workers || []);
+    renderRecent(data.recent || []);
+
+    const now = new Date();
+    document.getElementById('last-updated').textContent =
+      now.getHours().toString().padStart(2,'0') + ':' +
+      now.getMinutes().toString().padStart(2,'0') + ':' +
+      now.getSeconds().toString().padStart(2,'0');
+
+  } catch (e) {
+    console.warn('Monitor refresh error:', e);
+  }
+}
+
+// Initial load + 5s polling
+refresh();
+setInterval(refresh, 5000);
+</script>
+{% endblock %}
