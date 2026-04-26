@@ -507,9 +507,9 @@ class RawJob(models.Model):
             models.Index(fields=["company", "platform_slug"]),
             models.Index(fields=["platform_slug"]),
             models.Index(fields=["sync_status"]),
-            models.Index(fields=["fetched_at"]),
-            models.Index(fields=["is_remote"]),
-            models.Index(fields=["has_description"]),
+            models.Index(fields=["fetched_at"],       name="harvest_raw_fetched_idx"),
+            models.Index(fields=["is_remote"],         name="harvest_raw_remote_idx"),
+            models.Index(fields=["has_description"],   name="harvest_raw_hasdesc_idx"),
             models.Index(fields=["posted_date"]),
             models.Index(fields=["employment_type"]),
             models.Index(fields=["location_type"]),
@@ -520,11 +520,11 @@ class RawJob(models.Model):
             models.Index(fields=["clearance_required"]),
             models.Index(fields=["quality_score"]),
             # Composite — filter + default ORDER BY fetched_at DESC
-            models.Index(fields=["sync_status", "-fetched_at"]),
-            models.Index(fields=["is_active", "-fetched_at"]),
-            models.Index(fields=["is_remote", "-fetched_at"]),
-            models.Index(fields=["has_description", "-fetched_at"]),
-            models.Index(fields=["platform_slug", "-fetched_at"]),
+            models.Index(fields=["sync_status",    "-fetched_at"], name="harvest_raw_sync_fetched_idx"),
+            models.Index(fields=["is_active",      "-fetched_at"], name="harvest_raw_active_fetched_idx"),
+            models.Index(fields=["is_remote",      "-fetched_at"], name="harvest_raw_remote_fetched_idx"),
+            models.Index(fields=["has_description","-fetched_at"], name="harvest_raw_hasdesc_fetched_idx"),
+            models.Index(fields=["platform_slug",  "-fetched_at"], name="harvest_raw_platform_fetched_idx"),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"
