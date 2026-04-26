@@ -519,6 +519,12 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         elif remote_f == "0":
             qs = qs.filter(is_remote=False)
 
+        active_f = self.request.GET.get("is_active", "").strip()
+        if active_f == "1":
+            qs = qs.filter(is_active=True)
+        elif active_f == "0":
+            qs = qs.filter(is_active=False)
+
         jd_f = self.request.GET.get("has_jd", "").strip()
         if jd_f in ("0", "1"):
             qs = qs.annotate(
@@ -585,6 +591,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
+        ctx["selected_is_active"] = self.request.GET.get("is_active", "")
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
@@ -976,6 +983,27 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
             f"Description backfill started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
         )
         return redirect_with_task_progress("harvest-rawjobs", task.id, f"Backfill descriptions ({label})")
+
+
+class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
+    """GET ?filter=pending|missing_jd — company-level breakdown for a stat filter."""
+
+    def get(self, request):
+        filter_type = request.GET.get("filter", "").strip()
+
+        if filter_type == "pending":
+            qs = RawJob.objects.filter(sync_status="PENDING")
+        elif filter_type == "missing_jd":
+            qs = _raw_jobs_missing_jd_base_qs()
+        else:
+            return JsonResponse({"error": "Invalid filter. Use pending or missing_jd."}, status=400)
+
+        companies = list(
+            qs.values("company_name", "platform_slug")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:200]
+        )
+        return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
 
 
 class RawJobStatsView(SuperuserRequiredMixin, View):
