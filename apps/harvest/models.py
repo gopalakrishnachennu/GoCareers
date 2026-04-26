@@ -490,6 +490,9 @@ class RawJob(models.Model):
         max_length=8, choices=SyncStatus.choices, default=SyncStatus.PENDING
     )
     is_active = models.BooleanField(default=True)
+    # Denormalized flag — set on every save so JD filter hits an index instead of
+    # running Length(Trim(Coalesce(description))) over 100k+ rows.
+    has_description = models.BooleanField(default=False, db_index=True)
     fetched_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField(null=True, blank=True)
@@ -500,9 +503,13 @@ class RawJob(models.Model):
     class Meta:
         ordering = ["-fetched_at"]
         indexes = [
+            # Single-column
             models.Index(fields=["company", "platform_slug"]),
             models.Index(fields=["platform_slug"]),
             models.Index(fields=["sync_status"]),
+            models.Index(fields=["fetched_at"]),
+            models.Index(fields=["is_remote"]),
+            models.Index(fields=["has_description"]),
             models.Index(fields=["posted_date"]),
             models.Index(fields=["employment_type"]),
             models.Index(fields=["location_type"]),
@@ -512,6 +519,12 @@ class RawJob(models.Model):
             models.Index(fields=["visa_sponsorship"]),
             models.Index(fields=["clearance_required"]),
             models.Index(fields=["quality_score"]),
+            # Composite — filter + default ORDER BY fetched_at DESC
+            models.Index(fields=["sync_status", "-fetched_at"]),
+            models.Index(fields=["is_active", "-fetched_at"]),
+            models.Index(fields=["is_remote", "-fetched_at"]),
+            models.Index(fields=["has_description", "-fetched_at"]),
+            models.Index(fields=["platform_slug", "-fetched_at"]),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"
@@ -519,6 +532,10 @@ class RawJob(models.Model):
     def has_meaningful_description(self) -> bool:
         """True when stored description has more than trivial whitespace (matches Jobs Browser)."""
         return len((self.description or "").strip()) > 1
+
+    def save(self, *args, **kwargs):
+        self.has_description = self.has_meaningful_description()
+        super().save(*args, **kwargs)
 
     def is_expired_listing(self) -> bool:
         """

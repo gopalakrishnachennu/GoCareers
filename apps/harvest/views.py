@@ -4,7 +4,8 @@ import logging
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.db.models import Count, F, Q, Value
+from django.core.cache import cache
+from django.db.models import Count, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
@@ -470,8 +471,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "salary_raw": (job.salary_raw or "")[:20],
                     "posted_date": str(job.posted_date) if job.posted_date else "",
                     "sync_status": job.sync_status or "",
-                    "has_jd": job.has_meaningful_description(),
-                    "jd_label": job.jd_browser_label(),
+                    "has_jd": job.has_description,
+                    "jd_label": "yes" if job.has_description else ("expired" if not job.is_active else "no"),
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
                 })
 
@@ -526,14 +527,10 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             qs = qs.filter(is_active=False)
 
         jd_f = self.request.GET.get("has_jd", "").strip()
-        if jd_f in ("0", "1"):
-            qs = qs.annotate(
-                _jd_len=Length(Trim(Coalesce(F("description"), Value("")))),
-            )
-            if jd_f == "1":
-                qs = qs.filter(_jd_len__gt=1)
-            else:
-                qs = qs.filter(_jd_len__lte=1)
+        if jd_f == "1":
+            qs = qs.filter(has_description=True)
+        elif jd_f == "0":
+            qs = qs.filter(has_description=False)
 
         date_from = self.request.GET.get("date_from", "").strip()
         if date_from:
@@ -549,20 +546,40 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "rawjobs"
 
-        # Stats
-        ctx["total_jobs"] = RawJob.objects.count()
-        ctx["active_jobs"] = RawJob.objects.filter(is_active=True).count()
-        ctx["remote_jobs"] = RawJob.objects.filter(is_remote=True).count()
-        ctx["synced_jobs"] = RawJob.objects.filter(sync_status="SYNCED").count()
-        ctx["pending_jobs"] = RawJob.objects.filter(sync_status="PENDING").count()
-        ctx["failed_jobs"] = RawJob.objects.filter(sync_status="FAILED").count()
-        ctx["missing_description_jobs"] = raw_jobs_missing_description_count()
-        ctx["missing_jd_expired_jobs"] = raw_jobs_missing_jd_expired_count()
+        # ── Stats: one aggregation query instead of 8 separate COUNTs ──────────
+        # Cache for 60 s — stat cards refresh via /raw-jobs/stats/ polling anyway.
+        stats = cache.get("rawjobs_dashboard_stats")
+        if stats is None:
+            from django.utils.timezone import now as _now
+            today = _now().date()
+            agg = RawJob.objects.aggregate(
+                total=Count("id"),
+                active=Count("id", filter=Q(is_active=True)),
+                remote=Count("id", filter=Q(is_remote=True)),
+                synced=Count("id", filter=Q(sync_status="SYNCED")),
+                pending=Count("id", filter=Q(sync_status="PENDING")),
+                failed=Count("id", filter=Q(sync_status="FAILED")),
+                new_today=Count("id", filter=Q(fetched_at__date=today)),
+                missing_jd=Count("id", filter=Q(has_description=False)),
+            )
+            # Expired-missing-JD still needs the complex query; cache separately
+            expired_missing = cache.get("rawjobs_expired_missing_jd")
+            if expired_missing is None:
+                expired_missing = raw_jobs_missing_jd_expired_count()
+                cache.set("rawjobs_expired_missing_jd", expired_missing, 120)
+            agg["expired_missing"] = expired_missing
+            stats = agg
+            cache.set("rawjobs_dashboard_stats", stats, 60)
 
-        from django.utils.timezone import now
-        from datetime import timedelta
-        today = now().date()
-        ctx["new_today"] = RawJob.objects.filter(fetched_at__date=today).count()
+        ctx["total_jobs"] = stats["total"]
+        ctx["active_jobs"] = stats["active"]
+        ctx["remote_jobs"] = stats["remote"]
+        ctx["synced_jobs"] = stats["synced"]
+        ctx["pending_jobs"] = stats["pending"]
+        ctx["failed_jobs"] = stats["failed"]
+        ctx["new_today"] = stats["new_today"]
+        ctx["missing_description_jobs"] = stats["missing_jd"]
+        ctx["missing_jd_expired_jobs"] = stats["expired_missing"]
 
         # Platform breakdown
         ctx["platform_stats"] = (
@@ -1027,16 +1044,37 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 "total_jobs_new": running_batch.total_jobs_new,
             }
 
+        # Reuse cached aggregation; bust it if a batch is running (counts change fast)
+        stats = cache.get("rawjobs_dashboard_stats")
+        if stats is None or running_batch:
+            agg = RawJob.objects.aggregate(
+                total=Count("id"),
+                active=Count("id", filter=Q(is_active=True)),
+                remote=Count("id", filter=Q(is_remote=True)),
+                synced=Count("id", filter=Q(sync_status="SYNCED")),
+                pending=Count("id", filter=Q(sync_status="PENDING")),
+                failed=Count("id", filter=Q(sync_status="FAILED")),
+                new_today=Count("id", filter=Q(fetched_at__date=today)),
+                missing_jd=Count("id", filter=Q(has_description=False)),
+            )
+            expired_missing = cache.get("rawjobs_expired_missing_jd")
+            if expired_missing is None:
+                expired_missing = raw_jobs_missing_jd_expired_count()
+                cache.set("rawjobs_expired_missing_jd", expired_missing, 120)
+            agg["expired_missing"] = expired_missing
+            stats = agg
+            cache.set("rawjobs_dashboard_stats", stats, 60)
+
         return JsonResponse({
-            "total_jobs": RawJob.objects.count(),
-            "active_jobs": RawJob.objects.filter(is_active=True).count(),
-            "remote_jobs": RawJob.objects.filter(is_remote=True).count(),
-            "synced_jobs": RawJob.objects.filter(sync_status="SYNCED").count(),
-            "pending_jobs": RawJob.objects.filter(sync_status="PENDING").count(),
-            "failed_jobs": RawJob.objects.filter(sync_status="FAILED").count(),
-            "new_today": RawJob.objects.filter(fetched_at__date=today).count(),
-            "missing_description_jobs": raw_jobs_missing_description_count(),
-            "missing_jd_expired_jobs": raw_jobs_missing_jd_expired_count(),
+            "total_jobs": stats["total"],
+            "active_jobs": stats["active"],
+            "remote_jobs": stats["remote"],
+            "synced_jobs": stats["synced"],
+            "pending_jobs": stats["pending"],
+            "failed_jobs": stats["failed"],
+            "new_today": stats["new_today"],
+            "missing_description_jobs": stats["missing_jd"],
+            "missing_jd_expired_jobs": stats["expired_missing"],
             "running_batch": batch_data,
             "platform_stats": list(
                 RawJob.objects.values("platform_slug")
