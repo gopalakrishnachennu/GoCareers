@@ -50,18 +50,18 @@ def _supports_select_for_update_skip_locked() -> bool:
 
 
 def _backfill_eligible_queryset(platform_slug: str | None):
-    “””Rows that still need a JD and are not actively claimed (unless lock is stale).
+    """Rows that still need a JD and are not actively claimed (unless lock is stale).
 
-    Uses the indexed has_description column — avoids a full-table annotation scan.
+    Uses the indexed has_description column - avoids a full-table annotation scan.
     The has_description field is kept in sync by save() and by all backfill update
     paths, so it's safe to rely on here.
-    “””
+    """
     from .models import RawJob
 
     stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
     q = (
         RawJob.objects.filter(has_description=False)
-        .exclude(original_url=””)
+        .exclude(original_url="")
         .exclude(original_url__isnull=True)
         .filter(
             Q(jd_backfill_locked_at__isnull=True)
