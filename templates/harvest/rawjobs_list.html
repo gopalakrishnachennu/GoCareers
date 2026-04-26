@@ -506,7 +506,7 @@
     <div id="panel-jobs" style="display:none;">
 
       <!-- Active filter banner -->
-      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level %}
+      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level %}
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
@@ -516,7 +516,8 @@
           {% if selected_is_remote == '1' %}<span style="padding:2px 10px;background:#e0f2fe;color:#0369a1;border-radius:20px;font-size:11px;font-weight:600;">Remote only</span>{% endif %}
           {% if selected_is_active == '1' %}<span style="padding:2px 10px;background:#dcfce7;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Active only</span>{% endif %}
           {% if selected_is_active == '0' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Inactive only</span>{% endif %}
-          {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Date: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
+          {% if selected_fetched_from or selected_fetched_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Fetched: {{ selected_fetched_from|default:"…" }} → {{ selected_fetched_to|default:"…" }}</span>{% endif %}
+          {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Posted: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
           {% if q %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Search: "{{ q }}"</span>{% endif %}
           {% if selected_platform %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Platform: {{ selected_platform }}</span>{% endif %}
         </div>
@@ -569,9 +570,9 @@
             {% for val, label in experience_level_choices %}<option value="{{ val }}" {% if selected_experience_level == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
           <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
-          <input type="date" name="date_from" id="jf-date-from" value="{{ selected_date_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
+          <input type="date" name="fetched_from" id="jf-fetched-from" value="{{ selected_fetched_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
           <span style="font-size:11px;color:#94a3b8;">→</span>
-          <input type="date" name="date_to" id="jf-date-to" value="{{ selected_date_to }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched to">
+          <input type="date" name="fetched_to" id="jf-fetched-to" value="{{ selected_fetched_to }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched to">
           <button type="submit" style="padding:7px 16px;background:#0f172a;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Search</button>
           <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="padding:7px 12px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;text-decoration:none;">Clear</a>
         </div>
@@ -1558,8 +1559,8 @@ function applyStatFilter(filters) {
 
   for (const [k, v] of Object.entries(filters)) {
     if (k === 'date_range' && v === 'today') {
-      params.set('date_from', today);
-      params.set('date_to', today);
+      params.set('fetched_from', today);
+      params.set('fetched_to', today);
     } else {
       params.set(k, v);
     }

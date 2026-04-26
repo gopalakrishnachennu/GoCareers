@@ -525,6 +525,7 @@ class RawJob(models.Model):
             models.Index(fields=["is_remote",      "-fetched_at"], name="harvest_raw_remote_fetched_idx"),
             models.Index(fields=["has_description","-fetched_at"], name="harvest_raw_hd_fetched_idx"),
             models.Index(fields=["platform_slug",  "-fetched_at"], name="harvest_raw_plat_fetched_idx"),
+            models.Index(fields=["posted_date"],                    name="harvest_raw_posted_idx"),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"

@@ -446,7 +446,14 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             from django.core.paginator import Paginator
             from django.urls import reverse
-            qs = self.get_queryset()
+            # Fetch only the columns rendered in the list — skips description /
+            # raw_payload blobs which can be 10–50 KB each and are never shown here.
+            qs = self.get_queryset().only(
+                "id", "company_name", "platform_slug", "title", "original_url",
+                "location_raw", "is_remote", "employment_type", "experience_level",
+                "salary_min", "salary_max", "salary_raw", "posted_date",
+                "sync_status", "has_description", "is_active",
+            )
             paginator = Paginator(qs, self.paginate_by)
             try:
                 page_num = int(request.GET.get("page", 1))
@@ -486,7 +493,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = RawJob.objects.select_related("company", "job_platform").order_by("-fetched_at")
+        # No select_related — JOINs add 20x overhead on 122k rows; all displayed
+        # fields (company_name, platform_slug) are denormalised directly on RawJob.
+        qs = RawJob.objects.order_by("-fetched_at")
 
         q = self.request.GET.get("q", "").strip()
         if q:
@@ -532,6 +541,27 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         elif jd_f == "0":
             qs = qs.filter(has_description=False)
 
+        # Fetched-date range — uses the indexed fetched_at column so these are
+        # fast range scans instead of function-based date extractions.
+        from datetime import datetime as _dt, timedelta as _td
+        from django.utils.timezone import make_aware as _aware
+
+        fetched_from = self.request.GET.get("fetched_from", "").strip()
+        if fetched_from:
+            try:
+                qs = qs.filter(fetched_at__gte=_aware(_dt.strptime(fetched_from, "%Y-%m-%d")))
+            except ValueError:
+                pass
+
+        fetched_to = self.request.GET.get("fetched_to", "").strip()
+        if fetched_to:
+            try:
+                next_day = _dt.strptime(fetched_to, "%Y-%m-%d") + _td(days=1)
+                qs = qs.filter(fetched_at__lt=_aware(next_day))
+            except ValueError:
+                pass
+
+        # Posted-date range (separate from fetched_at)
         date_from = self.request.GET.get("date_from", "").strip()
         if date_from:
             qs = qs.filter(posted_date__gte=date_from)
@@ -610,6 +640,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
         ctx["selected_is_active"] = self.request.GET.get("is_active", "")
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
+        ctx["selected_fetched_from"] = self.request.GET.get("fetched_from", "")
+        ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
 
