@@ -1723,23 +1723,36 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 def _fast_workday_description(job_url: str) -> str:
     """Fetch a Workday JD directly via the CXS JSON API — no Jarvis/scraping needed.
 
-    Returns the description HTML string or '' on any failure.
-    Workday's CXS endpoint returns structured JSON at:
-      https://{subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}
+    Handles URL patterns:
+      - https://{sub}.myworkdayjobs.com/{board}/job/{loc}/{slug}
+      - https://{sub}.myworkdayjobs.com/{board}/details/{loc}/{slug}
+      - https://{sub}.wd1.myworkdayjobs.com/{board}/job/...  (versioned subdomains)
+      - https://{sub}.myworkdayjobs.com/en-US/{board}/job/...  (locale-prefixed)
     """
     import re as _re2
     import requests as _req
 
+    # Pattern 1: direct board path — /{board}/(job|details)/...
     m = _re2.match(
-        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
-        job_url,
-        _re2.I,
+        r"https?://([\w.-]+?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
+        job_url, _re2.I,
     )
-    if not m:
-        return ""
-    full_subdomain = m.group(1)
-    jobboard = m.group(2)
-    ext_path = m.group(3).split("?")[0]
+    if m:
+        full_subdomain = m.group(1)
+        jobboard = m.group(2)
+        ext_path = m.group(3).split("?")[0]
+    else:
+        # Pattern 2: locale-prefixed — /en-US/{board}/(job|details)/...
+        m2 = _re2.match(
+            r"https?://([\w.-]+?)\.myworkdayjobs\.com/[a-z]{2}-[A-Z]{2}/([^/?#]+)(/(?:details|job)/[^?#]+)",
+            job_url, _re2.I,
+        )
+        if not m2:
+            return ""
+        full_subdomain = m2.group(1)
+        jobboard = m2.group(2)
+        ext_path = m2.group(3).split("?")[0]
+
     tenant = _re2.sub(r"\.wd\d+$", "", full_subdomain, flags=_re2.I)
     cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
     try:
@@ -2280,41 +2293,7 @@ def _fast_recruitee_description(job_url: str) -> str:
     return _html_jd_extract(job_url)
 
 
-def _fast_workday_description_v2(job_url: str) -> str:
-    """Workday — enhanced CXS API with additional URL pattern support."""
-    import re as _re
-    import requests as _req
-
-    # Standard CXS path: /{jobboard}/job/{loc}/{slug} or /{jobboard}/details/{loc}/{slug}
-    m = _re.match(
-        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
-        job_url, _re.I,
-    )
-    if not m:
-        return ""
-    full_subdomain = m.group(1)
-    jobboard = m.group(2)
-    ext_path = m.group(3).split("?")[0]
-    tenant = _re.sub(r"\.wd\d+$", "", full_subdomain, flags=_re.I)
-    cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
-    try:
-        resp = _req.get(cxs_url, headers={"Accept": "application/json"}, timeout=12)
-        if not resp.ok:
-            return ""
-        data = resp.json()
-        if not isinstance(data, dict):
-            return ""
-        info = data.get("jobPostingInfo") or data
-        for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
-            val = info.get(key) or data.get(key) or ""
-            if isinstance(val, dict):
-                val = val.get("content", "") or ""
-            val = str(val).strip()
-            if val:
-                return val
-    except Exception:
-        pass
-    return ""
+# _fast_workday_description_v2 merged into _fast_workday_description (handles locale prefix URLs)
 
 
 # Maps platform_slug → fast-fetch function. Each function returns a description
@@ -2367,6 +2346,14 @@ def _backfill_process_one_job(job, jarvis):
         "url": (fetch_url or "")[:120],
     }
 
+    # Platforms with reliable public JSON APIs — if the fast path returns empty it
+    # means the job is expired/gone (API returned 404/empty). Skip Jarvis for these:
+    # falling through to Jarvis wastes 30-60s per job for no gain.
+    _API_ONLY_PLATFORMS = frozenset({
+        "greenhouse", "lever", "ashby", "workable", "bamboohr",
+        "workday", "smartrecruiters", "recruitee",
+    })
+
     # Fast path: try platform-native JSON API before falling back to Jarvis scraping.
     # Platforms like Greenhouse/Lever have public APIs that return structured JSON
     # 10-50x faster than Jarvis browser-based scraping.
@@ -2381,8 +2368,27 @@ def _backfill_process_one_job(job, jarvis):
         except Exception:
             fast_desc = ""
 
+    # Cooldown lock: when a job gets no description, set a future lock so it is
+    # not immediately re-queued. This prevents the infinite-retry loop where the
+    # same 23k dead/empty jobs cycle through the backfill every round.
+    _COOLDOWN_HOURS = 12
+
     if fast_desc:
         data = {"description": fast_desc, "strategy": fast_strategy}
+    elif fast_fn and platform in _API_ONLY_PLATFORMS:
+        # API-only platform: fast path returned "" → job is expired or gone.
+        # Skip Jarvis — it will also fail and waste 30-60s. Apply cooldown lock.
+        future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
+        RawJob.objects.filter(pk=job.pk).update(
+            description=" ", has_description=False, jd_backfill_locked_at=future_lock
+        )
+        log = {
+            **log_base,
+            "status": "skipped",
+            "reason": f"API returned no description — cooldown {_COOLDOWN_HOURS}h",
+            "strategy": f"{platform}_api",
+        }
+        return "skipped", log
     else:
         try:
             data = jarvis.ingest(fetch_url)
@@ -2390,8 +2396,9 @@ def _backfill_process_one_job(job, jarvis):
             raise
         except Exception as exc:
             logger.warning("Backfill failed for job %s: %s", job.pk, exc)
+            future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
             RawJob.objects.filter(pk=job.pk).update(
-                description=" ", has_description=False, jd_backfill_locked_at=None
+                description=" ", has_description=False, jd_backfill_locked_at=future_lock
             )
             log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
             return "failed", log
@@ -2399,7 +2406,8 @@ def _backfill_process_one_job(job, jarvis):
     desc_str = _backfill_str(data.get("description")).strip()
 
     if not desc_str:
-        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": None}
+        future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
+        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": future_lock}
         pl = {}
         if data.get("raw_payload"):
             # Prefer newest API/Jarvis payload over stale DB rows (fixes SmartRecruiters active flag).
