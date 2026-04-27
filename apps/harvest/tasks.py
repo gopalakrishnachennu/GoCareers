@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
+from django.core.cache import cache
 from django.db import connection, models, transaction
 from django.db.models import F, IntegerField, Q, Value
 from django.db.models.functions import Coalesce, Length, Mod, Trim
@@ -28,6 +29,15 @@ logger = logging.getLogger(__name__)
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
 BACKFILL_LOCK_STALE_MINUTES = 45
 BACKFILL_MAX_PARALLEL = 8
+
+
+def _invalidate_rawjobs_dashboard_cache() -> None:
+    """Ensure Raw Jobs KPI cards refresh quickly after writes."""
+    try:
+        cache.delete("rawjobs_dashboard_stats")
+        cache.delete("rawjobs_expired_missing_jd")
+    except Exception:
+        pass
 def _backfill_inter_job_delay_sec() -> float:
     """Pause between JD fetches in a chunk; Jarvis per-host/global limits handle burst control."""
     from django.conf import settings
@@ -1050,6 +1060,8 @@ def fetch_raw_jobs_for_company_task(
         except Exception as exc:
             logger.warning("Auto-sync queue failed: %s", exc)
 
+    _invalidate_rawjobs_dashboard_cache()
+
     return {
         "label_pk": label_pk,
         "run_id": run.pk,
@@ -1604,6 +1616,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             **enriched,
         },
     )
+    _invalidate_rawjobs_dashboard_cache()
 
     update_task_progress(self, current=3, total=3, message="Done ✓")
 

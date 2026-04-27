@@ -662,7 +662,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 synced=Count("id", filter=Q(sync_status="SYNCED")),
                 pending=Count("id", filter=Q(sync_status="PENDING")),
                 failed=Count("id", filter=Q(sync_status="FAILED")),
-                new_today=Count("id", filter=Q(fetched_at__date=today)),
+                # "Today" should reflect activity (new + refreshed rows), not only first-seen inserts.
+                new_today=Count("id", filter=Q(updated_at__date=today)),
                 missing_jd=Count("id", filter=Q(has_description=False)),
             )
             # Expired-missing-JD still needs the complex query; cache separately
@@ -1303,7 +1304,8 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 synced=Count("id", filter=Q(sync_status="SYNCED")),
                 pending=Count("id", filter=Q(sync_status="PENDING")),
                 failed=Count("id", filter=Q(sync_status="FAILED")),
-                new_today=Count("id", filter=Q(fetched_at__date=today)),
+                # Keep KPI behavior consistent with RawJobListView context aggregation.
+                new_today=Count("id", filter=Q(updated_at__date=today)),
                 missing_jd=Count("id", filter=Q(has_description=False)),
             )
             expired_missing = cache.get("rawjobs_expired_missing_jd")

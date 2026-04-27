@@ -895,6 +895,7 @@ let pollingInterval = null;
 
 function startPolling() {
   if (pollingInterval) return;
+  pollStats(); // immediate refresh on page open/tab switch
   pollingInterval = setInterval(pollStats, 10000);
 }
 
@@ -933,7 +934,6 @@ function pollStats() {
         if (stopIdEl) stopIdEl.value = b.id || '';
       } else {
         card.style.display = 'none';
-        stopPolling();
       }
     })
     .catch(() => {});
@@ -944,8 +944,8 @@ function setText(id, val) {
   if (el) el.textContent = val;
 }
 
-// Start polling if a batch is running on page load
-{% if has_running_batch %}startPolling();{% endif %}
+// Keep KPI cards fresh regardless of batch state.
+startPolling();
 
 // ─── Full Crawl cooldown countdown ────────────────────────────────────────────
 (function() {
