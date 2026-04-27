@@ -1083,6 +1083,7 @@
     { slug: 'workday', label: 'Workday', strategy: 'REST API', patterns: ['myworkdayjobs.com'] },
     { slug: 'smartrecruiters', label: 'SmartRecruiters', strategy: 'REST API', patterns: ['smartrecruiters.com'] },
     { slug: 'workable', label: 'Workable', strategy: 'REST API', patterns: ['workable.com'] },
+    { slug: 'dayforce', label: 'Dayforce', strategy: 'ATS + SSR JSON', patterns: ['jobs.dayforcehcm.com', 'dayforcehcm.com'] },
     { slug: 'bamboohr', label: 'BambooHR', strategy: 'JSON Endpoint', patterns: ['bamboohr.com/careers'] },
     { slug: 'linkedin', label: 'LinkedIn', strategy: 'HTML Fallback', patterns: ['linkedin.com/jobs'] },
     { slug: 'indeed', label: 'Indeed', strategy: 'HTML Fallback', patterns: ['indeed.com/viewjob', 'indeed.com/jobs'] },
@@ -1180,7 +1181,7 @@
     const labels = {
       greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workday: 'Workday',
       workable: 'Workable', linkedin: 'LinkedIn', indeed: 'Indeed', smartrecruiters: 'SmartRecruiters',
-      bamboohr: 'BambooHR', jarvis: 'Jarvis',
+      bamboohr: 'BambooHR', dayforce: 'Dayforce', jarvis: 'Jarvis',
     };
     badge.textContent = labels[slug] || (job.platform_name || slug);
   }

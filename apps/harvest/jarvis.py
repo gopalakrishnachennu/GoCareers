@@ -1183,19 +1183,28 @@ class JobJarvis:
 
     def _dayforce(self, url: str) -> Optional[dict]:
         """
-        Dayforce job detail via GEO API.
-        URL: .../jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs/{id}
-        API: GET .../api/geo/{slug}/jobposting/{id}
+        Dayforce job detail extraction.
+
+        Supports:
+        - Legacy GEO endpoint: /api/geo/{slug}/jobposting/{id}
+        - Newer Next.js SSR pages where full job JSON lives in __NEXT_DATA__
+
+        URL examples:
+          https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs/{id}
+          https://jobs.dayforcehcm.com/en-US/{slug}/{board}/jobs/{id}?src=LinkedIn
         """
         m = re.search(
-            r"jobs\.dayforcehcm\.com/(?:[a-z]{2}-[A-Z]{2}/)?([^/]+)/([^/]+)/jobs/(\d+)",
+            r"jobs\.dayforcehcm\.com/(?:([a-z]{2}-[A-Z]{2})/)?([^/]+)/([^/]+)/jobs/([^/?#]+)",
             url, re.I,
         )
         if not m:
             return None
-        slug, portal, job_id = m.group(1), m.group(2), m.group(3)
+        locale = m.group(1) or "en-US"
+        slug, portal, job_id = m.group(2), m.group(3), m.group(4)
 
         detail_url = f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/{job_id}"
+        best_partial: Optional[dict] = None
+
         try:
             resp = self._http_get(
                 detail_url, timeout=self.timeout,
@@ -1212,24 +1221,276 @@ class JobJarvis:
             resp.raise_for_status()
             data = resp.json()
         except Exception:
+            data = None
+
+        if isinstance(data, dict):
+            payload = data.get("data") if isinstance(data.get("data"), dict) else data
+            parsed = self._dayforce_normalize_payload(
+                payload,
+                slug=slug,
+                locale=locale,
+                board_code=portal,
+                job_id=job_id,
+                source_url=url,
+            )
+            if parsed:
+                if parsed.get("description"):
+                    return parsed
+                best_partial = parsed
+
+        # Newer Dayforce pages often expose full posting data only in Next.js SSR.
+        try:
+            page_resp = self._http_get(
+                url,
+                timeout=self.timeout,
+                headers={"Accept": "text/html,application/xhtml+xml"},
+            )
+            page_resp.raise_for_status()
+            next_data = self._dayforce_from_next_data(
+                page_resp.text,
+                slug=slug,
+                locale=locale,
+                board_code=portal,
+                job_id=job_id,
+                source_url=page_resp.url or url,
+            )
+            if next_data:
+                if best_partial:
+                    for key, value in next_data.items():
+                        if key == "raw_payload" and value:
+                            best_partial[key] = value
+                            continue
+                        if key == "description" and value:
+                            best_partial[key] = value
+                            continue
+                        if not best_partial.get(key) and value:
+                            best_partial[key] = value
+                    return best_partial
+                return next_data
+        except Exception:
+            pass
+
+        return best_partial
+
+    def _dayforce_from_next_data(
+        self,
+        html: str,
+        *,
+        slug: str,
+        locale: str,
+        board_code: str,
+        job_id: str,
+        source_url: str,
+    ) -> Optional[dict]:
+        soup = BeautifulSoup(html, "html.parser")
+        script = soup.find("script", id="__NEXT_DATA__")
+        if not script:
             return None
 
-        if not isinstance(data, dict):
+        raw = script.string or script.get_text("", strip=True)
+        if not raw:
             return None
 
-        title = data.get("JobTitle") or data.get("title") or ""
-        desc = data.get("Description") or data.get("description") or ""
-        loc = data.get("JobLocation") or data.get("location") or ""
+        try:
+            blob = json.loads(raw)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return None
+
+        if not isinstance(blob, dict):
+            return None
+
+        props = blob.get("props") if isinstance(blob.get("props"), dict) else {}
+        page_props = props.get("pageProps") if isinstance(props.get("pageProps"), dict) else {}
+        page_data = page_props.get("pageData") if isinstance(page_props.get("pageData"), dict) else {}
+        query = blob.get("query") if isinstance(blob.get("query"), dict) else {}
+
+        candidates: list[dict] = []
+        if page_data:
+            candidates.append(page_data)
+            for key in ("jobPosting", "jobPostingInfo", "posting", "job", "data"):
+                sub = page_data.get(key)
+                if isinstance(sub, dict):
+                    candidates.append(sub)
+
+        if not candidates and page_props:
+            candidates.append(page_props)
+
+        fallback_company = _safe_text(
+            query.get("clientNamespace")
+            or query.get("careerSiteXRefCode")
+            or slug
+        ).replace("-", " ").title()
+
+        best_partial: Optional[dict] = None
+        for payload in candidates:
+            parsed = self._dayforce_normalize_payload(
+                payload,
+                slug=slug,
+                locale=locale,
+                board_code=board_code,
+                job_id=job_id,
+                source_url=source_url,
+            )
+            if not parsed:
+                continue
+            if not parsed.get("company_name"):
+                parsed["company_name"] = fallback_company
+            if parsed.get("description"):
+                return parsed
+            if best_partial is None:
+                best_partial = parsed
+
+        if best_partial and not best_partial.get("company_name"):
+            best_partial["company_name"] = fallback_company
+        return best_partial
+
+    def _dayforce_normalize_payload(
+        self,
+        payload: dict,
+        *,
+        slug: str,
+        locale: str,
+        board_code: str,
+        job_id: str,
+        source_url: str,
+    ) -> Optional[dict]:
+        if not isinstance(payload, dict):
+            return None
+
+        title = (
+            _safe_text(payload.get("jobPostingTitle"))
+            or _safe_text(payload.get("JobTitle"))
+            or _safe_text(payload.get("title"))
+            or _safe_text(payload.get("Title"))
+        ).strip()
+        company_name = (
+            _safe_text(payload.get("organizationName"))
+            or _safe_text(payload.get("companyName"))
+            or _safe_text(payload.get("clientName"))
+            or slug.replace("-", " ").title()
+        ).strip()
+
+        desc_parts: list[str] = []
+        for key in (
+            "jobDescription",
+            "Description",
+            "description",
+            "jobPostingDescription",
+            "externalJobDescription",
+            "jobDescriptionFooter",
+            "descriptionFooter",
+        ):
+            val = _safe_text(payload.get(key)).strip()
+            if val and val not in desc_parts:
+                desc_parts.append(val)
+        description = "\n\n".join(desc_parts).strip()
+
+        locations: list[str] = []
+        posting_locations = payload.get("postingLocations") or payload.get("PostingLocations") or []
+        if isinstance(posting_locations, list):
+            for loc in posting_locations:
+                if not isinstance(loc, dict):
+                    continue
+                raw_loc = _safe_text(loc.get("formattedAddress") or loc.get("FormattedAddress")).strip()
+                if not raw_loc:
+                    city = _safe_text(loc.get("cityName") or loc.get("city") or loc.get("City")).strip()
+                    state = _safe_text(loc.get("stateCode") or loc.get("state") or loc.get("State")).strip()
+                    country = _safe_text(loc.get("isoCountryCode") or loc.get("country") or loc.get("Country")).strip()
+                    raw_loc = ", ".join(v for v in (city, state, country) if v)
+                if raw_loc and raw_loc not in locations:
+                    locations.append(raw_loc)
+        fallback_loc = _safe_text(
+            payload.get("JobLocation")
+            or payload.get("jobLocation")
+            or payload.get("location")
+        ).strip()
+        if fallback_loc and fallback_loc not in locations:
+            locations.append(fallback_loc)
+        location_raw = " | ".join(locations)
+
+        is_remote = bool(
+            payload.get("hasVirtualLocation")
+            or payload.get("WorkFromHome")
+            or payload.get("isRemote")
+            or "remote" in f"{location_raw} {title}".lower()
+        )
+
+        attrs = payload.get("jobPostingAttributes") or payload.get("JobPostingAttributes") or []
+        department = ""
+        team = ""
+        if isinstance(attrs, list):
+            for attr in attrs:
+                if not isinstance(attr, dict):
+                    continue
+                name = _safe_text(attr.get("name")).strip().lower()
+                value = _safe_text(attr.get("value")).strip()
+                if not value:
+                    continue
+                if name in {"jobfamily", "department", "division"} and not department:
+                    department = value
+                if name in {"jobfunction", "team"} and not team:
+                    team = value
+
+        employment_raw = (
+            _safe_text(payload.get("employmentType"))
+            or _safe_text(payload.get("jobType"))
+        ).strip()
+        if not employment_raw and isinstance(attrs, list):
+            for attr in attrs:
+                if not isinstance(attr, dict):
+                    continue
+                name = _safe_text(attr.get("name")).strip().lower()
+                if name in {"employmenttype", "jobtype"}:
+                    employment_raw = _safe_text(attr.get("value")).strip()
+                    if employment_raw:
+                        break
+        employment_type = _map_employment(employment_raw)
+
+        external_id = (
+            _safe_text(payload.get("jobPostingId"))
+            or _safe_text(payload.get("JobRequisitionId"))
+            or _safe_text(payload.get("id"))
+            or _safe_text(payload.get("Id"))
+            or _safe_text(job_id)
+        ).strip()
+
+        posted_date_raw = (
+            _safe_text(payload.get("postingDate"))
+            or _safe_text(payload.get("PostedDate"))
+            or _safe_text(payload.get("datePosted"))
+        ).strip()
+        closing_date_raw = (
+            _safe_text(payload.get("closingDate"))
+            or _safe_text(payload.get("validThrough"))
+        ).strip()
+
+        apply_url = _safe_text(
+            payload.get("ApplyUrl")
+            or payload.get("applyUrl")
+            or payload.get("jobPostingUrl")
+        ).strip()
+        if not apply_url:
+            apply_url = f"https://jobs.dayforcehcm.com/{locale}/{slug}/{board_code}/jobs/{external_id or job_id}"
+
+        if not title and not description:
+            return None
 
         return {
             "title": title,
-            "company_name": slug.replace("-", " ").title(),
-            "location_raw": loc,
-            "description": desc,
-            "external_id": job_id,
-            "original_url": url,
-            "apply_url": url,
-            "raw_payload": data,
+            "company_name": company_name,
+            "department": department,
+            "team": team,
+            "location_raw": location_raw,
+            "is_remote": is_remote,
+            "location_type": _infer_location_type(location_raw, is_remote=is_remote),
+            "employment_type": employment_type,
+            "description": description,
+            "posted_date_raw": posted_date_raw,
+            "closing_date_raw": closing_date_raw,
+            "external_id": external_id,
+            "original_url": source_url,
+            "apply_url": apply_url,
+            "raw_payload": payload,
         }
 
     # ── Breezy HR ─────────────────────────────────────────────────────────────

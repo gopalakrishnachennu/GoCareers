@@ -1450,10 +1450,17 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     detected_ats = data.get("platform_slug") or ""
     job_platform = None
     if detected_ats:
-        try:
-            job_platform = JobBoardPlatform.objects.get(slug=detected_ats)
-        except JobBoardPlatform.DoesNotExist:
-            pass
+        job_platform = JobBoardPlatform.objects.filter(slug=detected_ats).first()
+        if not job_platform and detected_ats == "dayforce":
+            job_platform, _ = JobBoardPlatform.objects.get_or_create(
+                slug="dayforce",
+                defaults={
+                    "name": "Dayforce",
+                    "url_patterns": ["jobs.dayforcehcm.com", "dayforcehcm.com"],
+                    "api_type": JobBoardPlatform.ApiType.UNKNOWN,
+                    "notes": "Auto-created by Jarvis from Dayforce import detection.",
+                },
+            )
 
     # ── Build RawJob ──────────────────────────────────────────────────────────
     import hashlib
@@ -1555,9 +1562,21 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
 
 def _extract_company_from_url(url: str) -> str:
     """Best-effort: pull a human-readable company name from the URL hostname."""
+    import re as _re
     from urllib.parse import urlparse
     try:
-        host = urlparse(url).netloc.lower()
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+
+        # Dayforce URLs include tenant in path: /en-US/{tenant}/{board}/jobs/{id}
+        # Use tenant as the company fallback instead of the ATS hostname.
+        if "dayforcehcm.com" in host:
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) >= 2 and _re.match(r"^[a-z]{2}-[a-z]{2}$", parts[0], _re.I):
+                tenant = parts[1]
+                if tenant:
+                    return tenant.replace("-", " ").replace("_", " ").title().strip()
+
         # Strip www. / jobs. / careers. prefixes
         for prefix in ("www.", "jobs.", "careers.", "boards."):
             if host.startswith(prefix):
@@ -1566,9 +1585,12 @@ def _extract_company_from_url(url: str) -> str:
         for suffix in (
             ".greenhouse.io", ".lever.co", ".ashbyhq.com",
             ".myworkdayjobs.com", ".workable.com", ".bamboohr.com",
+            ".dayforcehcm.com",
         ):
             if host.endswith(suffix):
                 host = host[: -len(suffix)]
+        if host in {"dayforcehcm.com", "greenhouse.io", "lever.co", "ashbyhq.com"}:
+            return "Unknown"
         # Convert hyphens/dots to spaces, title-case
         company = host.replace("-", " ").replace(".", " ").title()
         return company.strip() or "Unknown"
@@ -1580,6 +1602,23 @@ def _root_url(url: str) -> str:
     from urllib.parse import urlparse
     try:
         p = urlparse(url)
+        host = (p.netloc or "").lower()
+        ats_hosts = (
+            "dayforcehcm.com",
+            "greenhouse.io",
+            "lever.co",
+            "ashbyhq.com",
+            "myworkdayjobs.com",
+            "workable.com",
+            "bamboohr.com",
+            "smartrecruiters.com",
+            "icims.com",
+            "taleo.net",
+            "jobvite.com",
+            "zohorecruit.com",
+        )
+        if any(host == d or host.endswith("." + d) for d in ats_hosts):
+            return ""
         return f"{p.scheme}://{p.netloc}"
     except Exception:
         return ""
@@ -1632,6 +1671,7 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             ".greenhouse.io", ".lever.co", ".ashbyhq.com",
             ".myworkdayjobs.com", ".workable.com", ".bamboohr.com",
             ".icims.com", ".taleo.net", ".jobvite.com", ".smartrecruiters.com",
+            ".dayforcehcm.com",
         )
         for ats in ATS_DOMAINS:
             if host.endswith(ats):

@@ -1,8 +1,10 @@
 """Fast checks for career URLs, tenant extraction, harvester wiring, and smoke command."""
 
+import json
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+import requests
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 
@@ -409,6 +411,59 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertIn("Dayforce JD body", out.get("description", ""))
         self.assertEqual(out.get("title"), "Payroll Analyst")
 
+    def test_dayforce_next_data_fallback_for_modern_board_urls(self):
+        jarvis = JobJarvis()
+        url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        next_data = {
+            "props": {
+                "pageProps": {
+                    "pageData": {
+                        "jobPostingTitle": "Platform Engineer",
+                        "organizationName": "Kestra Financial",
+                        "jobDescription": "<p>Lead and build secure cloud platforms.</p>",
+                        "jobDescriptionFooter": "<p>Benefits package and growth opportunities.</p>",
+                        "postingLocations": [
+                            {"formattedAddress": "Austin, Texas, United States of America"},
+                            {"formattedAddress": "Tempe, Arizona, United States of America"},
+                        ],
+                        "jobPostingAttributes": [{"name": "JobFamily", "value": "Technology"}],
+                        "jobPostingId": 6503,
+                        "postingDate": "2026-04-02T03:00:00Z",
+                    }
+                }
+            },
+            "query": {"clientNamespace": "kestra"},
+        }
+        html = (
+            '<html><head></head><body>'
+            '<script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(next_data)}"
+            "</script></body></html>"
+        )
+
+        detail_404 = requests.HTTPError("404")
+        html_resp = MagicMock()
+        html_resp.raise_for_status = MagicMock()
+        html_resp.text = html
+        html_resp.url = url
+
+        def fake_get(target_url, *args, **kwargs):
+            if "/api/geo/" in target_url:
+                raise detail_404
+            return html_resp
+
+        with patch.object(jarvis, "_http_get", side_effect=fake_get):
+            out = jarvis._dayforce(url)
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("title"), "Platform Engineer")
+        self.assertEqual(out.get("company_name"), "Kestra Financial")
+        self.assertEqual(out.get("department"), "Technology")
+        self.assertEqual(out.get("external_id"), "6503")
+        self.assertIn("Austin, Texas", out.get("location_raw", ""))
+        self.assertIn("Lead and build secure cloud platforms", out.get("description", ""))
+        self.assertIn("Benefits package", out.get("description", ""))
+
     def test_breezy_detail_page_scrape(self):
         jarvis = JobJarvis()
         url = "https://acme.breezy.hr/p/abc123-software-dev"
@@ -610,3 +665,46 @@ class SyncRawJobsToPoolTests(TestCase):
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
         raw.refresh_from_db()
         self.assertEqual(raw.sync_status, "SKIPPED")
+
+
+class JarvisCompanyFallbackTests(SimpleTestCase):
+    def test_extract_company_from_dayforce_url_uses_tenant(self):
+        from harvest.tasks import _extract_company_from_url
+
+        url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        self.assertEqual(_extract_company_from_url(url), "Kestra")
+
+
+class JarvisIngestDayforceIntegrationTests(TestCase):
+    def test_ingest_auto_creates_dayforce_platform_and_company(self):
+        from companies.models import Company
+        from harvest.models import JobBoardPlatform, RawJob
+        from harvest.tasks import jarvis_ingest_task
+
+        JobBoardPlatform.objects.filter(slug="dayforce").delete()
+        Company.objects.filter(name="Kestra").delete()
+
+        source_url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        mock_ingest = {
+            "error": "",
+            "platform_slug": "dayforce",
+            "strategy": "api:dayforce",
+            "title": "Platform Engineer",
+            "company_name": "",
+            "description": "Lead cloud platform engineering initiatives across secure Azure workloads.",
+            "original_url": source_url,
+            "apply_url": source_url,
+            "raw_payload": {"source": "test"},
+        }
+
+        with patch("apps.harvest.jarvis.JobJarvis.ingest", return_value=mock_ingest):
+            result = jarvis_ingest_task.apply(kwargs={"url": source_url, "user_id": None}).get()
+
+        self.assertTrue(result.get("ok"))
+        self.assertTrue(JobBoardPlatform.objects.filter(slug="dayforce").exists())
+        company = Company.objects.get(name="Kestra")
+        raw_job = RawJob.objects.get(pk=result["raw_job_id"])
+        self.assertEqual(raw_job.company_id, company.pk)
+        self.assertIsNotNone(raw_job.job_platform)
+        self.assertEqual(raw_job.job_platform.slug, "dayforce")
+        self.assertEqual((raw_job.raw_payload or {}).get("jarvis_detected_ats"), "dayforce")

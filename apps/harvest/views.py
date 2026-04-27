@@ -1392,7 +1392,7 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
 
         ctx["platforms_supported"] = [
             "Greenhouse", "Lever", "Ashby", "Workday", "Workable",
-            "LinkedIn", "Indeed", "SmartRecruiters", "BambooHR", "Any career page",
+            "Dayforce", "LinkedIn", "Indeed", "SmartRecruiters", "BambooHR", "Any career page",
         ]
         return ctx
 
