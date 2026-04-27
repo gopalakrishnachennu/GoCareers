@@ -1398,8 +1398,9 @@
       try {
         const resp = await fetch(`${endpoints.status}?task_id=${taskId}`);
         const json = await resp.json();
+        const state = String(json.state || '').trim().toUpperCase();
 
-        if (json.state === 'PENDING' || json.state === 'PROGRESS' || json.state === 'STARTED' || json.state === 'RETRY') {
+        if (state === 'PENDING' || state === 'PROGRESS' || state === 'STARTED' || state === 'RETRY') {
           pct = Math.max(pct, json.percent || 0);
           progressBar.style.width = `${pct}%`;
           progressPct.textContent = `${pct}%`;
@@ -1413,7 +1414,7 @@
         progressBar.style.width = '100%';
         progressPct.textContent = '100%';
 
-        if (json.state === 'SUCCESS') {
+        if (state === 'SUCCESS') {
           const result = json.result || {};
           if (!result.ok) {
             showError(result.error || 'Extraction failed.', 'Try a direct ATS posting URL.');
@@ -1422,12 +1423,12 @@
           }
           progressMsg.textContent = 'Extraction completed';
           renderResult(json.raw_job || {}, result);
-        } else if (json.state === 'FAILURE') {
+        } else if (state === 'FAILURE') {
           progressMsg.textContent = 'Failed';
           showError(json.error || 'Task failed.', 'The URL may be blocked, expired, or unsupported.');
         } else {
-          progressMsg.textContent = json.state || 'Unknown state';
-          showError(`Unexpected task state: ${json.state}`, '');
+          progressMsg.textContent = state || 'Unknown state';
+          showError(`Unexpected task state: ${state || 'UNKNOWN'}`, '');
         }
       } catch (err) {
         clearInterval(pollTimer);
@@ -1561,12 +1562,13 @@
         try {
           const statusResp = await fetch(`${endpoints.status}?task_id=${json.task_id}`);
           const statusJson = await statusResp.json();
+          const state = String(statusJson.state || '').trim().toUpperCase();
 
           if (
-            statusJson.state === 'PENDING' ||
-            statusJson.state === 'PROGRESS' ||
-            statusJson.state === 'STARTED' ||
-            statusJson.state === 'RETRY'
+            state === 'PENDING' ||
+            state === 'PROGRESS' ||
+            state === 'STARTED' ||
+            state === 'RETRY'
           ) {
             showFetchAllStatus(statusJson.message || 'Company fetch in progress…', 'info');
             return;
@@ -1574,7 +1576,7 @@
 
           clearInterval(fetchAllPollTimer);
 
-          if (statusJson.state === 'SUCCESS') {
+          if (state === 'SUCCESS') {
             const result = statusJson.result || {};
             const found = Number(result.jobs_found || 0);
             const created = Number(result.jobs_new || 0);
@@ -1589,7 +1591,7 @@
             return;
           }
 
-          const failureMsg = statusJson.error || `Company fetch failed (${statusJson.state}).`;
+          const failureMsg = statusJson.error || `Company fetch failed (${state || 'UNKNOWN'}).`;
           showFetchAllStatus(failureMsg, 'error');
           btnFetch.disabled = false;
           btnFetch.textContent = prevLabel;

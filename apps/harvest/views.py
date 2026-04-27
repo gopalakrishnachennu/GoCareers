@@ -14,6 +14,8 @@ from django.urls import reverse_lazy
 from datetime import timedelta
 
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from core.http import redirect_with_task_progress
@@ -1333,6 +1335,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
 
 # ── Job Jarvis ─────────────────────────────────────────────────────────────────
 
+@method_decorator(never_cache, name="dispatch")
 class JarvisView(SuperuserRequiredMixin, TemplateView):
     """
     GET  → show paste form
@@ -1408,6 +1411,7 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
         return JsonResponse({"ok": True, "task_id": task.id, "url": url})
 
 
+@method_decorator(never_cache, name="dispatch")
 class JarvisStatusView(SuperuserRequiredMixin, View):
     """
     GET ?task_id=xxx → poll task state.
@@ -1604,6 +1608,7 @@ class JarvisApproveView(SuperuserRequiredMixin, View):
         )
 
 
+@method_decorator(never_cache, name="dispatch")
 class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
     """
     POST { raw_job_id } → fetch all jobs for the detected company board.
