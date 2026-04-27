@@ -615,6 +615,13 @@ def fetch_raw_jobs_for_company_task(
         started_at=timezone.now(),
         triggered_by=triggered_by,
     )
+    try:
+        self.update_state(
+            state="PROGRESS",
+            meta={"percent": 5, "message": "Starting company fetch…"},
+        )
+    except Exception:
+        pass
 
     # ── Guard: no tenant or no platform ──────────────────────────────────────
     if not label.platform or not label.tenant_id:
@@ -665,6 +672,13 @@ def fetch_raw_jobs_for_company_task(
     # Phase 3: honor PlatformConfig.inter_request_delay_ms before each fetch.
     from .rate_limiter import throttle as _throttle
     _throttle(label.platform.slug)
+    try:
+        self.update_state(
+            state="PROGRESS",
+            meta={"percent": 12, "message": "Connecting to company board…"},
+        )
+    except Exception:
+        pass
 
     try:
         if is_scraper_platform:
@@ -691,6 +705,19 @@ def fetch_raw_jobs_for_company_task(
             )
         # Capture API-reported total (even when we only fetched a subset)
         run.jobs_total_available = getattr(harvester, "last_total_available", 0) or len(raw_jobs)
+        run.jobs_found = len(raw_jobs)
+        run.save(update_fields=["jobs_total_available", "jobs_found"])
+        try:
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "percent": 30 if raw_jobs else 95,
+                    "message": f"Discovered {len(raw_jobs)} jobs. Processing…",
+                    "jobs_found": len(raw_jobs),
+                },
+            )
+        except Exception:
+            pass
     except requests.exceptions.Timeout as exc:
         run.status = CompanyFetchRun.Status.FAILED
         run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
@@ -748,7 +775,8 @@ def fetch_raw_jobs_for_company_task(
     if max_jobs and len(raw_jobs) > max_jobs:
         raw_jobs = raw_jobs[:max_jobs]
 
-    for job_dict in raw_jobs:
+    total_jobs = len(raw_jobs)
+    for idx, job_dict in enumerate(raw_jobs, start=1):
         try:
             original_url = (job_dict.get("original_url") or "").strip()
             if not original_url:
@@ -838,6 +866,29 @@ def fetch_raw_jobs_for_company_task(
             logger.error("RawJob upsert failed for label %s: %s", label_pk, err_str)
             if len(upsert_errors) < 5:
                 upsert_errors.append(err_str[:300])
+
+        if idx == 1 or idx % 5 == 0 or idx == total_jobs:
+            run.jobs_new = jobs_new
+            run.jobs_updated = jobs_updated
+            run.jobs_duplicate = jobs_duplicate
+            run.jobs_failed = jobs_failed
+            run.save(update_fields=["jobs_new", "jobs_updated", "jobs_duplicate", "jobs_failed"])
+            try:
+                pct = 35 + int((idx / max(total_jobs, 1)) * 60)
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "percent": min(95, max(35, pct)),
+                        "message": f"Processing jobs… {idx}/{total_jobs}",
+                        "jobs_found": total_jobs,
+                        "jobs_new": jobs_new,
+                        "jobs_updated": jobs_updated,
+                        "jobs_duplicate": jobs_duplicate,
+                        "jobs_failed": jobs_failed,
+                    },
+                )
+            except Exception:
+                pass
 
     # ── Update run record ─────────────────────────────────────────────────────
     run.status = (
@@ -1001,9 +1052,11 @@ def fetch_raw_jobs_for_company_task(
 
     return {
         "label_pk": label_pk,
+        "run_id": run.pk,
         "jobs_found": len(raw_jobs),
         "jobs_new": jobs_new,
         "jobs_updated": jobs_updated,
+        "jobs_duplicate": jobs_duplicate,
         "jobs_failed": jobs_failed,
     }
 

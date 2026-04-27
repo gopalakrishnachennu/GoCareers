@@ -1556,6 +1556,13 @@
         boardLink.textContent = json.company_jobs_url;
       }
 
+      if (json.progress_url) {
+        showFetchAllStatus('Opening live company fetch progress…', 'info');
+        window.location.assign(json.progress_url);
+        return;
+      }
+
+      // Fallback path (older server response without progress_url)
       showFetchAllStatus('Company fetch running…', 'info');
       clearInterval(fetchAllPollTimer);
       fetchAllPollTimer = setInterval(async () => {

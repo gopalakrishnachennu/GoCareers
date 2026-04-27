@@ -2,6 +2,7 @@
 
 import json
 from io import StringIO
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
 import requests
@@ -785,6 +786,12 @@ class JarvisFetchAllCompanyViewTests(TestCase):
             body.get("company_jobs_url"),
             "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
         )
+        self.assertTrue(body.get("progress_url"))
+        parsed = urlparse(body["progress_url"])
+        self.assertEqual(parsed.path, reverse("harvest-jarvis-fetch-all-progress"))
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("task_id"), ["task-123"])
+        self.assertEqual(qs.get("label_pk"), [str(body["label_pk"])])
 
         self.raw_job.refresh_from_db()
         self.assertIsNotNone(self.raw_job.platform_label)
@@ -793,3 +800,50 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         self.assertTrue(
             CompanyPlatformLabel.objects.filter(company=self.company, platform__slug="dayforce").exists()
         )
+
+    def test_progress_api_returns_live_counts_and_recent_jobs(self):
+        from django.utils import timezone
+
+        from harvest.models import CompanyFetchRun, CompanyPlatformLabel
+
+        label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.platform,
+            tenant_id="kestra|KESTRACAREERSITE",
+            confidence_score=0.98,
+        )
+        self.raw_job.platform_label = label
+        self.raw_job.save(update_fields=["platform_label", "updated_at"])
+
+        run = CompanyFetchRun.objects.create(
+            label=label,
+            status=CompanyFetchRun.Status.RUNNING,
+            task_id="task-live-1",
+            started_at=timezone.now(),
+            jobs_found=5,
+            jobs_new=1,
+            jobs_updated=1,
+            jobs_duplicate=0,
+            jobs_failed=0,
+            triggered_by="JARVIS",
+        )
+
+        with patch("celery.result.AsyncResult") as mocked:
+            mocked.return_value.state = "PROGRESS"
+            mocked.return_value.info = {"percent": 44, "message": "Processing…"}
+            resp = self.client.get(
+                reverse("harvest-jarvis-fetch-all-progress-api"),
+                {"task_id": run.task_id},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("state"), "RUNNING")
+        self.assertTrue(body.get("running"))
+        self.assertFalse(body.get("done"))
+        self.assertGreaterEqual(body.get("percent", 0), 1)
+        self.assertEqual(body.get("counts", {}).get("found"), 5)
+        self.assertEqual(body.get("counts", {}).get("new"), 1)
+        self.assertTrue(body.get("rawjobs_url"))
+        self.assertIn("recent_jobs", body)

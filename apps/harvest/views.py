@@ -1,5 +1,6 @@
 import json
 import logging
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
@@ -10,7 +11,7 @@ from django.db.models import Count, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
-from django.urls import reverse_lazy
+from django.urls import reverse, reverse_lazy
 from datetime import timedelta
 
 from django.utils import timezone
@@ -1682,6 +1683,18 @@ class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
         raw_job.platform_label = label
         raw_job.save(update_fields=["raw_payload", "platform_label", "updated_at"])
 
+        progress_qs = urlencode(
+            {
+                "task_id": task.id,
+                "label_pk": label.pk,
+                "raw_job_id": raw_job.pk,
+                "company_name": raw_job.company.name if raw_job.company else (raw_job.company_name or ""),
+                "platform_slug": label.platform.slug if label.platform else "",
+                "company_jobs_url": payload.get("jarvis_company_jobs_url", ""),
+            }
+        )
+        progress_url = f"{reverse('harvest-jarvis-fetch-all-progress')}?{progress_qs}"
+
         return JsonResponse(
             {
                 "ok": True,
@@ -1692,6 +1705,216 @@ class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
                 "company_jobs_url": payload.get("jarvis_company_jobs_url", ""),
                 "company_id": raw_job.company_id,
                 "company_name": raw_job.company.name if raw_job.company else raw_job.company_name,
+                "progress_url": progress_url,
+            }
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+class JarvisFetchProgressView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/jarvis_fetch_progress.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "jarvis"
+        ctx["task_id"] = self.request.GET.get("task_id", "").strip()
+        ctx["label_pk"] = self.request.GET.get("label_pk", "").strip()
+        ctx["raw_job_id"] = self.request.GET.get("raw_job_id", "").strip()
+        ctx["company_name"] = self.request.GET.get("company_name", "").strip()
+        ctx["platform_slug"] = self.request.GET.get("platform_slug", "").strip()
+        ctx["company_jobs_url"] = self.request.GET.get("company_jobs_url", "").strip()
+        ctx["jarvis_url"] = reverse("harvest-jarvis")
+        ctx["rawjobs_url"] = reverse("harvest-rawjobs")
+        ctx["progress_api_url"] = reverse("harvest-jarvis-fetch-all-progress-api")
+        return ctx
+
+
+@method_decorator(never_cache, name="dispatch")
+class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
+    """Live status payload for the Jarvis fetch-all progress page."""
+
+    def get(self, request, *args, **kwargs):
+        from celery.result import AsyncResult
+
+        task_id = request.GET.get("task_id", "").strip()
+        if not task_id:
+            return JsonResponse({"ok": False, "error": "Missing task_id."}, status=400)
+
+        async_res = AsyncResult(task_id)
+        celery_state = (async_res.state or "").upper()
+        run = (
+            CompanyFetchRun.objects.select_related("label__company", "label__platform")
+            .filter(task_id=task_id)
+            .order_by("-started_at")
+            .first()
+        )
+
+        if run:
+            state = run.status
+            running = state == CompanyFetchRun.Status.RUNNING
+            done = state in {
+                CompanyFetchRun.Status.SUCCESS,
+                CompanyFetchRun.Status.PARTIAL,
+                CompanyFetchRun.Status.FAILED,
+                CompanyFetchRun.Status.SKIPPED,
+            }
+            found = int(run.jobs_found or 0)
+            processed = int(run.jobs_new + run.jobs_updated + run.jobs_duplicate + run.jobs_failed)
+            if done:
+                percent = 100
+            elif found > 0:
+                percent = max(8, min(95, int((processed / max(found, 1)) * 100)))
+            elif celery_state == "STARTED":
+                percent = 10
+            elif celery_state == "RETRY":
+                percent = 18
+            elif celery_state == "PROGRESS" and isinstance(async_res.info, dict):
+                percent = int(async_res.info.get("percent", 15) or 15)
+            else:
+                percent = 4
+
+            if done:
+                if state == CompanyFetchRun.Status.SUCCESS:
+                    message = "Company fetch complete."
+                elif state == CompanyFetchRun.Status.PARTIAL:
+                    message = "Company fetch completed with partial failures."
+                elif state == CompanyFetchRun.Status.SKIPPED:
+                    message = run.error_message or "Company fetch skipped."
+                else:
+                    message = run.error_message or "Company fetch failed."
+            else:
+                if found > 0:
+                    message = f"Processing jobs… {processed}/{found}"
+                else:
+                    message = "Discovering jobs from company board…"
+
+            recent_qs = RawJob.objects.filter(platform_label_id=run.label_id)
+            if run.started_at:
+                recent_qs = recent_qs.filter(updated_at__gte=run.started_at - timedelta(seconds=3))
+            recent_jobs = list(
+                recent_qs.order_by("-updated_at").values(
+                    "id",
+                    "title",
+                    "company_name",
+                    "location_raw",
+                    "sync_status",
+                    "updated_at",
+                    "original_url",
+                )[:20]
+            )
+            jobs_payload = [
+                {
+                    "id": row["id"],
+                    "title": row["title"] or "Untitled role",
+                    "company_name": row["company_name"] or (run.label.company.name if run.label and run.label.company else ""),
+                    "location_raw": row["location_raw"] or "",
+                    "sync_status": row["sync_status"] or "PENDING",
+                    "detail_url": f"/harvest/raw-jobs/{row['id']}/",
+                    "original_url": row["original_url"] or "",
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
+                }
+                for row in recent_jobs
+            ]
+
+            rawjobs_qs = {"q": run.label.company.name if run.label and run.label.company else ""}
+            if run.label and run.label.platform:
+                rawjobs_qs["platform"] = run.label.platform.slug
+            rawjobs_url = f"{reverse('harvest-rawjobs')}?{urlencode(rawjobs_qs)}"
+
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "celery_state": celery_state,
+                    "state": state,
+                    "running": running,
+                    "done": done,
+                    "percent": percent,
+                    "message": message,
+                    "company_name": run.label.company.name if run.label and run.label.company else "",
+                    "platform_slug": run.label.platform.slug if run.label and run.label.platform else "",
+                    "company_jobs_url": run.label.career_page_url or "",
+                    "counts": {
+                        "found": found,
+                        "new": int(run.jobs_new),
+                        "updated": int(run.jobs_updated),
+                        "duplicate": int(run.jobs_duplicate),
+                        "failed": int(run.jobs_failed),
+                    },
+                    "run": {
+                        "id": run.pk,
+                        "label_pk": run.label_id,
+                        "started_at": run.started_at.isoformat() if run.started_at else "",
+                        "completed_at": run.completed_at.isoformat() if run.completed_at else "",
+                        "error_message": run.error_message or "",
+                    },
+                    "recent_jobs": jobs_payload,
+                    "rawjobs_url": rawjobs_url,
+                }
+            )
+
+        # Fallback before run record is created.
+        if celery_state in {"PENDING", "STARTED", "RETRY", "PROGRESS"}:
+            percent_map = {"PENDING": 2, "STARTED": 10, "RETRY": 18}
+            percent = percent_map.get(celery_state, 15)
+            message = "Queued…" if celery_state == "PENDING" else "Starting company fetch…"
+            if celery_state == "PROGRESS" and isinstance(async_res.info, dict):
+                percent = int(async_res.info.get("percent", percent) or percent)
+                message = async_res.info.get("message", message)
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "state": celery_state,
+                    "celery_state": celery_state,
+                    "running": True,
+                    "done": False,
+                    "percent": max(1, min(95, percent)),
+                    "message": message,
+                    "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "failed": 0},
+                    "recent_jobs": [],
+                    "rawjobs_url": reverse("harvest-rawjobs"),
+                }
+            )
+
+        if celery_state == "SUCCESS":
+            result = async_res.result if isinstance(async_res.result, dict) else {}
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "state": "SUCCESS",
+                    "celery_state": "SUCCESS",
+                    "running": False,
+                    "done": True,
+                    "percent": 100,
+                    "message": "Company fetch complete.",
+                    "counts": {
+                        "found": int(result.get("jobs_found", 0) or 0),
+                        "new": int(result.get("jobs_new", 0) or 0),
+                        "updated": int(result.get("jobs_updated", 0) or 0),
+                        "duplicate": 0,
+                        "failed": int(result.get("jobs_failed", 0) or 0),
+                    },
+                    "recent_jobs": [],
+                    "rawjobs_url": reverse("harvest-rawjobs"),
+                }
+            )
+
+        err = str(async_res.result) if async_res.result else "Company fetch failed."
+        return JsonResponse(
+            {
+                "ok": True,
+                "task_id": task_id,
+                "state": celery_state or "FAILURE",
+                "celery_state": celery_state or "FAILURE",
+                "running": False,
+                "done": True,
+                "percent": 100,
+                "message": err,
+                "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "failed": 1},
+                "recent_jobs": [],
+                "rawjobs_url": reverse("harvest-rawjobs"),
             }
         )
 

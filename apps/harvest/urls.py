@@ -10,6 +10,8 @@ from .views import (
     JarvisReScrapeView,
     JarvisApproveView,
     JarvisFetchCompanyJobsView,
+    JarvisFetchProgressApiView,
+    JarvisFetchProgressView,
     JarvisStatusView,
     JarvisView,
     LabelManualSetView,
@@ -95,5 +97,7 @@ urlpatterns = [
     path("jarvis/status/", JarvisStatusView.as_view(), name="harvest-jarvis-status"),
     path("jarvis/approve/", JarvisApproveView.as_view(), name="harvest-jarvis-approve"),
     path("jarvis/fetch-all/", JarvisFetchCompanyJobsView.as_view(), name="harvest-jarvis-fetch-all"),
+    path("jarvis/fetch-all/progress/", JarvisFetchProgressView.as_view(), name="harvest-jarvis-fetch-all-progress"),
+    path("jarvis/fetch-all/progress/api/", JarvisFetchProgressApiView.as_view(), name="harvest-jarvis-fetch-all-progress-api"),
     path("jarvis/rescrape/", JarvisReScrapeView.as_view(), name="harvest-jarvis-rescrape"),
 ]
