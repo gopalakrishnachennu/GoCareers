@@ -771,7 +771,7 @@ class JarvisFetchAllCompanyViewTests(TestCase):
 
         from harvest.models import CompanyPlatformLabel
 
-        with patch("apps.harvest.tasks.fetch_raw_jobs_for_company_task.delay", return_value=SimpleNamespace(id="task-123")):
+        with patch("apps.harvest.tasks.fetch_raw_jobs_for_company_task.apply_async", return_value=SimpleNamespace(id="task-123")) as mocked_apply:
             resp = self.client.post(
                 reverse("harvest-jarvis-fetch-all"),
                 {"raw_job_id": str(self.raw_job.pk)},
@@ -792,6 +792,7 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         qs = parse_qs(parsed.query)
         self.assertEqual(qs.get("task_id"), ["task-123"])
         self.assertEqual(qs.get("label_pk"), [str(body["label_pk"])])
+        mocked_apply.assert_called_once()
 
         self.raw_job.refresh_from_db()
         self.assertIsNotNone(self.raw_job.platform_label)

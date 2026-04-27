@@ -1663,11 +1663,17 @@ class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
                 status=400,
             )
 
-        task = fetch_raw_jobs_for_company_task.delay(
-            label_pk=label.pk,
-            batch_id=None,
-            triggered_by="JARVIS",
-            fetch_all=True,
+        # Fetch-all for large Workday boards can exceed the default 8-minute
+        # soft limit. Override per-task limits for Jarvis-triggered full crawls.
+        task = fetch_raw_jobs_for_company_task.apply_async(
+            kwargs={
+                "label_pk": label.pk,
+                "batch_id": None,
+                "triggered_by": "JARVIS",
+                "fetch_all": True,
+            },
+            soft_time_limit=1800,
+            time_limit=2100,
         )
 
         # Keep payload enriched for UI render

@@ -264,13 +264,17 @@ class WorkdayHarvester(BaseHarvester):
                     offset += PAGE_SIZE
 
             # ── Inline detail fetch for jobs with no description ──────────────
-            # Workday's list/search API returns only metadata — no description.
-            # The CXS detail endpoint (same API Jarvis uses for backfill) returns
-            # the full JD as JSON.  We fetch it here so jobs arrive complete:
-            # no backfill task needed, no separate pass, no missing JD stats.
+            # Workday's list/search API returns mostly metadata, so this enriches
+            # each role with the detail endpoint.
             #
-            # Capped at DETAIL_FETCH_CAP to keep task runtime bounded.
-            # Jobs beyond the cap get their JD via the background backfill task.
+            # IMPORTANT: for fetch_all=True (Jarvis full company crawl), skip
+            # inline detail calls entirely. On large boards this can exceed the
+            # task soft time limit and fail before upserts complete.
+            # Missing descriptions are filled by background JD backfill.
+            if fetch_all:
+                return results
+
+            # Capped to keep runtime bounded on incremental runs.
             tenant_val = _re.sub(r"\.wd\d+$", "", full_subdomain, flags=_re.I)
             detail_fetched = 0
             for job_dict in results:
