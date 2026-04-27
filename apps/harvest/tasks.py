@@ -586,6 +586,7 @@ def fetch_raw_jobs_for_company_task(
     Fetch ALL jobs for a single CompanyPlatformLabel and upsert into RawJob.
     Creates a CompanyFetchRun audit record. Updates FetchBatch counters if batch_id given.
     """
+    import hashlib
     import requests
     from datetime import date
 
@@ -886,6 +887,30 @@ def fetch_raw_jobs_for_company_task(
                 existing_by_external.save()
                 jobs_updated += 1
                 continue
+
+            # ── Legacy hash reconciliation: migrate old non-canonical hash in place ──
+            legacy_hash = hashlib.sha256(original_url.encode("utf-8")).hexdigest()
+            if legacy_hash and legacy_hash != url_hash:
+                legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
+                if legacy_row:
+                    if legacy_row.sync_status == "SYNCED":
+                        jobs_duplicate += 1
+                        continue
+                    hash_owned_elsewhere = (
+                        RawJob.objects.filter(url_hash=url_hash)
+                        .exclude(pk=legacy_row.pk)
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if hash_owned_elsewhere:
+                        jobs_duplicate += 1
+                        continue
+                    for field, val in defaults.items():
+                        setattr(legacy_row, field, val)
+                    legacy_row.url_hash = url_hash
+                    legacy_row.save()
+                    jobs_updated += 1
+                    continue
 
             # ── Dedup guard: never overwrite a SYNCED job ────────────────────
             # If this URL is already in the pool (sync_status=SYNCED), there is
@@ -1565,6 +1590,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             )
 
     # ── Build RawJob ──────────────────────────────────────────────────────────
+    import hashlib
     from datetime import timedelta
     original_url = data.get("original_url") or url
     url_hash = compute_url_hash(original_url)
@@ -1612,46 +1638,95 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "posted_date": posted_date,
     })
 
-    raw_job, created = RawJob.objects.update_or_create(
-        url_hash=url_hash,
-        defaults={
-            "company": company,
-            "platform_label": platform_label,
-            "job_platform": job_platform,
-            "platform_slug": platform_slug,
-            "external_id": (data.get("external_id") or "")[:512],
-            "original_url": original_url[:1024],
-            "apply_url": (data.get("apply_url") or original_url)[:1024],
-            "title": (data.get("title") or "Untitled")[:512],
-            "company_name": company_name[:256] if company_name else "",
-            "department": (data.get("department") or "")[:256],
-            "team": (data.get("team") or "")[:256],
-            "location_raw": (data.get("location_raw") or "")[:512],
-            "city": (data.get("city") or "")[:128],
-            "state": (data.get("state") or "")[:128],
-            "country": (data.get("country") or "")[:128],
-            "is_remote": bool(data.get("is_remote")),
-            "location_type": data.get("location_type") or "UNKNOWN",
-            "employment_type": data.get("employment_type") or "UNKNOWN",
-            "experience_level": data.get("experience_level") or "UNKNOWN",
-            "salary_min": data.get("salary_min"),
-            "salary_max": data.get("salary_max"),
-            "salary_currency": (data.get("salary_currency") or "USD")[:8],
-            "salary_period": (data.get("salary_period") or "")[:16],
-            "salary_raw": (data.get("salary_raw") or "")[:256],
-            "description": description,
-            "requirements": requirements,
-            "benefits": benefits,
-            "posted_date": posted_date,
-            "closing_date": closing_date,
-            "raw_payload": raw_payload,
-            "sync_status": "PENDING",
-            "is_active": True,
-            "expires_at": timezone.now() + timedelta(days=30),
-            # ── enrichment fields ─────────────────────────────────────────
-            **enriched,
-        },
-    )
+    external_id = (data.get("external_id") or "").strip()[:512]
+    raw_job_defaults = {
+        "company": company,
+        "platform_label": platform_label,
+        "job_platform": job_platform,
+        "platform_slug": platform_slug,
+        "external_id": external_id,
+        "original_url": original_url[:1024],
+        "apply_url": (data.get("apply_url") or original_url)[:1024],
+        "title": (data.get("title") or "Untitled")[:512],
+        "company_name": company_name[:256] if company_name else "",
+        "department": (data.get("department") or "")[:256],
+        "team": (data.get("team") or "")[:256],
+        "location_raw": (data.get("location_raw") or "")[:512],
+        "city": (data.get("city") or "")[:128],
+        "state": (data.get("state") or "")[:128],
+        "country": (data.get("country") or "")[:128],
+        "is_remote": bool(data.get("is_remote")),
+        "location_type": data.get("location_type") or "UNKNOWN",
+        "employment_type": data.get("employment_type") or "UNKNOWN",
+        "experience_level": data.get("experience_level") or "UNKNOWN",
+        "salary_min": data.get("salary_min"),
+        "salary_max": data.get("salary_max"),
+        "salary_currency": (data.get("salary_currency") or "USD")[:8],
+        "salary_period": (data.get("salary_period") or "")[:16],
+        "salary_raw": (data.get("salary_raw") or "")[:256],
+        "description": description,
+        "requirements": requirements,
+        "benefits": benefits,
+        "posted_date": posted_date,
+        "closing_date": closing_date,
+        "raw_payload": raw_payload,
+        "sync_status": "PENDING",
+        "is_active": True,
+        "expires_at": timezone.now() + timedelta(days=30),
+        # ── enrichment fields ─────────────────────────────────────────
+        **enriched,
+    }
+
+    raw_job = None
+    created = False
+
+    # Secondary dedupe guard by external_id within the resolved company+platform.
+    if external_id:
+        ext_match_qs = RawJob.objects.filter(
+            company=company,
+            external_id=external_id,
+        )
+        if job_platform:
+            ext_match_qs = ext_match_qs.filter(job_platform=job_platform)
+        ext_match = ext_match_qs.order_by("pk").first()
+        if ext_match:
+            hash_owned_elsewhere = (
+                RawJob.objects.filter(url_hash=url_hash)
+                .exclude(pk=ext_match.pk)
+                .values_list("pk", flat=True)
+                .first()
+            )
+            if not hash_owned_elsewhere:
+                for field, val in raw_job_defaults.items():
+                    setattr(ext_match, field, val)
+                ext_match.url_hash = url_hash
+                ext_match.save()
+                raw_job = ext_match
+
+    # Legacy hash reconciliation so old rows are updated instead of duplicated.
+    if raw_job is None:
+        legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest()
+        if legacy_hash and legacy_hash != url_hash:
+            legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
+            if legacy_row:
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=legacy_row.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if not hash_owned_elsewhere:
+                    for field, val in raw_job_defaults.items():
+                        setattr(legacy_row, field, val)
+                    legacy_row.url_hash = url_hash
+                    legacy_row.save()
+                    raw_job = legacy_row
+
+    if raw_job is None:
+        raw_job, created = RawJob.objects.update_or_create(
+            url_hash=url_hash,
+            defaults=raw_job_defaults,
+        )
     _invalidate_rawjobs_dashboard_cache()
 
     update_task_progress(self, current=3, total=3, message="Done ✓")

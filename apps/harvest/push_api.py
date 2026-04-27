@@ -11,6 +11,7 @@ Three endpoints (all protected by Bearer token = settings.HARVEST_PUSH_SECRET):
 import json
 import logging
 from datetime import date, datetime
+import hashlib
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -259,6 +260,10 @@ class PushJobsView(View):
                     continue
 
                 if RawJob.objects.filter(url_hash=url_hash).exists():
+                    skipped += 1
+                    continue
+                legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest() if original_url else ""
+                if legacy_hash and legacy_hash != url_hash and RawJob.objects.filter(url_hash=legacy_hash).exists():
                     skipped += 1
                     continue
 
