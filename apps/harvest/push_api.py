@@ -8,18 +8,20 @@ Three endpoints (all protected by Bearer token = settings.HARVEST_PUSH_SECRET):
   GET  /harvest/api/push/status/   → Stats on pushed vs synced jobs
 """
 
-import hashlib
 import json
 import logging
 from datetime import date, datetime
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
+
+from .normalizer import compute_url_hash
 
 logger = logging.getLogger("harvest.push_api")
 
@@ -69,14 +71,47 @@ def _resolve_company(company_name: str):
     if not company_name:
         return None
     try:
+        import re
+
         from companies.models import Company
-        company = Company.objects.filter(name__iexact=company_name.strip()).first()
+        raw_name = re.sub(r"\s+", " ", company_name).strip(" -_,.")
+        company = Company.objects.filter(Q(name__iexact=raw_name) | Q(alias__iexact=raw_name)).first()
         if company:
             return company
-        company, _ = Company.objects.get_or_create(
-            name=company_name.strip(),
-            defaults={"name": company_name.strip()},
-        )
+
+        def _name_key(v: str) -> str:
+            txt = (v or "").strip().lower().replace("&", " and ")
+            txt = re.sub(r"[^a-z0-9]+", " ", txt)
+            toks = [t for t in txt.split() if t]
+            stop = {
+                "the", "inc", "incorporated", "llc", "ltd", "ltda", "corp", "corporation",
+                "co", "company", "group", "holdings", "plc", "gmbh", "sa", "bv", "srl",
+                "pte", "and", "of", "for", "a", "an", "do", "de", "da",
+            }
+            reduced = [t for t in toks if t not in stop] or toks
+            return " ".join(reduced)
+
+        lookup_key = _name_key(raw_name)
+        lookup_compact = lookup_key.replace(" ", "")
+        if lookup_key:
+            token_q = Q()
+            for tok in lookup_key.split()[:3]:
+                token_q |= Q(name__icontains=tok) | Q(alias__icontains=tok)
+            candidates = Company.objects.filter(token_q) if token_q else Company.objects.all()
+            best = None
+            for cand in candidates.only("id", "name", "alias").order_by("name")[:300]:
+                for cname in (cand.name, cand.alias):
+                    cand_key = _name_key(cname)
+                    if not cand_key:
+                        continue
+                    if cand_key == lookup_key or cand_key.replace(" ", "") == lookup_compact:
+                        if best is None or len(cand.name) < len(best.name):
+                            best = cand
+                        break
+            if best:
+                return best
+
+        company, _ = Company.objects.get_or_create(name=raw_name, defaults={"name": raw_name})
         return company
     except Exception:
         logger.exception("push_api: company lookup failed for %r", company_name)
@@ -214,15 +249,14 @@ class PushJobsView(View):
 
         for job_data in jobs:
             try:
-                url_hash = job_data.get("url_hash", "").strip()
+                original_url = job_data.get("original_url", "").strip()
+                url_hash = compute_url_hash(original_url)
                 if not url_hash:
-                    # Compute it here if the local agent forgot
-                    original_url = job_data.get("original_url", "").strip()
-                    if original_url:
-                        url_hash = hashlib.sha256(original_url.encode("utf-8")).hexdigest()
-                    else:
-                        errors += 1
-                        continue
+                    # Fallback to supplied hash only when URL is missing.
+                    url_hash = job_data.get("url_hash", "").strip()
+                if not url_hash:
+                    errors += 1
+                    continue
 
                 if RawJob.objects.filter(url_hash=url_hash).exists():
                     skipped += 1
@@ -239,13 +273,23 @@ class PushJobsView(View):
 
                 platform_slug = job_data.get("platform_slug", "").strip()
                 platform = get_platform(platform_slug)
+                external_id = str(job_data.get("external_id", "")).strip()[:512]
+
+                # Secondary dedupe guard: same company+platform+external_id.
+                if external_id and RawJob.objects.filter(
+                    company=company,
+                    platform_slug=platform_slug[:64],
+                    external_id=external_id,
+                ).exists():
+                    skipped += 1
+                    continue
 
                 rj = RawJob(
                     company=company,
                     job_platform=platform,
                     url_hash=url_hash,
-                    external_id=str(job_data.get("external_id", ""))[:512],
-                    original_url=str(job_data.get("original_url", ""))[:1024],
+                    external_id=external_id,
+                    original_url=original_url[:1024],
                     apply_url=str(job_data.get("apply_url", ""))[:1024],
                     title=str(job_data.get("title", ""))[:512],
                     company_name=str(job_data.get("company_name", ""))[:256],

@@ -6,14 +6,15 @@ pointing at the same URL).
 """
 from __future__ import annotations
 
-import hashlib
 from typing import Optional
+
+from harvest.normalizer import compute_url_hash
 
 from .models import Job
 
 
 def url_hash_for(url: str) -> str:
-    return hashlib.sha256((url or '').strip().encode('utf-8')).hexdigest() if url else ''
+    return compute_url_hash(url)
 
 
 def find_existing_job_by_url(url: str) -> Optional[Job]:

@@ -2,10 +2,82 @@ import hashlib
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+
+_TRACKING_QUERY_KEYS = {
+    "src",
+    "source",
+    "ref",
+    "refs",
+    "referrer",
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "utm_id",
+    "utm_name",
+    "utm_reader",
+    "gh_src",
+    "gh_jid",
+    "gh_jid_id",
+    "gh_src_id",
+    "li_fat_id",
+    "fbclid",
+    "gclid",
+    "igshid",
+    "mc_cid",
+    "mc_eid",
+}
+
+
+def canonicalize_job_url(url: str) -> str:
+    """
+    Canonicalize ATS URLs so the same job hashes identically across trackers.
+
+    Keeps identity-bearing path/query pieces but strips tracking noise.
+    """
+    raw = (url or "").strip()
+    if not raw:
+        return ""
+
+    try:
+        parsed = urlsplit(raw)
+        scheme = (parsed.scheme or "https").lower()
+        host = (parsed.hostname or "").lower()
+        if not host:
+            return raw
+
+        port = parsed.port
+        netloc = host
+        if port and not ((scheme == "http" and port == 80) or (scheme == "https" and port == 443)):
+            netloc = f"{host}:{port}"
+
+        path = re.sub(r"/{2,}", "/", parsed.path or "/")
+        if len(path) > 1:
+            path = path.rstrip("/")
+
+        kept_pairs = []
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True):
+            key_norm = (key or "").strip().lower()
+            if not key_norm:
+                continue
+            if key_norm in _TRACKING_QUERY_KEYS or key_norm.startswith("utm_"):
+                continue
+            kept_pairs.append((key, value))
+
+        query = urlencode(sorted(kept_pairs), doseq=True)
+        return urlunsplit((scheme, netloc, path or "/", query, ""))
+    except Exception:
+        return raw
 
 
 def compute_url_hash(url: str) -> str:
-    return hashlib.sha256(url.strip().encode()).hexdigest()
+    canonical = canonicalize_job_url(url)
+    if not canonical:
+        return ""
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def strip_html(html: str) -> str:

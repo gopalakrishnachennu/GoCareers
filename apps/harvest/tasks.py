@@ -586,12 +586,12 @@ def fetch_raw_jobs_for_company_task(
     Fetch ALL jobs for a single CompanyPlatformLabel and upsert into RawJob.
     Creates a CompanyFetchRun audit record. Updates FetchBatch counters if batch_id given.
     """
-    import hashlib
     import requests
     from datetime import date
 
     from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig, RawJob
     from .harvesters import get_harvester
+    from .normalizer import compute_url_hash
 
     # ── Read live config from DB — overrides decorator-level fallbacks ────────
     try:
@@ -793,7 +793,11 @@ def fetch_raw_jobs_for_company_task(
                 jobs_failed += 1
                 continue
 
-            url_hash = hashlib.sha256(original_url.encode()).hexdigest()
+            url_hash = compute_url_hash(original_url)
+            if not url_hash:
+                jobs_failed += 1
+                continue
+            external_id = (job_dict.get("external_id") or "").strip()[:512]
 
             # Parse posted_date
             posted_date = None
@@ -820,7 +824,7 @@ def fetch_raw_jobs_for_company_task(
                 "company": label.company,
                 "platform_label": label,
                 "job_platform": label.platform,
-                "external_id": (job_dict.get("external_id") or "")[:512],
+                "external_id": external_id,
                 "original_url": original_url[:1024],
                 "apply_url": (job_dict.get("apply_url") or "")[:1024],
                 "title": (job_dict.get("title") or "")[:512],
@@ -849,6 +853,39 @@ def fetch_raw_jobs_for_company_task(
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
             }
+
+            # ── Dedup guard (ATS external_id): same label+external_id = same job ──
+            # Some platforms append tracker params or alternate paths to the same job.
+            # We treat external_id as stable identity when present and update in place.
+            existing_by_external = None
+            if external_id:
+                existing_by_external = (
+                    RawJob.objects.filter(
+                        platform_label=label,
+                        external_id=external_id,
+                    )
+                    .order_by("pk")
+                    .first()
+                )
+            if existing_by_external:
+                if existing_by_external.sync_status == "SYNCED":
+                    jobs_duplicate += 1
+                    continue
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=existing_by_external.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if hash_owned_elsewhere:
+                    jobs_duplicate += 1
+                    continue
+                for field, val in defaults.items():
+                    setattr(existing_by_external, field, val)
+                existing_by_external.url_hash = url_hash
+                existing_by_external.save()
+                jobs_updated += 1
+                continue
 
             # ── Dedup guard: never overwrite a SYNCED job ────────────────────
             # If this URL is already in the pool (sync_status=SYNCED), there is
@@ -1485,6 +1522,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     """
     from .jarvis import JobJarvis
     from .models import RawJob, JobBoardPlatform
+    from .normalizer import compute_url_hash
 
     update_task_progress(self, current=0, total=3, message="Fetching job page…")
 
@@ -1500,7 +1538,6 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     update_task_progress(self, current=2, total=3, message="Saving to database…")
 
     # ── Resolve Company (smart matching) ─────────────────────────────────────
-    from companies.models import Company
     company_name = (data.get("company_name") or "").strip()
     if not company_name:
         company_name = _extract_company_from_url(url)
@@ -1528,10 +1565,9 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             )
 
     # ── Build RawJob ──────────────────────────────────────────────────────────
-    import hashlib
     from datetime import timedelta
     original_url = data.get("original_url") or url
-    url_hash = hashlib.sha256(original_url.strip().encode()).hexdigest()
+    url_hash = compute_url_hash(original_url)
 
     # ── Resolve company label context for fetch-all workflows ───────────────
     platform_label, board_ctx = _jarvis_ensure_company_platform_label(
@@ -1813,7 +1849,8 @@ def _extract_company_from_url(url: str) -> str:
         for suffix in (
             ".greenhouse.io", ".lever.co", ".ashbyhq.com",
             ".myworkdayjobs.com", ".workable.com", ".bamboohr.com",
-            ".dayforcehcm.com",
+            ".dayforcehcm.com", ".icims.com", ".smartrecruiters.com",
+            ".taleo.net", ".jobvite.com", ".zohorecruit.com",
         ):
             if host.endswith(suffix):
                 host = host[: -len(suffix)]
@@ -1868,6 +1905,35 @@ def _jarvis_parse_date(raw: str):
     return None
 
 
+def _jarvis_company_name_key(raw: str) -> str:
+    """Normalize name for duplicate checks (ignore punctuation/legal suffix noise)."""
+    import re as _re
+
+    if not raw:
+        return ""
+    text = raw.strip().lower().replace("&", " and ")
+    text = _re.sub(r"[^a-z0-9]+", " ", text)
+    tokens = [t for t in text.split() if t]
+    if not tokens:
+        return ""
+    stop = {
+        "the", "inc", "incorporated", "llc", "ltd", "ltda", "corp", "corporation",
+        "co", "company", "group", "holdings", "plc", "gmbh",
+        "sa", "bv", "srl", "pte", "and", "of", "for", "a", "an", "do", "de", "da",
+    }
+    reduced = [t for t in tokens if t not in stop] or tokens
+    return " ".join(reduced)
+
+
+def _jarvis_clean_company_name(raw: str) -> str:
+    import re as _re
+
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    return _re.sub(r"\s+", " ", text).strip(" -_,.")
+
+
 def _jarvis_resolve_company(company_name: str, job_url: str):
     """
     Smart company lookup for Jarvis imports.
@@ -1880,9 +1946,11 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
                           e.g. "Bayview" ↔ "Bayview Asset Management"
       4. Create new     — only when all matching strategies fail
     """
-    from urllib.parse import urlparse
     from django.db.models import Q
     from companies.models import Company
+    from urllib.parse import urlparse
+
+    company_name = _jarvis_clean_company_name(company_name)
 
     # ── 1. Domain match ──────────────────────────────────────────────────────
     root_domain = ""
@@ -1921,7 +1989,40 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             logger.info("Jarvis company match by domain: %s → %s", root_domain, match.name)
             return match
 
-    # ── 2. Word-by-word fuzzy scan ───────────────────────────────────────────
+    # ── 2. Exact match (case-insensitive) + normalized key match ───────────
+    if company_name:
+        exact = (
+            Company.objects.filter(Q(name__iexact=company_name) | Q(alias__iexact=company_name))
+            .order_by(Length("name"), "name")
+            .first()
+        )
+        if exact:
+            logger.info("Jarvis exact company match: '%s' → '%s'", company_name, exact.name)
+            return exact
+
+        key = _jarvis_company_name_key(company_name)
+        compact = key.replace(" ", "")
+        if key:
+            token_q = Q()
+            for tok in key.split()[:3]:
+                token_q |= Q(name__icontains=tok) | Q(alias__icontains=tok)
+            candidate_qs = Company.objects.filter(token_q) if token_q else Company.objects.all()
+            best = None
+            for cand in candidate_qs.only("id", "name", "alias").order_by("name")[:300]:
+                for cand_name in (cand.name, cand.alias):
+                    cand_key = _jarvis_company_name_key(cand_name or "")
+                    if not cand_key:
+                        continue
+                    cand_compact = cand_key.replace(" ", "")
+                    if cand_key == key or (compact and cand_compact == compact):
+                        if best is None or len(cand.name) < len(best.name):
+                            best = cand
+                        break
+            if best:
+                logger.info("Jarvis normalized company match: '%s' → '%s'", company_name, best.name)
+                return best
+
+    # ── 3. Word-by-word fuzzy scan ───────────────────────────────────────────
     # NOTE: intentionally skipping a plain exact-name match here.
     # If a previous Jarvis run created a stub company (e.g. "Bayview Asset
     # Management"), an exact match would return that stub instead of the
@@ -1977,8 +2078,9 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             return best
 
     # ── 4. Create new ────────────────────────────────────────────────────────
+    clean_name = company_name or "Unknown (Jarvis Import)"
     company, created = Company.objects.get_or_create(
-        name=company_name or "Unknown (Jarvis Import)",
+        name=clean_name,
         defaults={"website": _root_url(job_url)},
     )
     if created:
