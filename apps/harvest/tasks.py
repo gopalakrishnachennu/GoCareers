@@ -888,6 +888,37 @@ def fetch_raw_jobs_for_company_task(
                 jobs_updated += 1
                 continue
 
+            # ── Query-variant reconciliation: same path, tracker query changed ──
+            base_url = original_url.split("?", 1)[0].strip()
+            if base_url:
+                variant_row = (
+                    RawJob.objects.filter(
+                        platform_label=label,
+                        original_url__startswith=base_url,
+                    )
+                    .order_by("pk")
+                    .first()
+                )
+                if variant_row and variant_row.url_hash != url_hash:
+                    if variant_row.sync_status == "SYNCED":
+                        jobs_duplicate += 1
+                        continue
+                    hash_owned_elsewhere = (
+                        RawJob.objects.filter(url_hash=url_hash)
+                        .exclude(pk=variant_row.pk)
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if hash_owned_elsewhere:
+                        jobs_duplicate += 1
+                        continue
+                    for field, val in defaults.items():
+                        setattr(variant_row, field, val)
+                    variant_row.url_hash = url_hash
+                    variant_row.save()
+                    jobs_updated += 1
+                    continue
+
             # ── Legacy hash reconciliation: migrate old non-canonical hash in place ──
             legacy_hash = hashlib.sha256(original_url.encode("utf-8")).hexdigest()
             if legacy_hash and legacy_hash != url_hash:
@@ -1702,6 +1733,31 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
                 ext_match.url_hash = url_hash
                 ext_match.save()
                 raw_job = ext_match
+
+    # Query-variant reconciliation: same job path with old tracking query hash.
+    if raw_job is None:
+        base_url = original_url.split("?", 1)[0].strip()
+        if base_url:
+            variant_qs = RawJob.objects.filter(
+                company=company,
+                original_url__startswith=base_url,
+            )
+            if job_platform:
+                variant_qs = variant_qs.filter(job_platform=job_platform)
+            variant_row = variant_qs.order_by("pk").first()
+            if variant_row and variant_row.url_hash != url_hash:
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=variant_row.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if not hash_owned_elsewhere:
+                    for field, val in raw_job_defaults.items():
+                        setattr(variant_row, field, val)
+                    variant_row.url_hash = url_hash
+                    variant_row.save()
+                    raw_job = variant_row
 
     # Legacy hash reconciliation so old rows are updated instead of duplicated.
     if raw_job is None:

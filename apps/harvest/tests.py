@@ -830,6 +830,60 @@ class JarvisCompanyAndRawJobDedupeTests(TestCase):
         self.assertEqual(out["jobs_new"], 1)
         self.assertEqual(out["jobs_updated"], 1)
 
+    def test_fetch_task_dedupes_query_variant_without_external_id(self):
+        import hashlib
+
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform, RawJob
+        from harvest.tasks import fetch_raw_jobs_for_company_task
+
+        company = Company.objects.create(name="Acme Query Variant")
+        platform = JobBoardPlatform.objects.create(name="iCIMS Query", slug="icims-query-temp", is_enabled=True)
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id="acme-query",
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+        )
+
+        old_url = "https://example.com/jobs/6503?src=LinkedIn"
+        old_hash = hashlib.sha256(old_url.encode("utf-8")).hexdigest()
+        RawJob.objects.create(
+            company=company,
+            platform_label=label,
+            job_platform=platform,
+            title="Query Variant Role",
+            original_url=old_url,
+            apply_url=old_url,
+            url_hash=old_hash,
+            platform_slug="icims-query-temp",
+            company_name=company.name,
+        )
+
+        class _FakeHarvester:
+            last_total_available = 1
+
+            def fetch_jobs(self, *args, **kwargs):
+                return [
+                    {
+                        "original_url": "https://example.com/jobs/6503",
+                        "apply_url": "https://example.com/jobs/6503",
+                        "title": "Query Variant Role",
+                        "company_name": company.name,
+                    }
+                ]
+
+        with patch("harvest.harvesters.get_harvester", return_value=_FakeHarvester()):
+            out = fetch_raw_jobs_for_company_task.apply(
+                kwargs={"label_pk": label.pk, "fetch_all": True}
+            ).get()
+
+        self.assertEqual(RawJob.objects.filter(platform_label=label).count(), 1)
+        self.assertEqual(out["jobs_found"], 1)
+        self.assertEqual(out["jobs_new"], 0)
+        self.assertEqual(out["jobs_updated"], 1)
+
 
 class JarvisIngestDayforceIntegrationTests(TestCase):
     def test_ingest_auto_creates_dayforce_platform_and_company(self):

@@ -262,6 +262,10 @@ class PushJobsView(View):
                 if RawJob.objects.filter(url_hash=url_hash).exists():
                     skipped += 1
                     continue
+                base_url = original_url.split("?", 1)[0].strip()
+                if base_url and RawJob.objects.filter(original_url__startswith=base_url).exists():
+                    skipped += 1
+                    continue
                 legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest() if original_url else ""
                 if legacy_hash and legacy_hash != url_hash and RawJob.objects.filter(url_hash=legacy_hash).exists():
                     skipped += 1
