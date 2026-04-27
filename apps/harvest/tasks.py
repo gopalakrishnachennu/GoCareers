@@ -1762,6 +1762,84 @@ def _fast_workday_description(job_url: str) -> str:
     return ""
 
 
+def _html_jd_extract(url: str, extra_selectors: list[str] | None = None, timeout: int = 15) -> str:
+    """Generic HTML JD extractor used by platform fast paths as a fallback.
+
+    Tries in order:
+      1. JSON-LD <script type="application/ld+json"> JobPosting schema
+      2. <meta property="og:description"> (short but structured)
+      3. Platform-specific CSS class selectors (passed via extra_selectors)
+      4. Largest <div> block containing 'experience'/'responsibilities'/'qualifications'
+    Returns the best non-empty string found, or "".
+    """
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    try:
+        resp = _req.get(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)",
+            },
+            timeout=timeout,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+    except Exception:
+        return ""
+
+    # 1. JSON-LD JobPosting
+    for block in _re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I
+    ):
+        try:
+            schema = _json.loads(block)
+            if isinstance(schema, list):
+                schema = next((s for s in schema if isinstance(s, dict) and s.get("@type") == "JobPosting"), schema[0] if schema else {})
+            if isinstance(schema, dict):
+                if schema.get("@type") in ("JobPosting", "jobPosting"):
+                    for k in ("description", "responsibilities", "qualifications"):
+                        val = schema.get(k) or ""
+                        if val and len(str(val)) > 80:
+                            return str(val).strip()
+        except Exception:
+            continue
+
+    # 2. og:description
+    og_m = _re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', html, _re.I)
+    if not og_m:
+        og_m = _re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']', html, _re.I)
+    og_desc = og_m.group(1).strip() if og_m else ""
+
+    # 3. Extra selectors provided by caller
+    if extra_selectors:
+        for sel_class in extra_selectors:
+            pat = rf'<[^>]+class=["\'][^"\']*{_re.escape(sel_class)}[^"\']*["\'][^>]*>([\s\S]{{100,8000}}?)</[^>]+>'
+            sel_m = _re.search(pat, html, _re.I)
+            if sel_m:
+                text = _re.sub(r"<[^>]+>", " ", sel_m.group(1))
+                text = _re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    return text
+
+    # 4. Largest paragraph-heavy block (heuristic)
+    blocks = _re.findall(r'<(?:div|section|article)[^>]*>([\s\S]{300,10000}?)</(?:div|section|article)>', html, _re.I)
+    best = ""
+    for b in blocks:
+        text = _re.sub(r"<[^>]+>", " ", b)
+        text = _re.sub(r"\s+", " ", text).strip()
+        kws = sum(1 for w in ("experience", "responsibilities", "qualifications", "requirements", "role", "position") if w in text.lower())
+        if kws >= 2 and len(text) > len(best):
+            best = text
+    if best:
+        return best
+
+    return og_desc
+
+
 def _fast_greenhouse_description(job_url: str) -> str:
     """Greenhouse public boards API — returns full description in one JSON call."""
     import re as _re
@@ -1951,39 +2029,50 @@ def _fast_icims_description(job_url: str) -> str:
 
 
 def _fast_oracle_description(job_url: str) -> str:
-    """Oracle HCM — extract description via the Recruiting Cloud REST API."""
+    """Oracle HCM — ShortDescriptionStr from REST API + og:description fallback.
+
+    The Oracle CX public REST API only exposes ShortDescriptionStr (summary).
+    Full description lives in the SPA (requires JS). We return ShortDescriptionStr
+    when available; Jarvis handles the full render if still empty after backfill.
+    """
     import re as _re
     import requests as _req
 
-    m = _re.search(r"([\w.-]+\.oraclecloud\.com)/hcmUI/CandidateExperience/[^/]+/sites/([^/]+)/(?:requisitions?(?:/preview)?|job(?:s)?)/(\d+)", job_url, _re.I)
+    m = _re.search(
+        r"([\w.-]+\.oraclecloud\.com)/hcmUI/CandidateExperience/[^/]+/sites/([^/]+)/(?:requisitions?(?:/preview)?|jobs?)/(\d+)",
+        job_url, _re.I,
+    )
     if not m:
         m = _re.search(r"([\w.-]+\.oraclecloud\.com).*?/(\d{5,})", job_url, _re.I)
         if not m:
-            return ""
-        host, req_num = m.group(1), m.group(2)
+            return _html_jd_extract(job_url)
+        host, sites_id, req_num = m.group(1), "", m.group(2)
     else:
-        host, req_num = m.group(1), m.group(3)
-    api_url = (
-        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-        f"?onlyData=true&expand=requisitionList.requisitionFlexFields,requisitionList.secondaryLocations"
-        f"&finder=findReqs;RequisitionNumber={req_num}"
-    )
-    try:
-        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
-        if not resp.ok:
-            return ""
-        d = resp.json()
-        items = d.get("items") or []
-        if not items:
-            return ""
-        req_list = (items[0].get("requisitionList") or {}).get("items") or []
-        for req in req_list:
-            desc = req.get("ExternalDescriptionStr") or req.get("jobDescription") or req.get("description") or ""
-            if desc:
-                return str(desc).strip()
-        return ""
-    except Exception:
-        return ""
+        host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
+
+    if sites_id:
+        api_url = (
+            f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+            f"?onlyData=true&expand=requisitionList&limit=5"
+            f"&finder=findReqs;siteNumber={sites_id}"
+        )
+        try:
+            resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
+            if resp.ok:
+                items = resp.json().get("items") or []
+                req_list = items[0].get("requisitionList", []) if items else []
+                for req in req_list:
+                    if str(req.get("Id") or "") == req_num:
+                        for key in ("ShortDescriptionStr", "ExternalDescriptionStr",
+                                    "ExternalQualificationsStr", "ExternalResponsibilitiesStr"):
+                            val = str(req.get(key) or "").strip()
+                            if val:
+                                return val
+        except Exception:
+            pass
+
+    # HTML fallback — og:description is usually populated
+    return _html_jd_extract(job_url, extra_selectors=["requisition-description", "job-detail__description"])
 
 
 def _fast_smartrecruiters_description(job_url: str) -> str:
@@ -2014,6 +2103,220 @@ def _fast_smartrecruiters_description(job_url: str) -> str:
         return ""
 
 
+def _fast_taleo_description(job_url: str) -> str:
+    """Taleo — fetch job detail page and extract via JSON-LD or HTML."""
+    return _html_jd_extract(job_url, extra_selectors=["ATSJobDetailContainer", "requisitionDescriptionInterface"])
+
+
+def _fast_ultipro_description(job_url: str) -> str:
+    """UltiPro/UKG — fetch OpportunityDetail page and extract description.
+
+    UltiPro detail URL: .../JobBoard/{guid}/OpportunityDetail?opportunityId={id}
+    The SPA embeds job data in a <script> or renders it in known CSS classes.
+    Also tries the internal GetJob JSON endpoint.
+    """
+    import re as _re
+    import requests as _req
+
+    # Extract company code and GUID from the URL
+    m = _re.search(
+        r"recruiting\.ultipro\.com/([^/]+)/JobBoard/([0-9a-f-]{36})/OpportunityDetail",
+        job_url, _re.I,
+    )
+    if m:
+        company_code, jobboard_id = m.group(1), m.group(2)
+        opp_id_m = _re.search(r"opportunityId=([^&]+)", job_url, _re.I)
+        if opp_id_m:
+            opp_id = opp_id_m.group(1)
+            # Try the internal JSON endpoint first
+            get_job_url = (
+                f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
+                f"/JobBoardView/GetJob?opportunityId={opp_id}"
+            )
+            try:
+                resp = _req.get(get_job_url, headers={"Accept": "application/json"}, timeout=12)
+                if resp.ok:
+                    d = resp.json()
+                    desc = (
+                        d.get("Description") or d.get("description")
+                        or d.get("JobDescription") or d.get("jobDescription")
+                        or d.get("FullDescription") or ""
+                    )
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                pass
+
+    return _html_jd_extract(job_url, extra_selectors=["opportunity-description", "job-description", "oppDetailDescription"])
+
+
+def _fast_dayforce_description(job_url: str) -> str:
+    """Dayforce HCM — extract job description from detail page.
+
+    Dayforce portals are Next.js SPAs; the og:description meta tag and JSON-LD
+    usually have the short description. Full description is in the SPA data.
+    """
+    import re as _re
+    import requests as _req
+
+    # Try Dayforce per-job API (GEO API)
+    # URL: https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs/{id}
+    m = _re.search(
+        r"jobs\.dayforcehcm\.com/en-US/([^/]+)/[^/]+/jobs/([^/?#]+)", job_url, _re.I
+    )
+    if m:
+        slug, job_id = m.group(1), m.group(2)
+        session = _req.Session()
+        # Warm session for Cloudflare
+        try:
+            session.get(
+                f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+                timeout=12,
+            )
+        except Exception:
+            pass
+        # Try direct job API
+        for api_path in [
+            f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/{job_id}",
+            f"https://jobs.dayforcehcm.com/api/{slug}/jobs/{job_id}",
+        ]:
+            try:
+                resp = session.get(
+                    api_path,
+                    headers={
+                        "Accept": "application/json",
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    },
+                    timeout=12,
+                )
+                if resp.ok:
+                    d = resp.json()
+                    desc = (
+                        d.get("JobDescription") or d.get("FullDescription")
+                        or d.get("description") or d.get("Description") or ""
+                    )
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                pass
+
+    return _html_jd_extract(job_url, extra_selectors=["job-description", "dayforce-job-detail"])
+
+
+def _fast_jobvite_description(job_url: str) -> str:
+    """Jobvite — fetch job detail page and extract via JSON-LD."""
+    return _html_jd_extract(job_url, extra_selectors=["jv-job-detail-description", "jv-job-detail-main"])
+
+
+def _fast_breezy_description(job_url: str) -> str:
+    """Breezy HR — fetch job detail page via public API or HTML."""
+    import re as _re
+    import requests as _req
+
+    # Breezy has a public REST API: GET https://{company}.breezy.hr/p/{job-slug}/json
+    m = _re.search(r"([\w-]+)\.breezy\.hr/p/([^/?#]+)", job_url, _re.I)
+    if m:
+        subdomain, slug = m.group(1), m.group(2)
+        api_url = f"https://{subdomain}.breezy.hr/json"
+        try:
+            resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+            if resp.ok:
+                data = resp.json()
+                positions = data if isinstance(data, list) else (data.get("positions") or [])
+                # Find matching position by slug
+                for pos in positions:
+                    if pos.get("friendly_id") == slug or slug in (pos.get("friendly_id") or ""):
+                        desc = pos.get("description") or pos.get("jobDescription") or ""
+                        if desc and len(str(desc)) > 80:
+                            return str(desc).strip()
+        except Exception:
+            pass
+
+    return _html_jd_extract(job_url, extra_selectors=["body-description", "job-description"])
+
+
+def _fast_teamtailor_description(job_url: str) -> str:
+    """Teamtailor — fetch job detail via public REST API."""
+    import re as _re
+    import requests as _req
+
+    # Teamtailor has a public API: GET https://{company}.teamtailor.com/api/v1/jobs/{id}
+    m = _re.search(r"([\w-]+)\.teamtailor\.com/jobs/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"teamtailor\.com/(?:en/)?jobs/(\d+)", job_url, _re.I)
+
+    # Try HTML extraction which is fast for Teamtailor (server-rendered)
+    return _html_jd_extract(job_url, extra_selectors=["job-body", "body-text", "job-description__description"])
+
+
+def _fast_zoho_description(job_url: str) -> str:
+    """Zoho Recruit — extract description from job detail page."""
+    return _html_jd_extract(job_url, extra_selectors=["jobs-details-description", "job-description", "jobdesc"])
+
+
+def _fast_recruitee_description(job_url: str) -> str:
+    """Recruitee public API — single endpoint returns all fields including description."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.recruitee\.com/o/([^/?#]+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, offer_slug = m.group(1), m.group(2)
+    api_url = f"https://{slug}.recruitee.com/api/offers/{offer_slug}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if resp.ok:
+            d = resp.json()
+            offer = d.get("offer") or d
+            desc = offer.get("description") or offer.get("requirements") or ""
+            return str(desc).strip()
+    except Exception:
+        pass
+    return _html_jd_extract(job_url)
+
+
+def _fast_workday_description_v2(job_url: str) -> str:
+    """Workday — enhanced CXS API with additional URL pattern support."""
+    import re as _re
+    import requests as _req
+
+    # Standard CXS path: /{jobboard}/job/{loc}/{slug} or /{jobboard}/details/{loc}/{slug}
+    m = _re.match(
+        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
+        job_url, _re.I,
+    )
+    if not m:
+        return ""
+    full_subdomain = m.group(1)
+    jobboard = m.group(2)
+    ext_path = m.group(3).split("?")[0]
+    tenant = _re.sub(r"\.wd\d+$", "", full_subdomain, flags=_re.I)
+    cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
+    try:
+        resp = _req.get(cxs_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        info = data.get("jobPostingInfo") or data
+        for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
+            val = info.get(key) or data.get(key) or ""
+            if isinstance(val, dict):
+                val = val.get("content", "") or ""
+            val = str(val).strip()
+            if val:
+                return val
+    except Exception:
+        pass
+    return ""
+
+
 # Maps platform_slug → fast-fetch function. Each function returns a description
 # string or "" on failure. Jarvis is the universal fallback for all platforms.
 _FAST_FETCH_REGISTRY: dict = {
@@ -2026,6 +2329,15 @@ _FAST_FETCH_REGISTRY: dict = {
     "icims":           _fast_icims_description,
     "oracle":          _fast_oracle_description,
     "smartrecruiters": _fast_smartrecruiters_description,
+    "taleo":           _fast_taleo_description,
+    "ultipro":         _fast_ultipro_description,
+    "dayforce":        _fast_dayforce_description,
+    "jobvite":         _fast_jobvite_description,
+    "breezy":          _fast_breezy_description,
+    "teamtailor":      _fast_teamtailor_description,
+    "zoho":            _fast_zoho_description,
+    "recruitee":       _fast_recruitee_description,
+    "html_scrape":     _html_jd_extract,  # generic fallback for any HTML-scrape platform
 }
 
 

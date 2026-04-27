@@ -17,6 +17,9 @@ from urllib.parse import urljoin, urlparse, urlencode, parse_qs
 from .base import BaseHarvester, MIN_DELAY_SCRAPE, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 MAX_PAGES = 25
+# Fetch full description for the first N jobs per company during harvest.
+# Remaining jobs get their JDs filled by the background backfill engine.
+DETAIL_FETCH_CAP = 50
 
 
 def _detect_location_type(location_raw: str) -> tuple[str, bool]:
@@ -82,6 +85,17 @@ class IcimsHarvester(BaseHarvester):
                     seen_urls.add(url)
                     collected.append(posting)
 
+        # Inline JD fetch for the first DETAIL_FETCH_CAP jobs.
+        # Remaining jobs will be filled by the background backfill engine.
+        for i, posting in enumerate(collected):
+            if i >= DETAIL_FETCH_CAP:
+                break
+            url = posting.get("original_url", "")
+            if url and not posting.get("description"):
+                desc = self._fetch_detail_description(url)
+                if desc:
+                    posting["description"] = desc
+
             next_url = self._extract_next_page(page_html, page_url)
             if not next_url:
                 break
@@ -90,6 +104,51 @@ class IcimsHarvester(BaseHarvester):
 
         self.last_total_available = len(collected)
         return collected
+
+    # ── Detail JD fetch ───────────────────────────────────────────────────────
+
+    def _fetch_detail_description(self, url: str) -> str:
+        """Fetch the job detail page and extract description via JSON-LD or HTML."""
+        import json as _json
+
+        detail_url = re.sub(r"\?.*$", "", url)
+        if not detail_url.endswith("/job"):
+            detail_url = re.sub(r"/+(search|intro).*$", "", detail_url)
+            if re.search(r"/jobs/\d+$", detail_url):
+                detail_url = detail_url + "/job"
+
+        html = self._fetch_html(detail_url)
+        if not html:
+            return ""
+
+        # JSON-LD JobPosting schema
+        for block in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.S | re.I
+        ):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting",):
+                    desc = schema.get("description") or ""
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                continue
+
+        # iCIMS-specific div containers
+        for pat in [
+            r'<div[^>]+class=["\'][^"\']*iCIMS_JobDescription[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+            r'<div[^>]+id=["\']requisitionDescriptionInterface[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+        ]:
+            m = re.search(pat, html, re.I)
+            if m:
+                text = re.sub(r"<[^>]+>", " ", m.group(1))
+                text = re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    return text
+
+        return ""
 
     # ── HTML helpers ──────────────────────────────────────────────────────────
 

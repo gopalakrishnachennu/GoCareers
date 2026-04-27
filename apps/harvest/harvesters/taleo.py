@@ -26,6 +26,7 @@ from urllib.parse import quote
 from .base import BaseHarvester, MIN_DELAY_SCRAPE, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 MAX_PAGES = 25
+DETAIL_FETCH_CAP = 30  # inline JD fetches per company during harvest
 HTML_HEADERS = {"Accept": "text/html,application/xhtml+xml", "User-Agent": BOT_USER_AGENT}
 AJAX_HEADERS = {
     "Accept": "*/*",
@@ -106,6 +107,7 @@ class TaleoHarvester(BaseHarvester):
                     break
 
         if postings:
+            self._inline_fetch_details(postings, base_section_url, lang, token_name, token_value)
             return postings
 
         # ── Path 2: AJAX fallback ─────────────────────────────────────────────
@@ -118,7 +120,64 @@ class TaleoHarvester(BaseHarvester):
         except Exception:
             pass
 
+        self._inline_fetch_details(postings, base_section_url, lang, token_name, token_value)
         return postings
+
+    def _inline_fetch_details(
+        self, postings: list, base_section_url: str, lang: str, token_name: str, token_value: str
+    ) -> None:
+        """Fetch job description for the first DETAIL_FETCH_CAP postings inline."""
+        import json as _json
+
+        for i, posting in enumerate(postings):
+            if i >= DETAIL_FETCH_CAP:
+                break
+            if posting.get("description"):
+                continue
+            job_url = posting.get("original_url", "")
+            if not job_url:
+                continue
+            headers = dict(HTML_HEADERS)
+            if token_name and token_value:
+                headers[token_name] = token_value
+            try:
+                self._enforce_rate_limit()
+                resp = self._session.get(
+                    job_url, timeout=DEFAULT_TIMEOUT, headers=headers,
+                )
+                self._last_request_at = __import__("time").monotonic()
+                if not resp.ok:
+                    continue
+                html = resp.text
+                # JSON-LD
+                for block in __import__("re").findall(
+                    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+                    html, __import__("re").S | __import__("re").I,
+                ):
+                    try:
+                        schema = _json.loads(block)
+                        if isinstance(schema, list):
+                            schema = schema[0]
+                        if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
+                            desc = schema.get("description") or ""
+                            if desc and len(str(desc)) > 80:
+                                posting["description"] = str(desc).strip()
+                                break
+                    except Exception:
+                        continue
+                # Taleo-specific HTML fallback
+                if not posting.get("description"):
+                    m = __import__("re").search(
+                        r'<div[^>]+class=["\'][^"\']*ATSJobDetailContainer[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+                        html, __import__("re").I,
+                    )
+                    if m:
+                        text = __import__("re").sub(r"<[^>]+>", " ", m.group(1))
+                        text = __import__("re").sub(r"\s+", " ", text).strip()
+                        if len(text) > 100:
+                            posting["description"] = text
+            except Exception:
+                continue
 
     # ── HTTP helpers ──────────────────────────────────────────────────────────
 

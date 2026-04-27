@@ -31,6 +31,7 @@ from .base import (
 logger = logging.getLogger(__name__)
 
 MAX_JOBS = 100
+DETAIL_FETCH_CAP = 30
 
 
 def _clean_text(value: str) -> str:
@@ -64,6 +65,16 @@ class BreezyHarvester(BaseHarvester):
         self.last_total_available = len(results)
         if not fetch_all and len(results) > MAX_JOBS:
             results = results[:MAX_JOBS]
+        for i, posting in enumerate(results):
+            if i >= DETAIL_FETCH_CAP:
+                break
+            if posting.get("description"):
+                continue
+            url = posting.get("original_url", "")
+            if url:
+                desc = self._fetch_detail_description(url)
+                if desc:
+                    posting["description"] = desc
         return results
 
     def _fetch_html(self, url: str) -> str:
@@ -101,6 +112,38 @@ class BreezyHarvester(BaseHarvester):
             except Exception as exc:
                 logger.warning("[HARVEST] Breezy fetch error %s: %s", url, exc)
                 return ""
+        return ""
+
+    def _fetch_detail_description(self, url: str) -> str:
+        import json as _json
+        html = self._fetch_html(url)
+        if not html:
+            return ""
+        for block in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html, re.S | re.I,
+        ):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
+                    desc = schema.get("description") or ""
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        for pat in [
+            r'<div[^>]+class=["\'][^"\']*\bdescription\b[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+            r'<div[^>]+id=["\']description["\'][^>]*>([\s\S]{100,}?)</div>',
+            r'<section[^>]+class=["\'][^"\']*\bcontent\b[^"\']*["\'][^>]*>([\s\S]{100,}?)</section>',
+        ]:
+            m = re.search(pat, html, re.I)
+            if m:
+                text = re.sub(r"<[^>]+>", " ", m.group(1))
+                text = re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    return text
         return ""
 
     def _parse_html(self, page_html: str, origin: str, company_name: str) -> list[dict[str, Any]]:

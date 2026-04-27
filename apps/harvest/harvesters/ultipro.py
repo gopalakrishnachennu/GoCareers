@@ -19,6 +19,7 @@ from .base import BaseHarvester, MIN_DELAY_API
 
 PAGE_SIZE = 20
 MAX_PAGES = 50
+DETAIL_FETCH_CAP = 50  # inline JD fetches per company during harvest
 
 
 class UltiProHarvester(BaseHarvester):
@@ -136,6 +137,17 @@ class UltiProHarvester(BaseHarvester):
                 break
             _t.sleep(MIN_DELAY_API)
 
+        # Inline JD fetch for the first DETAIL_FETCH_CAP jobs via GetJob endpoint.
+        for i, posting in enumerate(results):
+            if i >= DETAIL_FETCH_CAP:
+                break
+            if posting.get("description"):
+                continue
+            job_url = posting.get("original_url", "")
+            desc = self._fetch_job_description(company_code, jobboard_id, job_url)
+            if desc:
+                posting["description"] = desc
+
         return results
 
     def _normalize_api(self, j: dict, company_code: str, jobboard_id: str, company_name: str) -> dict:
@@ -238,6 +250,64 @@ class UltiProHarvester(BaseHarvester):
             "closing_date": "",
             "raw_payload": j,
         }
+
+    # ── Per-job detail fetch ──────────────────────────────────────────────────
+
+    def _fetch_job_description(self, company_code: str, jobboard_id: str, job_url: str) -> str:
+        """Fetch JD for a single UltiPro job via GetJob JSON endpoint or HTML page."""
+        import re as _re
+        import time as _t
+
+        # Extract opportunityId from job URL
+        opp_m = _re.search(r"opportunityId=([^&\s]+)", job_url, _re.I)
+        if opp_m and jobboard_id:
+            opp_id = opp_m.group(1)
+            get_job_url = (
+                f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
+                f"/JobBoardView/GetJob?opportunityId={opp_id}"
+            )
+            self._enforce_rate_limit()
+            try:
+                resp = self._session.get(get_job_url, headers={"Accept": "application/json"}, timeout=15)
+                self._last_request_at = _t.monotonic()
+                if resp.ok:
+                    d = resp.json()
+                    desc = (
+                        d.get("Description") or d.get("description")
+                        or d.get("JobDescription") or d.get("FullDescription") or ""
+                    )
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                pass
+
+        # HTML fallback — try fetching the page and extracting JSON-LD
+        import json as _json, re as _re2
+        self._enforce_rate_limit()
+        try:
+            resp2 = self._session.get(
+                job_url, timeout=15,
+                headers={"Accept": "text/html", "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)"},
+            )
+            self._last_request_at = _t.monotonic()
+            if resp2.ok:
+                html = resp2.text
+                for block in _re2.findall(
+                    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re2.S | _re2.I
+                ):
+                    try:
+                        schema = _json.loads(block)
+                        if isinstance(schema, list):
+                            schema = schema[0]
+                        if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
+                            d2 = schema.get("description") or ""
+                            if d2 and len(str(d2)) > 80:
+                                return str(d2).strip()
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return ""
 
     # ── Path 2: HTML scrape ───────────────────────────────────────────────────
 
