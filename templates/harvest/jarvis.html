@@ -1399,7 +1399,7 @@
         const resp = await fetch(`${endpoints.status}?task_id=${taskId}`);
         const json = await resp.json();
 
-        if (json.state === 'PENDING' || json.state === 'PROGRESS') {
+        if (json.state === 'PENDING' || json.state === 'PROGRESS' || json.state === 'STARTED' || json.state === 'RETRY') {
           pct = Math.max(pct, json.percent || 0);
           progressBar.style.width = `${pct}%`;
           progressPct.textContent = `${pct}%`;
@@ -1562,7 +1562,12 @@
           const statusResp = await fetch(`${endpoints.status}?task_id=${json.task_id}`);
           const statusJson = await statusResp.json();
 
-          if (statusJson.state === 'PENDING' || statusJson.state === 'PROGRESS') {
+          if (
+            statusJson.state === 'PENDING' ||
+            statusJson.state === 'PROGRESS' ||
+            statusJson.state === 'STARTED' ||
+            statusJson.state === 'RETRY'
+          ) {
             showFetchAllStatus(statusJson.message || 'Company fetch in progress…', 'info');
             return;
           }

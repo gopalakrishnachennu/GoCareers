@@ -1430,6 +1430,12 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
         if state == "PENDING":
             return JsonResponse({"state": "PENDING", "percent": 0, "message": "Queued…"})
 
+        if state == "STARTED":
+            return JsonResponse({"state": "STARTED", "percent": 12, "message": "Started…"})
+
+        if state == "RETRY":
+            return JsonResponse({"state": "RETRY", "percent": 18, "message": "Retrying…"})
+
         if state == "PROGRESS":
             meta = res.info or {}
             return JsonResponse({
