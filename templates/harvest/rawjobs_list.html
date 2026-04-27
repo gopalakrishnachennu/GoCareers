@@ -25,15 +25,16 @@
       <!-- Stat cards -->
       <div style="display:grid;grid-template-columns:repeat(9,1fr);gap:10px;padding:20px 0 24px;" id="stat-cards">
 
-        <a href="{% url 'harvest-rawjobs' %}" style="text-decoration:none;background:#1e293b;border:1px solid #334155;border-top:3px solid #64748b;border-radius:10px;padding:12px 14px;display:block;">
+        {% comment %}stat cards — each onclick filters the Jobs Browser tab below{% endcomment %}
+        <div onclick="applyStatFilter({})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #64748b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show all jobs" onmouseover="this.style.borderColor='#94a3b8'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">📦</span>
             <span style="color:#94a3b8;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Total</span>
           </div>
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-total">{{ total_jobs }}</p>
-        </a>
+        </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;">
+        <div onclick="applyStatFilter({date_range:'today'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs fetched today" onmouseover="this.style.borderColor='#f59e0b'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">🆕</span>
             <span style="color:#fcd34d;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Today</span>
@@ -41,7 +42,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-today">{{ new_today }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #10b981;border-radius:10px;padding:12px 14px;" title="Promoted to internal job pool (or mirrored from harvest sync). Rows with no matching RawJob still count as Pending elsewhere.">
+        <div onclick="applyStatFilter({sync_status:'SYNCED'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #10b981;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show synced jobs" onmouseover="this.style.borderColor='#10b981'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">✅</span>
             <span style="color:#6ee7b7;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Synced</span>
@@ -49,7 +50,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-synced">{{ synced_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #6366f1;border-radius:10px;padding:12px 14px;" title="Not yet promoted to the pool (default for new rows). Bulk-harvest-only rows stay here until pool sync runs and matches by URL hash.">
+        <div onclick="applyStatFilter({sync_status:'PENDING'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #6366f1;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show pending jobs" onmouseover="this.style.borderColor='#6366f1'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">⏳</span>
             <span style="color:#a5b4fc;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Pending</span>
@@ -57,7 +58,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-pending">{{ pending_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #ef4444;border-radius:10px;padding:12px 14px;" title="Pool promotion raised an error for the harvested row; matching RawJob is marked Failed when URL hash matches.">
+        <div onclick="applyStatFilter({sync_status:'FAILED'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #ef4444;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show failed jobs" onmouseover="this.style.borderColor='#ef4444'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">❌</span>
             <span style="color:#fca5a5;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Failed</span>
@@ -65,7 +66,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-failed">{{ failed_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #38bdf8;border-radius:10px;padding:12px 14px;">
+        <div onclick="applyStatFilter({is_remote:'1'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #38bdf8;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show remote jobs" onmouseover="this.style.borderColor='#38bdf8'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">🌐</span>
             <span style="color:#7dd3fc;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Remote</span>
@@ -73,7 +74,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-remote">{{ remote_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #22c55e;border-radius:10px;padding:12px 14px;">
+        <div onclick="applyStatFilter({is_active:'1'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #22c55e;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show active jobs" onmouseover="this.style.borderColor='#22c55e'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">🔵</span>
             <span style="color:#86efac;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Active</span>
@@ -81,7 +82,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-active">{{ active_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #f97316;border-radius:10px;padding:12px 14px;" title="No meaningful description text (same rule as Jobs Browser). Updates every ~10s.">
+        <div onclick="applyStatFilter({has_jd:'0'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f97316;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs with no description" onmouseover="this.style.borderColor='#f97316'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">📄</span>
             <span style="color:#fdba74;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Missing JD</span>
@@ -89,7 +90,7 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-missing-jd">{{ missing_description_jobs }}</p>
         </div>
 
-        <div style="background:#1e293b;border:1px solid #334155;border-top:3px solid #a855f7;border-radius:10px;padding:12px 14px;" title="Missing JD and listing looks closed (expiry / closing date / inactive).">
+        <div onclick="applyStatFilter({has_jd:'0',is_active:'0'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #a855f7;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show expired jobs with no description" onmouseover="this.style.borderColor='#a855f7'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">⏱</span>
             <span style="color:#d8b4fe;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">No JD · expired</span>
@@ -504,43 +505,75 @@
     ══════════════════════════════════════════════════════════════════ -->
     <div id="panel-jobs" style="display:none;">
 
+      <!-- Active filter banner -->
+      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level %}
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
+          {% if selected_sync_status %}<span style="padding:2px 10px;background:#dbeafe;color:#1d4ed8;border-radius:20px;font-size:11px;font-weight:600;">Sync: {{ selected_sync_status }}</span>{% endif %}
+          {% if selected_has_jd == '0' %}<span style="padding:2px 10px;background:#fef3c7;color:#92400e;border-radius:20px;font-size:11px;font-weight:600;">No JD</span>{% endif %}
+          {% if selected_has_jd == '1' %}<span style="padding:2px 10px;background:#d1fae5;color:#065f46;border-radius:20px;font-size:11px;font-weight:600;">Has JD</span>{% endif %}
+          {% if selected_is_remote == '1' %}<span style="padding:2px 10px;background:#e0f2fe;color:#0369a1;border-radius:20px;font-size:11px;font-weight:600;">Remote only</span>{% endif %}
+          {% if selected_is_active == '1' %}<span style="padding:2px 10px;background:#dcfce7;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Active only</span>{% endif %}
+          {% if selected_is_active == '0' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Inactive only</span>{% endif %}
+          {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Date: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
+          {% if q %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Search: "{{ q }}"</span>{% endif %}
+          {% if selected_platform %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Platform: {{ selected_platform }}</span>{% endif %}
+        </div>
+        <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="font-size:11px;color:#64748b;text-decoration:none;padding:3px 10px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;font-weight:600;">✕ Clear filters</a>
+      </div>
+      {% endif %}
+
       <!-- Filter bar -->
-      <form method="GET" action="{% url 'harvest-rawjobs' %}" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
+      <form method="GET" action="{% url 'harvest-rawjobs' %}" id="jobs-filter-form" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
         <input type="hidden" name="_subtab" value="jobs">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <input type="text" name="q" value="{{ q }}" placeholder="Search title / company…" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-          <select name="platform" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+        <!-- Row 1: search + main dropdowns -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
+          <input type="text" name="q" id="jf-q" value="{{ q }}" placeholder="Search title / company…" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+          <select name="platform" id="jf-platform" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">All platforms</option>
             {% for p in platforms %}<option value="{{ p.slug }}" {% if selected_platform == p.slug %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
           </select>
-          <select name="employment_type" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-            <option value="">All types</option>
-            {% for val, label in employment_type_choices %}<option value="{{ val }}" {% if selected_employment_type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-          </select>
-          <select name="location_type" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-            <option value="">All locations</option>
-            {% for val, label in location_type_choices %}<option value="{{ val }}" {% if selected_location_type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-          </select>
-          <select name="experience_level" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-            <option value="">All levels</option>
-            {% for val, label in experience_level_choices %}<option value="{{ val }}" {% if selected_experience_level == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
-          </select>
-          <select name="sync_status" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-            <option value="">All sync</option>
+          <select name="sync_status" id="jf-sync-status" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">All sync status</option>
             {% for val, label in sync_status_choices %}<option value="{{ val }}" {% if selected_sync_status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
-          <select name="is_remote" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+          <select name="has_jd" id="jf-has-jd" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">JD status</option>
+            <option value="1" {% if selected_has_jd == '1' %}selected{% endif %}>Has JD</option>
+            <option value="0" {% if selected_has_jd == '0' %}selected{% endif %}>Missing JD</option>
+          </select>
+          <select name="is_active" id="jf-is-active" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Active status</option>
+            <option value="1" {% if selected_is_active == '1' %}selected{% endif %}>Active only</option>
+            <option value="0" {% if selected_is_active == '0' %}selected{% endif %}>Inactive only</option>
+          </select>
+          <select name="is_remote" id="jf-is-remote" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">Remote?</option>
             <option value="1" {% if selected_is_remote == '1' %}selected{% endif %}>Remote only</option>
             <option value="0" {% if selected_is_remote == '0' %}selected{% endif %}>On-site only</option>
           </select>
-          <select name="has_jd" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
-            <option value="">JD?</option>
-            <option value="1" {% if selected_has_jd == '1' %}selected{% endif %}>Has JD</option>
-            <option value="0" {% if selected_has_jd == '0' %}selected{% endif %}>No JD</option>
+        </div>
+        <!-- Row 2: secondary filters + date range + submit -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <select name="employment_type" id="jf-employment-type" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">All job types</option>
+            {% for val, label in employment_type_choices %}<option value="{{ val }}" {% if selected_employment_type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
+          <select name="location_type" id="jf-location-type" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">All locations</option>
+            {% for val, label in location_type_choices %}<option value="{{ val }}" {% if selected_location_type == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <select name="experience_level" id="jf-experience-level" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">All levels</option>
+            {% for val, label in experience_level_choices %}<option value="{{ val }}" {% if selected_experience_level == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
+          <input type="date" name="date_from" id="jf-date-from" value="{{ selected_date_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="date" name="date_to" id="jf-date-to" value="{{ selected_date_to }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched to">
           <button type="submit" style="padding:7px 16px;background:#0f172a;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Search</button>
-          <a href="{% url 'harvest-rawjobs' %}" style="padding:7px 12px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;text-decoration:none;">Clear</a>
+          <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="padding:7px 12px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;text-decoration:none;">Clear</a>
         </div>
       </form>
 
@@ -706,8 +739,9 @@
 
 <script>
 // Pre-computed Django URL constants (avoids escaped-quote issues in JS strings)
-const _URL_COMPANY_STATUS = "{% url 'harvest-rawjobs-company-status' %}";
-const _URL_BATCHES        = "{% url 'harvest-rawjobs-batches' %}";
+const _URL_COMPANY_STATUS    = "{% url 'harvest-rawjobs-company-status' %}";
+const _URL_BATCHES           = "{% url 'harvest-rawjobs-batches' %}";
+const _URL_COMPANY_BREAKDOWN = "{% url 'harvest-rawjobs-company-breakdown' %}";
 // ─── Sub-tab switching ─────────────────────────────────────────────────────
 const PANELS = ['overview','companies','jobs','batches'];
 
@@ -1513,6 +1547,26 @@ function showToast(msg, type='success') {
     startPolling(); // also start stats polling so No JD count updates
   }
 })();
+
+// ─── Stat card → Jobs Browser filter ─────────────────────────────────────────
+function applyStatFilter(filters) {
+  const base = '{% url "harvest-rawjobs" %}';
+  const params = new URLSearchParams();
+  params.set('_subtab', 'jobs');
+
+  const today = new Date().toISOString().split('T')[0];
+
+  for (const [k, v] of Object.entries(filters)) {
+    if (k === 'date_range' && v === 'today') {
+      params.set('date_from', today);
+      params.set('date_to', today);
+    } else {
+      params.set(k, v);
+    }
+  }
+
+  window.location.href = base + '?' + params.toString();
+}
 </script>
 
 {% endblock %}

@@ -89,4 +89,14 @@ app.conf.beat_schedule = {
         "task": "harvest.cleanup_harvested_jobs",
         "schedule": crontab(hour=0, minute=0),       # daily midnight UTC
     },
+
+    # Continuously fetch missing JDs — runs every hour so new harvests get
+    # their descriptions filled without manual intervention. The task itself
+    # loops until all eligible rows are processed, so a single run covers
+    # the full backlog; this schedule ensures it restarts after deploys.
+    "harvest-backfill-descriptions-hourly": {
+        "task": "harvest.backfill_descriptions",
+        "schedule": crontab(minute=15),              # every hour at :15
+        "kwargs": {"batch_size": 500, "parallel_workers": 8},
+    },
 }

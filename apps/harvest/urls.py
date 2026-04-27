@@ -18,6 +18,7 @@ from .views import (
     PlatformListView,
     PlatformToggleView,
     PlatformUpdateView,
+    RawJobCompanyBreakdownView,
     RawJobDetailView,
     RawJobListView,
     RawJobStatsView,
@@ -59,6 +60,7 @@ urlpatterns = [
     path("raw-jobs/batches/", FetchBatchListView.as_view(), name="harvest-rawjobs-batches"),
     path("raw-jobs/company-status/", CompanyFetchStatusView.as_view(), name="harvest-rawjobs-company-status"),
     path("raw-jobs/stats/", RawJobStatsView.as_view(), name="harvest-rawjobs-stats"),
+    path("raw-jobs/api/companies/", RawJobCompanyBreakdownView.as_view(), name="harvest-rawjobs-company-breakdown"),
     path("raw-jobs/<int:pk>/", RawJobDetailView.as_view(), name="harvest-rawjob-detail"),
     # Trigger actions
     path("run/detect/", RunDetectNowView.as_view(), name="harvest-run-detect"),

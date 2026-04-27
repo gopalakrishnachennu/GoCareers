@@ -1978,6 +1978,28 @@ def backfill_descriptions_task(
             offset,
         )
 
+    # Duplicate-run guard: if another backfill_descriptions task is already
+    # PROGRESS on any worker, skip this firing. Celery Beat fires every hour
+    # at :15, but a full backfill can run for hours — without this guard a
+    # second instance would spawn 8 extra threads on top of the running one.
+    try:
+        from celery import current_app as _capp
+        _inspect = _capp.control.inspect(timeout=2)
+        _active = _inspect.active() or {}
+        for _worker_tasks in _active.values():
+            for _t in (_worker_tasks or []):
+                if (
+                    _t.get("name") == "harvest.backfill_descriptions"
+                    and _t.get("id") != self.request.id
+                ):
+                    logger.info(
+                        "backfill_descriptions: another instance %s is already running — skipping this firing.",
+                        _t["id"],
+                    )
+                    return {"message": "Skipped — another backfill instance is already running.", "updated": 0}
+    except Exception:
+        pass  # inspect is best-effort; proceed if it fails
+
     claim_size = max(10, min(int(batch_size), 500))
     workers_requested = max(1, min(int(parallel_workers), BACKFILL_MAX_PARALLEL))
     parallelism = workers_requested
