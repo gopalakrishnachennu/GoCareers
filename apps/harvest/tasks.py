@@ -860,11 +860,20 @@ def fetch_raw_jobs_for_company_task(
             # We treat external_id as stable identity when present and update in place.
             existing_by_external = None
             if external_id:
-                existing_by_external = (
-                    RawJob.objects.filter(
-                        platform_label=label,
-                        external_id=external_id,
+                ext_q = RawJob.objects.filter(
+                    company=label.company,
+                    external_id=external_id,
+                )
+                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
+                if platform_slug_match:
+                    ext_q = ext_q.filter(
+                        Q(platform_label=label)
+                        | Q(job_platform=label.platform)
+                        | Q(platform_slug=platform_slug_match)
+                        | Q(job_platform__isnull=True)
                     )
+                existing_by_external = (
+                    ext_q
                     .order_by("pk")
                     .first()
                 )
@@ -891,11 +900,20 @@ def fetch_raw_jobs_for_company_task(
             # ── Query-variant reconciliation: same path, tracker query changed ──
             base_url = original_url.split("?", 1)[0].strip()
             if base_url:
-                variant_row = (
-                    RawJob.objects.filter(
-                        platform_label=label,
-                        original_url__startswith=base_url,
+                variant_q = RawJob.objects.filter(
+                    company=label.company,
+                    original_url__startswith=base_url,
+                )
+                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
+                if platform_slug_match:
+                    variant_q = variant_q.filter(
+                        Q(platform_label=label)
+                        | Q(job_platform=label.platform)
+                        | Q(platform_slug=platform_slug_match)
+                        | Q(job_platform__isnull=True)
                     )
+                variant_row = (
+                    variant_q
                     .order_by("pk")
                     .first()
                 )
@@ -1718,7 +1736,11 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             external_id=external_id,
         )
         if job_platform:
-            ext_match_qs = ext_match_qs.filter(job_platform=job_platform)
+            ext_match_qs = ext_match_qs.filter(
+                Q(job_platform=job_platform)
+                | Q(platform_slug=job_platform.slug)
+                | Q(job_platform__isnull=True)
+            )
         ext_match = ext_match_qs.order_by("pk").first()
         if ext_match:
             hash_owned_elsewhere = (
@@ -1743,7 +1765,11 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
                 original_url__startswith=base_url,
             )
             if job_platform:
-                variant_qs = variant_qs.filter(job_platform=job_platform)
+                variant_qs = variant_qs.filter(
+                    Q(job_platform=job_platform)
+                    | Q(platform_slug=job_platform.slug)
+                    | Q(job_platform__isnull=True)
+                )
             variant_row = variant_qs.order_by("pk").first()
             if variant_row and variant_row.url_hash != url_hash:
                 hash_owned_elsewhere = (
