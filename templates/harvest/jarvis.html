@@ -1,504 +1,1302 @@
 {% extends 'base.html' %}
 {% block content %}
 <style>
-/* ── Jarvis animations ──────────────────────────────────────────────── */
-@keyframes jarvis-pulse {
-  0%,100% { box-shadow:0 0 0 0 rgba(56,189,248,.4); }
-  50%     { box-shadow:0 0 0 16px rgba(56,189,248,0); }
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --j-bg: #f4f7f7;
+  --j-bg-soft: #edf3f2;
+  --j-surface: #ffffff;
+  --j-surface-2: #f7fbfa;
+  --j-border: #dbe7e5;
+  --j-border-strong: #bfd6d2;
+  --j-text: #133130;
+  --j-muted: #587775;
+  --j-teal: #0f8a7f;
+  --j-teal-deep: #0c6f66;
+  --j-amber: #d88619;
+  --j-red: #c54242;
+  --j-green: #238a4b;
+  --j-shadow: 0 12px 36px rgba(20, 49, 45, 0.08);
 }
-@keyframes spin       { to { transform:rotate(360deg); } }
-@keyframes fade-in-up {
-  from { opacity:0; transform:translateY(16px); }
-  to   { opacity:1; transform:translateY(0); }
+
+@keyframes jarvisFadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
 }
-@keyframes shimmer {
-  0%   { background-position:-200% 0; }
-  100% { background-position:200% 0; }
+
+@keyframes jarvisPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(15, 138, 127, 0.2); }
+  60% { box-shadow: 0 0 0 10px rgba(15, 138, 127, 0); }
 }
-.result-card { animation:fade-in-up .35s ease both; }
+
+@keyframes jarvisSpin {
+  to { transform: rotate(360deg); }
+}
+
+.jarvis-shell {
+  min-height: calc(100vh - 56px);
+  background:
+    radial-gradient(circle at 88% 10%, #e7f8f5 0%, transparent 45%),
+    radial-gradient(circle at 8% 95%, #fff3de 0%, transparent 42%),
+    var(--j-bg);
+  padding: 28px 24px 56px;
+  font-family: 'Instrument Sans', 'Avenir Next', 'Segoe UI', sans-serif;
+  color: var(--j-text);
+}
+
+.jarvis-wrap {
+  max-width: 1320px;
+  margin: 0 auto;
+}
+
+.jarvis-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.jarvis-hero-left {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+}
+
+.jarvis-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, #1ba99b, #0f7f75);
+  color: #ffffff;
+  font-family: 'Space Grotesk', 'Instrument Sans', sans-serif;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  letter-spacing: 0.02em;
+  box-shadow: 0 12px 20px rgba(15, 127, 117, 0.24);
+  animation: jarvisPulse 2.2s ease-in-out infinite;
+}
+
+.jarvis-title {
+  margin: 0;
+  font-family: 'Space Grotesk', 'Instrument Sans', sans-serif;
+  font-weight: 700;
+  font-size: 27px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.jarvis-subtitle {
+  margin: 6px 0 0;
+  color: var(--j-muted);
+  max-width: 760px;
+  font-size: 14px;
+}
+
+.jarvis-hero-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.jarvis-link-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 11px;
+  border: 1px solid var(--j-border-strong);
+  color: #1a4a47;
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 14px;
+  background: #ffffff;
+  transition: all .15s ease;
+}
+
+.jarvis-link-btn:hover {
+  border-color: #8fbbb6;
+  transform: translateY(-1px);
+}
+
+.jarvis-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 350px;
+  gap: 22px;
+  align-items: start;
+}
+
+.jarvis-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.jarvis-panel {
+  background: var(--j-surface);
+  border: 1px solid var(--j-border);
+  border-radius: 18px;
+  box-shadow: var(--j-shadow);
+  overflow: hidden;
+}
+
+.jarvis-panel-head {
+  padding: 18px 20px 0;
+}
+
+.jarvis-panel-title {
+  margin: 0;
+  font-size: 17px;
+  font-family: 'Space Grotesk', 'Instrument Sans', sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.jarvis-panel-meta {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--j-muted);
+}
+
+.jarvis-form {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.jarvis-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: #557d78;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.jarvis-input-wrap {
+  position: relative;
+}
+
+#jarvis-input {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 12px;
+  border: 1.5px solid var(--j-border-strong);
+  padding: 13px 44px 13px 14px;
+  font-size: 14px;
+  background: var(--j-surface-2);
+  color: #133331;
+  transition: border-color .2s, box-shadow .2s, background .2s;
+}
+
 #jarvis-input:focus {
-  outline:none;
-  border-color:#38bdf8;
-  box-shadow:0 0 0 3px rgba(56,189,248,.2);
+  outline: none;
+  border-color: #22a89b;
+  box-shadow: 0 0 0 3px rgba(34, 168, 155, 0.14);
+  background: #ffffff;
 }
-#jarvis-btn:not(:disabled):hover {
-  background:linear-gradient(135deg,#0ea5e9,#6366f1);
-  transform:translateY(-1px);
-  box-shadow:0 8px 24px rgba(56,189,248,.4);
+
+#clear-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #648d89;
+  font-size: 16px;
+  cursor: pointer;
+  display: none;
 }
-#jarvis-btn:disabled { opacity:.55; cursor:not-allowed; transform:none !important; }
-.platform-badge {
-  display:inline-flex;align-items:center;gap:5px;
-  padding:3px 10px;border-radius:20px;
-  font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;
+
+.jarvis-hint-row {
+  min-height: 22px;
 }
-.platform-greenhouse  { background:#e8f5e9;color:#2e7d32;border:1px solid #a5d6a7; }
-.platform-lever       { background:#f3e5f5;color:#6a1b9a;border:1px solid #ce93d8; }
-.platform-ashby       { background:#fff3e0;color:#e65100;border:1px solid #ffcc80; }
-.platform-workday     { background:#e3f2fd;color:#1565c0;border:1px solid #90caf9; }
-.platform-workable    { background:#e8eaf6;color:#283593;border:1px solid #9fa8da; }
-.platform-linkedin    { background:#e3f2fd;color:#0a66c2;border:1px solid #90caf9; }
-.platform-indeed      { background:#fff8e1;color:#795548;border:1px solid #ffe082; }
-.platform-bamboohr    { background:#fce4ec;color:#880e4f;border:1px solid #f48fb1; }
-.platform-smartrecruiters { background:#e8f5e9;color:#1b5e20;border:1px solid #81c784; }
-.platform-jarvis      { background:#f0fdf4;color:#166534;border:1px solid #86efac; }
-.platform-default     { background:#f1f5f9;color:#475569;border:1px solid #cbd5e1; }
-.strategy-badge {
-  font-size:10px;padding:2px 8px;border-radius:4px;
-  background:#1e293b;color:#94a3b8;font-weight:500;letter-spacing:.3px;
+
+#url-hint {
+  display: none;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
 }
-/* Step progress */
-.step-dot {
-  width:28px;height:28px;border-radius:50%;display:flex;align-items:center;
-  justify-content:center;font-size:12px;font-weight:700;flex-shrink:0;
-  border:2px solid #1e293b;background:#0f172a;color:#475569;transition:all .3s;
+
+#url-hint-badge {
+  padding: 3px 8px;
+  border-radius: 100px;
+  background: #e6f4f2;
+  color: #0f7e74;
+  border: 1px solid #b8ddd8;
+  font-size: 11px;
+  font-weight: 700;
 }
-.step-dot.active  { background:#38bdf8;border-color:#38bdf8;color:#0b1120;animation:jarvis-pulse 1.5s infinite; }
-.step-dot.done    { background:#22c55e;border-color:#22c55e;color:#fff; }
-.step-line        { flex:1;height:2px;background:#1e293b;margin:0 4px;transition:background .3s; }
-.step-line.done   { background:#22c55e; }
-/* URL detect hint */
-#url-hint { transition:all .2s; }
-/* Dedup warning */
-.dedup-warn { background:#422006;border:1px solid #854d0e;border-radius:8px;padding:10px 14px;margin-top:12px; }
-/* Approve to pool button */
-#r-approve-btn:not(:disabled):hover { background:linear-gradient(135deg,#16a34a,#15803d);transform:translateY(-1px); }
-#r-approve-btn:disabled { opacity:.5;cursor:not-allowed; }
-/* Sidebar stat card */
-.j-stat { background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px; }
-.j-stat:hover { border-color:#374151; }
-/* Platform bar */
-.plat-bar-fill { height:6px;border-radius:3px;background:linear-gradient(90deg,#38bdf8,#6366f1);transition:width .6s ease; }
-/* Recent item */
-.recent-item { background:#111827;border:1px solid #1f2937;border-radius:10px;padding:12px 14px;text-decoration:none;display:flex;align-items:center;justify-content:space-between;gap:10px;transition:border-color .15s; }
-.recent-item:hover { border-color:#374151; }
+
+#url-hint-strategy {
+  color: #668a86;
+}
+
+.jarvis-cta-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.jarvis-btn {
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 12px 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: transform .15s, box-shadow .15s, opacity .15s;
+}
+
+.jarvis-btn-primary {
+  background: linear-gradient(135deg, var(--j-teal), #12a291);
+  color: #ffffff;
+  box-shadow: 0 10px 18px rgba(15, 138, 127, 0.22);
+}
+
+.jarvis-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+
+.jarvis-btn-muted {
+  background: #eff6f5;
+  color: #275955;
+  border: 1px solid #d3e5e2;
+}
+
+.jarvis-btn:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+#jarvis-progress {
+  display: none;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--j-border);
+  background: #f8fbfb;
+}
+
+.jarvis-step-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.jarvis-step {
+  border: 1px solid #dbe9e7;
+  background: #ffffff;
+  border-radius: 10px;
+  padding: 9px 10px;
+}
+
+.jarvis-step-num {
+  width: 21px;
+  height: 21px;
+  border-radius: 999px;
+  border: 2px solid #b8cecb;
+  color: #6f8f8b;
+  font-size: 11px;
+  font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  margin-bottom: 6px;
+}
+
+.jarvis-step-label {
+  font-size: 11px;
+  color: #527874;
+  font-weight: 600;
+}
+
+.jarvis-step.active .jarvis-step-num {
+  border-color: var(--j-teal);
+  color: var(--j-teal);
+  animation: jarvisPulse 1.4s ease-in-out infinite;
+}
+
+.jarvis-step.done .jarvis-step-num {
+  border-color: var(--j-green);
+  background: var(--j-green);
+  color: #fff;
+}
+
+.jarvis-progress-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+#progress-msg { color: #3e6662; }
+#progress-pct { color: var(--j-teal); font-weight: 700; }
+
+.jarvis-progress-track {
+  height: 7px;
+  background: #d6e5e2;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#progress-bar {
+  height: 100%;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--j-teal), #11a893);
+  transition: width .35s ease;
+}
+
+#jarvis-error {
+  display: none;
+  margin: 0 20px 20px;
+  background: #fff3f3;
+  border: 1px solid #f0c3c3;
+  border-left: 4px solid var(--j-red);
+  border-radius: 11px;
+  padding: 12px 14px;
+}
+
+#jarvis-error-msg {
+  margin: 0;
+  color: #972f2f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+#jarvis-error-hint {
+  margin: 4px 0 0;
+  color: #a84a4a;
+  font-size: 12px;
+}
+
+.jarvis-chips {
+  padding: 0 20px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.jarvis-chip {
+  background: #f0f7f6;
+  border: 1px solid #d2e4e1;
+  color: #3d6662;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+#jarvis-result {
+  display: none;
+  animation: jarvisFadeUp .28s ease;
+}
+
+.jarvis-result-head {
+  padding: 20px;
+  border-bottom: 1px solid var(--j-border);
+}
+
+.jarvis-result-title {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.2;
+  font-family: 'Space Grotesk', 'Instrument Sans', sans-serif;
+}
+
+.jarvis-result-sub {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+#r-company {
+  color: #0b7d72;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.jarvis-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid #c9dfdb;
+  background: #f2f8f7;
+  color: #3e6662;
+}
+
+#r-remote-badge {
+  display: none;
+  background: #e9f8f0;
+  color: #1f8c48;
+  border-color: #bae5cb;
+}
+
+#r-quality-badge {
+  display: none;
+}
+
+#r-location {
+  color: #567976;
+  font-size: 13px;
+}
+
+#r-dedup-warn {
+  display: none;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #f2d4a9;
+  background: #fff7ea;
+}
+
+#r-dedup-msg {
+  margin: 0;
+  color: #945b13;
+  font-size: 12px;
+}
+
+.jarvis-result-actions {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--j-border);
+  display: flex;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.jarvis-action-link {
+  text-decoration: none;
+}
+
+#r-details-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-bottom: 1px solid var(--j-border);
+}
+
+.jarvis-detail-cell {
+  padding: 14px 16px;
+  border-right: 1px solid var(--j-border);
+}
+
+.jarvis-detail-cell:nth-child(3n) {
+  border-right: 0;
+}
+
+.jarvis-detail-label {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 10px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: #6a8b87;
+  font-weight: 700;
+}
+
+.jarvis-detail-value {
+  font-size: 13px;
+  color: #163735;
+  font-weight: 700;
+}
+
+.jarvis-desc-wrap {
+  padding: 16px 20px 20px;
+}
+
+.jarvis-desc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.jarvis-desc-title {
+  margin: 0;
+  font-size: 11px;
+  color: #5d827e;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-weight: 700;
+}
+
+#desc-toggle {
+  border: 1px solid #cfe2df;
+  border-radius: 8px;
+  background: #f3f9f8;
+  color: #2f5f5a;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 9px;
+  cursor: pointer;
+}
+
+#r-desc {
+  max-height: 170px;
+  overflow: hidden;
+  position: relative;
+  transition: max-height .35s ease;
+  line-height: 1.65;
+  color: #335a56;
+  font-size: 13px;
+}
+
+#r-desc-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 52px;
+  background: linear-gradient(transparent, #ffffff);
+}
+
+#r-desc-chars {
+  margin: 8px 0 0;
+  color: #6b8e8a;
+  font-size: 11px;
+}
+
+.jarvis-side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  position: sticky;
+  top: 16px;
+}
+
+.jarvis-side-card {
+  background: #ffffff;
+  border: 1px solid var(--j-border);
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(24, 57, 53, 0.08);
+  padding: 14px;
+}
+
+.jarvis-side-title {
+  margin: 0 0 10px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #5f827d;
+  font-weight: 700;
+}
+
+.jarvis-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.jarvis-kpi {
+  border: 1px solid #dceae7;
+  border-radius: 10px;
+  padding: 10px;
+  background: #f9fcfc;
+}
+
+.jarvis-kpi-label {
+  margin: 0 0 4px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: #618580;
+  font-weight: 700;
+}
+
+.jarvis-kpi-value {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1;
+  color: #153b38;
+  font-weight: 800;
+  font-family: 'Space Grotesk', 'Instrument Sans', sans-serif;
+}
+
+.jarvis-sync-band {
+  margin-top: 10px;
+  border-radius: 10px;
+  border: 1px solid #cde2df;
+  background: #f3f9f8;
+  padding: 10px;
+}
+
+.jarvis-sync-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #5d817d;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+
+.jarvis-sync-track {
+  height: 6px;
+  border-radius: 999px;
+  background: #d8e8e5;
+  overflow: hidden;
+}
+
+.jarvis-sync-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--j-green), #3ca968);
+}
+
+.jarvis-plat-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.jarvis-plat-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.jarvis-plat-name {
+  font-size: 12px;
+  color: #305f5a;
+  font-weight: 600;
+}
+
+.jarvis-plat-count {
+  font-size: 11px;
+  color: #678b86;
+  font-weight: 700;
+}
+
+.jarvis-plat-track {
+  grid-column: 1 / -1;
+  height: 5px;
+  border-radius: 999px;
+  background: #dce9e7;
+  overflow: hidden;
+}
+
+.jarvis-plat-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #119487, #1f7670);
+}
+
+.jarvis-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.jarvis-recent-item {
+  text-decoration: none;
+  border: 1px solid #d9e8e5;
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: #f9fcfb;
+  transition: all .14s ease;
+  color: inherit;
+  display: block;
+}
+
+.jarvis-recent-item:hover {
+  border-color: #b6d4cf;
+  transform: translateY(-1px);
+}
+
+.jarvis-recent-title {
+  margin: 0;
+  color: #1f4b47;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jarvis-recent-meta {
+  margin: 4px 0 0;
+  color: #678b86;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.jarvis-recent-foot {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.jarvis-mini-chip {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid #d0e1de;
+  color: #567a76;
+  background: #ffffff;
+  font-weight: 700;
+}
+
+.jarvis-mini-chip.synced { color: #1d8a47; border-color: #b8e3c7; background: #ecfbf1; }
+.jarvis-mini-chip.failed { color: #b03737; border-color: #efc3c3; background: #fff3f3; }
+.jarvis-mini-chip.skipped { color: #9a6016; border-color: #efd4ac; background: #fff8ec; }
+.jarvis-mini-chip.pending { color: #466a66; border-color: #d0e0dd; background: #f4fbfa; }
+
+@media (max-width: 1150px) {
+  .jarvis-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .jarvis-side {
+    position: static;
+  }
+}
+
+@media (max-width: 760px) {
+  .jarvis-shell {
+    padding: 18px 12px 40px;
+  }
+
+  .jarvis-title {
+    font-size: 23px;
+  }
+
+  .jarvis-mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 13px;
+    font-size: 13px;
+  }
+
+  .jarvis-step-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #r-details-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .jarvis-detail-cell:nth-child(3n) {
+    border-right: 1px solid var(--j-border);
+  }
+
+  .jarvis-detail-cell:nth-child(2n) {
+    border-right: 0;
+  }
+
+  .jarvis-hero-actions,
+  .jarvis-cta-row,
+  .jarvis-result-actions {
+    width: 100%;
+  }
+
+  .jarvis-btn,
+  .jarvis-link-btn,
+  .jarvis-action-link,
+  .jarvis-result-actions button {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .jarvis-kpi-value {
+    font-size: 19px;
+  }
+}
 </style>
 
 {% include 'jobs/_pipeline_subnav.html' %}
 
-{# ── Jarvis outer shell ───────────────────────────────────────────────────── #}
-<div style="background:#0b1120;min-height:calc(100vh - 60px);padding:32px 24px 64px;">
-<div style="max-width:1280px;margin:0 auto;">
-
-  {# ── Page header ─────────────────────────────────────────────────────────── #}
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:32px;flex-wrap:wrap;gap:16px;">
-    <div style="display:flex;align-items:center;gap:14px;">
-      <div style="width:48px;height:48px;border-radius:14px;background:linear-gradient(135deg,#38bdf8,#6366f1);display:flex;align-items:center;justify-content:center;font-size:22px;animation:jarvis-pulse 3s infinite;flex-shrink:0;">🤖</div>
-      <div>
-        <h1 style="color:#f8fafc;font-size:22px;font-weight:800;margin:0;letter-spacing:-.4px;">Job Jarvis</h1>
-        <p style="color:#64748b;font-size:13px;margin:2px 0 0;">Paste any job URL — Jarvis spiders, scrapes, and saves it automatically.</p>
+<div class="jarvis-shell">
+  <div class="jarvis-wrap">
+    <div class="jarvis-hero">
+      <div class="jarvis-hero-left">
+        <div class="jarvis-mark">JV</div>
+        <div>
+          <h1 class="jarvis-title">Jarvis Job Ingestion</h1>
+          <p class="jarvis-subtitle">
+            Paste one job URL and run a controlled extraction pipeline: ATS API first, then structured metadata,
+            then resilient HTML fallback. Review quality and promote to live in one flow.
+          </p>
+        </div>
+      </div>
+      <div class="jarvis-hero-actions">
+        <a class="jarvis-link-btn" href="{% url 'harvest-rawjobs' %}?platform=jarvis">Jarvis Raw Jobs</a>
+        <a class="jarvis-link-btn" href="{% url 'jobs-pipeline' %}?tab=pool">Vet Queue</a>
       </div>
     </div>
-    <div style="display:flex;gap:10px;align-items:center;">
-      <a href="{% url 'harvest-rawjobs' %}?source=jarvis" style="color:#64748b;font-size:12px;text-decoration:none;padding:7px 14px;border-radius:8px;border:1px solid #1f2937;transition:all .15s;" onmouseover="this.style.color='#94a3b8';this.style.borderColor='#374151';" onmouseout="this.style.color='#64748b';this.style.borderColor='#1f2937';">
-        All Jarvis imports →
-      </a>
-      <a href="{% url 'jobs-pipeline' %}?tab=pool" style="background:#1f2937;color:#e2e8f0;font-size:12px;font-weight:600;text-decoration:none;padding:7px 14px;border-radius:8px;border:1px solid #374151;transition:all .15s;" onmouseover="this.style.borderColor='#4b5563';" onmouseout="this.style.borderColor='#374151';">
-        Vet Queue →
-      </a>
-    </div>
-  </div>
 
-  <!-- Two-column layout: left = analysis panel, right = metrics sidebar -->
-  <div style="display:grid;grid-template-columns:1fr 360px;gap:24px;align-items:start;">
+    <div class="jarvis-grid">
+      <div class="jarvis-stack">
+        <div class="jarvis-panel">
+          <div class="jarvis-panel-head">
+            <h2 class="jarvis-panel-title">Analyze URL</h2>
+            <p class="jarvis-panel-meta">Supports ATS-native links and direct career pages.</p>
+          </div>
 
-    <!-- LEFT: Main analysis panel -->
-    <div>
-
-      {# URL input card #}
-      <div style="background:#0f172a;border:1px solid #1e3a5f;border-radius:16px;padding:28px;box-shadow:0 8px 40px rgba(0,0,0,.5);margin-bottom:20px;">
-        <form id="jarvis-form" style="display:flex;flex-direction:column;gap:14px;">
-          {% csrf_token %}
-          <div>
-            <label style="display:block;font-size:11px;font-weight:700;color:#64748b;margin-bottom:8px;text-transform:uppercase;letter-spacing:.6px;">Job Posting URL</label>
-            <div style="position:relative;">
+          <form id="jarvis-form" class="jarvis-form">
+            {% csrf_token %}
+            <label class="jarvis-label" for="jarvis-input">Job Posting URL</label>
+            <div class="jarvis-input-wrap">
               <input
                 id="jarvis-input"
                 name="url"
                 type="url"
-                placeholder="https://boards.greenhouse.io/company/jobs/123  ·  https://jobs.lever.co/…  ·  any ATS URL"
-                style="width:100%;box-sizing:border-box;background:#060d1a;border:1.5px solid #1e3a5f;border-radius:10px;padding:14px 48px 14px 16px;font-size:14px;color:#e2e8f0;font-family:inherit;transition:border-color .2s,box-shadow .2s;"
-                required
+                placeholder="https://boards.greenhouse.io/company/jobs/12345"
                 autocomplete="off"
+                required
               />
-              {# Clear button #}
-              <button type="button" id="clear-btn" onclick="document.getElementById('jarvis-input').value='';document.getElementById('url-hint').style.display='none';document.getElementById('jarvis-input').focus();"
-                style="display:none;position:absolute;right:12px;top:50%;transform:translateY(-50%);background:none;border:none;color:#475569;cursor:pointer;font-size:16px;padding:4px;line-height:1;">✕</button>
+              <button type="button" id="clear-btn" aria-label="Clear URL">x</button>
             </div>
-            {# Platform auto-detect hint #}
-            <div id="url-hint" style="display:none;margin-top:8px;display:flex;align-items:center;gap:6px;">
-              <span style="font-size:11px;color:#64748b;">Detected:</span>
-              <span id="url-hint-badge" style="font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#1e293b;color:#94a3b8;"></span>
-              <span id="url-hint-strategy" style="font-size:10px;color:#475569;"></span>
-            </div>
-          </div>
 
-          <button
-            id="jarvis-btn"
-            type="submit"
-            style="background:linear-gradient(135deg,#38bdf8,#6366f1);color:#fff;border:none;border-radius:10px;padding:14px 28px;font-size:15px;font-weight:700;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:10px;letter-spacing:-.2px;">
-            <span id="jarvis-btn-icon" style="font-size:16px;">🔍</span>
-            <span id="jarvis-btn-text">Analyze &amp; Import Job</span>
-          </button>
-        </form>
-
-        {# Step-by-step progress (hidden initially) #}
-        <div id="jarvis-progress" style="display:none;margin-top:24px;">
-          {# Steps row #}
-          <div style="display:flex;align-items:center;justify-content:center;margin-bottom:16px;" id="steps-row">
-            <span class="step-dot" id="step-1" title="Fetch">1</span>
-            <span class="step-line" id="line-1"></span>
-            <span class="step-dot" id="step-2" title="Parse">2</span>
-            <span class="step-line" id="line-2"></span>
-            <span class="step-dot" id="step-3" title="Extract">3</span>
-            <span class="step-line" id="line-3"></span>
-            <span class="step-dot" id="step-4" title="Save">4</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:12px;margin-top:-8px;padding:0 6px;">
-            <span style="font-size:10px;color:#475569;">Fetch</span>
-            <span style="font-size:10px;color:#475569;">Parse</span>
-            <span style="font-size:10px;color:#475569;">Extract</span>
-            <span style="font-size:10px;color:#475569;">Save</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-bottom:8px;">
-            <span id="progress-msg" style="font-size:13px;color:#94a3b8;">Fetching page…</span>
-            <span id="progress-pct" style="font-size:13px;color:#38bdf8;font-weight:700;">0%</span>
-          </div>
-          <div style="background:#1e293b;border-radius:6px;height:5px;overflow:hidden;">
-            <div id="progress-bar" style="height:100%;background:linear-gradient(90deg,#38bdf8,#6366f1);border-radius:6px;width:0%;transition:width .4s ease;"></div>
-          </div>
-        </div>
-
-        {# Error block #}
-        <div id="jarvis-error" style="display:none;margin-top:16px;background:#3b0f0f;border:1px solid #7f1d1d;border-radius:8px;padding:12px 16px;display:flex;align-items:flex-start;gap:10px;">
-          <span style="color:#f87171;font-size:16px;flex-shrink:0;margin-top:1px;">⚠</span>
-          <div>
-            <p id="jarvis-error-msg" style="margin:0;color:#fca5a5;font-size:14px;font-weight:600;"></p>
-            <p id="jarvis-error-hint" style="margin:4px 0 0;color:#f87171;font-size:12px;opacity:.8;"></p>
-          </div>
-        </div>
-      </div>
-
-      {# Supported platforms pills #}
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:24px;padding:0 2px;">
-        {% for label in platforms_supported %}
-        <span style="background:#0f172a;border:1px solid #1e293b;color:#475569;font-size:11px;padding:4px 10px;border-radius:20px;letter-spacing:.2px;">{{ label }}</span>
-        {% endfor %}
-      </div>
-
-      {# ── Result card (shown after extraction) ───────────────────────────── #}
-      <div id="jarvis-result" style="display:none;">
-        <div class="result-card" style="background:#0f172a;border:1px solid #1e293b;border-radius:16px;overflow:hidden;box-shadow:0 8px 40px rgba(0,0,0,.4);">
-
-          {# Result header #}
-          <div style="padding:24px 24px 16px;border-bottom:1px solid #1e293b;">
-            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px;">
-              <h3 id="r-title" style="color:#f8fafc;font-size:20px;font-weight:800;margin:0;line-height:1.3;letter-spacing:-.3px;"></h3>
-              <div style="display:flex;gap:6px;flex-shrink:0;align-items:center;flex-wrap:wrap;">
-                <span id="r-remote-badge" style="display:none;background:#052e16;color:#22c55e;border:1px solid #166534;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;">🌐 Remote</span>
-                <span id="r-quality-badge" style="display:none;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:700;"></span>
+            <div class="jarvis-hint-row">
+              <div id="url-hint">
+                <span style="color:#628682;font-weight:600;">Detected:</span>
+                <span id="url-hint-badge"></span>
+                <span id="url-hint-strategy"></span>
               </div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-              <span id="r-company" style="color:#38bdf8;font-size:14px;font-weight:700;"></span>
-              <span id="r-platform-badge" class="platform-badge platform-default"></span>
-              <span id="r-strategy-badge" class="strategy-badge"></span>
-              <span id="r-location" style="color:#64748b;font-size:13px;"></span>
-            </div>
 
-            {# Dedup warning — shown if job already exists #}
-            <div id="r-dedup-warn" style="display:none;" class="dedup-warn">
-              <p style="margin:0;color:#fbbf24;font-size:13px;font-weight:700;">⚠ Possible duplicate detected</p>
-              <p id="r-dedup-msg" style="margin:3px 0 0;color:#d97706;font-size:12px;"></p>
+            <div class="jarvis-cta-row">
+              <button id="jarvis-btn" class="jarvis-btn jarvis-btn-primary" type="submit">
+                <span id="jarvis-btn-icon">Analyze</span>
+                <span id="jarvis-btn-text">Run Jarvis</span>
+              </button>
+              <button class="jarvis-btn jarvis-btn-muted" type="button" onclick="resetJarvis()">Reset</button>
+            </div>
+          </form>
+
+          <div id="jarvis-progress" aria-live="polite">
+            <div class="jarvis-step-grid">
+              <div class="jarvis-step" id="step-1"><div class="jarvis-step-num">1</div><div class="jarvis-step-label">Fetch</div></div>
+              <div class="jarvis-step" id="step-2"><div class="jarvis-step-num">2</div><div class="jarvis-step-label">Parse</div></div>
+              <div class="jarvis-step" id="step-3"><div class="jarvis-step-num">3</div><div class="jarvis-step-label">Extract</div></div>
+              <div class="jarvis-step" id="step-4"><div class="jarvis-step-num">4</div><div class="jarvis-step-label">Save</div></div>
+            </div>
+            <div class="jarvis-progress-top">
+              <span id="progress-msg">Queued...</span>
+              <span id="progress-pct">0%</span>
+            </div>
+            <div class="jarvis-progress-track">
+              <div id="progress-bar"></div>
             </div>
           </div>
 
-          {# Key details grid #}
-          <div id="r-details-grid" style="display:grid;grid-template-columns:repeat(3,1fr);border-bottom:1px solid #1e293b;"></div>
-
-          {# Description — expandable #}
-          <div style="padding:20px 24px;border-bottom:1px solid #1e293b;">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-              <p style="font-size:11px;text-transform:uppercase;color:#475569;font-weight:700;margin:0;letter-spacing:.5px;">Description</p>
-              <button onclick="toggleDesc()" id="desc-toggle" style="background:none;border:1px solid #1e293b;color:#64748b;font-size:11px;padding:3px 10px;border-radius:6px;cursor:pointer;transition:all .15s;">Show more</button>
-            </div>
-            <div id="r-desc" style="font-size:13px;color:#94a3b8;line-height:1.75;max-height:160px;overflow:hidden;position:relative;transition:max-height .4s ease;">
-              <div id="r-desc-inner"></div>
-              <div id="r-desc-fade" style="position:absolute;bottom:0;left:0;right:0;height:60px;background:linear-gradient(transparent,#0f172a);transition:opacity .3s;"></div>
-            </div>
-            <p id="r-desc-chars" style="margin:6px 0 0;font-size:11px;color:#334155;"></p>
+          <div id="jarvis-error">
+            <p id="jarvis-error-msg"></p>
+            <p id="jarvis-error-hint"></p>
           </div>
 
-          {# Action buttons #}
-          <div style="padding:18px 24px;display:flex;gap:10px;flex-wrap:wrap;align-items:center;">
-            <a id="r-view-btn" href="#" target="_blank"
-              style="background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff;text-decoration:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;display:inline-flex;align-items:center;gap:7px;transition:all .2s;">
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
-              View in System
-            </a>
-            <button id="r-approve-btn"
-              onclick="approveJob()"
-              style="background:linear-gradient(135deg,#22c55e,#16a34a);color:#fff;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:7px;transition:all .2s;">
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+          <div class="jarvis-chips">
+            {% for label in platforms_supported %}
+            <span class="jarvis-chip">{{ label }}</span>
+            {% endfor %}
+          </div>
+        </div>
+
+        <div id="jarvis-result" class="jarvis-panel">
+          <div class="jarvis-result-head">
+            <h3 id="r-title" class="jarvis-result-title"></h3>
+            <div class="jarvis-result-sub">
+              <span id="r-company"></span>
+              <span id="r-platform-badge" class="jarvis-pill"></span>
+              <span id="r-strategy-badge" class="jarvis-pill"></span>
+              <span id="r-remote-badge" class="jarvis-pill">Remote</span>
+              <span id="r-quality-badge" class="jarvis-pill"></span>
+              <span id="r-location"></span>
+            </div>
+            <div id="r-dedup-warn">
+              <p id="r-dedup-msg"></p>
+            </div>
+          </div>
+
+          <div class="jarvis-result-actions">
+            <a id="r-view-btn" class="jarvis-btn jarvis-btn-primary jarvis-action-link" href="#" target="_blank">View in System</a>
+            <button id="r-approve-btn" class="jarvis-btn jarvis-btn-primary" type="button" onclick="approveJob()">
               <span id="approve-btn-text">Approve to Live</span>
             </button>
-            <a id="r-apply-btn" href="#" target="_blank" rel="noopener"
-              style="background:#1e293b;color:#94a3b8;text-decoration:none;border:1px solid #334155;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;gap:7px;transition:all .15s;">
-              <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-              Original Posting
+            <a id="r-apply-btn" class="jarvis-btn jarvis-btn-muted jarvis-action-link" href="#" target="_blank" rel="noopener">Original Posting</a>
+            <button id="r-rescrape-btn" class="jarvis-btn jarvis-btn-muted" type="button" onclick="reScrapeCurrent()">Re-scrape Preview</button>
+          </div>
+
+          <div id="r-details-grid"></div>
+
+          <div class="jarvis-desc-wrap">
+            <div class="jarvis-desc-head">
+              <p class="jarvis-desc-title">Description</p>
+              <button id="desc-toggle" type="button" onclick="toggleDesc()">Show more</button>
+            </div>
+            <div id="r-desc">
+              <div id="r-desc-inner"></div>
+              <div id="r-desc-fade"></div>
+            </div>
+            <p id="r-desc-chars"></p>
+          </div>
+        </div>
+      </div>
+
+      <aside class="jarvis-side">
+        <div class="jarvis-side-card">
+          <p class="jarvis-side-title">Import Snapshot</p>
+          <div class="jarvis-kpi-grid">
+            <div class="jarvis-kpi">
+              <p class="jarvis-kpi-label">Today</p>
+              <p class="jarvis-kpi-value">{{ jarvis_today }}</p>
+            </div>
+            <div class="jarvis-kpi">
+              <p class="jarvis-kpi-label">This Week</p>
+              <p class="jarvis-kpi-value">{{ jarvis_this_week }}</p>
+            </div>
+            <div class="jarvis-kpi">
+              <p class="jarvis-kpi-label">Synced</p>
+              <p class="jarvis-kpi-value">{{ jarvis_synced }}</p>
+            </div>
+            <div class="jarvis-kpi">
+              <p class="jarvis-kpi-label">Pending</p>
+              <p class="jarvis-kpi-value">{{ jarvis_pending }}</p>
+            </div>
+          </div>
+
+          <div class="jarvis-sync-band">
+            <div class="jarvis-sync-top">
+              <span>Total Imports: {{ jarvis_total }}</span>
+              <span>{{ jarvis_success_rate }}% synced</span>
+            </div>
+            <div class="jarvis-sync-track">
+              <div class="jarvis-sync-fill" style="width:{{ jarvis_success_rate }}%;"></div>
+            </div>
+            <div style="margin-top:7px;font-size:11px;color:#668985;display:flex;justify-content:space-between;gap:8px;">
+              <span>{{ jarvis_failed }} failed</span>
+              <span>{{ jarvis_skipped }} skipped</span>
+            </div>
+          </div>
+        </div>
+
+        {% if jarvis_platform_breakdown %}
+        <div class="jarvis-side-card">
+          <p class="jarvis-side-title">Detected ATS Mix</p>
+          {% with total_plat=jarvis_total|default:1 %}
+          <div class="jarvis-plat-list">
+            {% for platform, count in jarvis_platform_breakdown %}
+            {% widthratio count total_plat 100 as pct %}
+            <div class="jarvis-plat-row">
+              <span class="jarvis-plat-name">{{ platform }}</span>
+              <span class="jarvis-plat-count">{{ count }}</span>
+              <div class="jarvis-plat-track"><div class="jarvis-plat-fill" style="width:{{ pct }}%;"></div></div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endwith %}
+        </div>
+        {% endif %}
+
+        <div class="jarvis-side-card">
+          <p class="jarvis-side-title">Recent Imports</p>
+          <div class="jarvis-recent">
+            {% for job in recent_jarvis %}
+            <a href="{% url 'harvest-rawjob-detail' job.pk %}" class="jarvis-recent-item">
+              <p class="jarvis-recent-title">{{ job.title|truncatechars:42 }}</p>
+              <p class="jarvis-recent-meta">{{ job.company_name|default:"-" }}{% if job.location_raw %} | {{ job.location_raw|truncatechars:24 }}{% endif %}</p>
+              <div class="jarvis-recent-foot">
+                <span class="jarvis-mini-chip">{{ job.fetched_at|date:"M j" }}</span>
+                {% if job.sync_status == 'SYNCED' %}
+                <span class="jarvis-mini-chip synced">Synced</span>
+                {% elif job.sync_status == 'FAILED' %}
+                <span class="jarvis-mini-chip failed">Failed</span>
+                {% elif job.sync_status == 'SKIPPED' %}
+                <span class="jarvis-mini-chip skipped">Skipped</span>
+                {% else %}
+                <span class="jarvis-mini-chip pending">Pending</span>
+                {% endif %}
+              </div>
             </a>
-            <button onclick="resetJarvis()"
-              style="background:transparent;color:#475569;border:1px solid #1e293b;padding:10px 20px;border-radius:8px;font-size:13px;cursor:pointer;transition:color .15s;margin-left:auto;" onmouseover="this.style.color='#94a3b8';" onmouseout="this.style.color='#475569';">
-              + Analyze Another
-            </button>
+            {% empty %}
+            <p style="margin:0;color:#6a8c88;font-size:12px;">No Jarvis imports yet.</p>
+            {% endfor %}
           </div>
         </div>
-      </div>
-
-    </div><!-- end left column -->
-
-    <!-- RIGHT: Metrics sidebar -->
-    <div style="display:flex;flex-direction:column;gap:16px;position:sticky;top:24px;">
-
-      {# Stat grid 2×3 #}
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-
-        <div class="j-stat" style="border-top:3px solid #f59e0b;">
-          <p style="font-size:10px;font-weight:700;color:#78716c;text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px;">Today</p>
-          <p style="font-size:28px;font-weight:800;color:#fbbf24;margin:0;letter-spacing:-1px;">{{ jarvis_today }}</p>
-        </div>
-
-        <div class="j-stat" style="border-top:3px solid #64748b;">
-          <p style="font-size:10px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px;">This Week</p>
-          <p style="font-size:28px;font-weight:800;color:#94a3b8;margin:0;letter-spacing:-1px;">{{ jarvis_this_week }}</p>
-        </div>
-
-        <div class="j-stat" style="border-top:3px solid #22c55e;">
-          <p style="font-size:10px;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px;">Synced</p>
-          <p style="font-size:28px;font-weight:800;color:#22c55e;margin:0;letter-spacing:-1px;">{{ jarvis_synced }}</p>
-        </div>
-
-        <div class="j-stat" style="border-top:3px solid #6366f1;">
-          <p style="font-size:10px;font-weight:700;color:#4338ca;text-transform:uppercase;letter-spacing:.5px;margin:0 0 6px;">Pending</p>
-          <p style="font-size:28px;font-weight:800;color:#818cf8;margin:0;letter-spacing:-1px;">{{ jarvis_pending }}</p>
-        </div>
-
-        <div class="j-stat" style="border-top:3px solid #38bdf8;grid-column:span 2;">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
-            <p style="font-size:10px;font-weight:700;color:#0369a1;text-transform:uppercase;letter-spacing:.5px;margin:0;">Total Imports</p>
-            <span style="font-size:11px;font-weight:700;color:{% if jarvis_success_rate >= 80 %}#22c55e{% elif jarvis_success_rate >= 50 %}#f59e0b{% else %}#f87171{% endif %};">{{ jarvis_success_rate }}% synced</span>
-          </div>
-          <p style="font-size:32px;font-weight:800;color:#38bdf8;margin:0 0 10px;letter-spacing:-1px;">{{ jarvis_total }}</p>
-          {# Synced progress bar #}
-          <div style="background:#1f2937;border-radius:4px;height:5px;">
-            <div style="height:100%;border-radius:4px;background:linear-gradient(90deg,#22c55e,#16a34a);width:{{ jarvis_success_rate }}%;transition:width .6s;"></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;margin-top:5px;">
-            <span style="font-size:10px;color:#374151;">{{ jarvis_synced }} synced</span>
-            <span style="font-size:10px;color:#374151;">{{ jarvis_failed }} failed · {{ jarvis_skipped }} skipped</span>
-          </div>
-        </div>
-
-      </div>
-
-      {# Platform breakdown #}
-      {% if jarvis_platform_breakdown %}
-      <div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px;">
-        <p style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin:0 0 14px;">Platform Breakdown</p>
-        {% with total_plat=jarvis_total|default:1 %}
-        <div style="display:flex;flex-direction:column;gap:10px;">
-          {% for platform, count in jarvis_platform_breakdown %}
-          {% widthratio count total_plat 100 as pct %}
-          <div>
-            <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
-              <span style="font-size:12px;color:#e2e8f0;font-weight:500;">{{ platform }}</span>
-              <span style="font-size:11px;color:#64748b;font-weight:600;">{{ count }}</span>
-            </div>
-            <div style="background:#1f2937;border-radius:3px;height:6px;overflow:hidden;">
-              <div class="plat-bar-fill" style="width:{{ pct }}%;"></div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-        {% endwith %}
-      </div>
-      {% endif %}
-
-      {# Recent imports #}
-      <div>
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-          <p style="font-size:11px;font-weight:700;color:#475569;text-transform:uppercase;letter-spacing:.5px;margin:0;">Recent Imports</p>
-          <a href="{% url 'harvest-rawjobs' %}" style="font-size:11px;color:#38bdf8;text-decoration:none;" onmouseover="this.style.textDecoration='underline';" onmouseout="this.style.textDecoration='none';">View all →</a>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:6px;">
-          {% for job in recent_jarvis %}
-          <a href="{% url 'harvest-rawjob-detail' job.pk %}" class="recent-item">
-            <div style="min-width:0;flex:1;">
-              <p style="color:#e2e8f0;font-size:13px;font-weight:600;margin:0 0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ job.title|truncatechars:42 }}</p>
-              <p style="color:#64748b;font-size:11px;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                {{ job.company_name|default:"—" }}{% if job.location_raw %} · {{ job.location_raw|truncatechars:25 }}{% endif %}
-              </p>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex-shrink:0;">
-              <span style="font-size:10px;color:#374151;background:#1f2937;padding:2px 7px;border-radius:4px;">{{ job.fetched_at|date:"M j" }}</span>
-              {% if job.sync_status == 'SYNCED' %}
-              <span style="font-size:10px;font-weight:700;color:#22c55e;background:#052e16;padding:2px 7px;border-radius:4px;">Synced</span>
-              {% elif job.sync_status == 'FAILED' %}
-              <span style="font-size:10px;font-weight:700;color:#f87171;background:#450a0a;padding:2px 7px;border-radius:4px;">Failed</span>
-              {% elif job.sync_status == 'SKIPPED' %}
-              <span style="font-size:10px;font-weight:700;color:#fb923c;background:#431407;padding:2px 7px;border-radius:4px;">Skipped</span>
-              {% else %}
-              <span style="font-size:10px;font-weight:700;color:#94a3b8;background:#1e293b;padding:2px 7px;border-radius:4px;">Pending</span>
-              {% endif %}
-            </div>
-          </a>
-          {% empty %}
-          <p style="color:#374151;font-size:13px;text-align:center;padding:20px 0;">No imports yet. Paste a job URL above.</p>
-          {% endfor %}
-        </div>
-      </div>
-
-    </div><!-- end right sidebar -->
-
-  </div><!-- end two-column grid -->
-</div></div><!-- end outer shell -->
+      </aside>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
   'use strict';
 
-  // ── DOM refs ─────────────────────────────────────────────────────────────
-  const form       = document.getElementById('jarvis-form');
-  const input      = document.getElementById('jarvis-input');
-  const clearBtn   = document.getElementById('clear-btn');
-  const btn        = document.getElementById('jarvis-btn');
-  const btnIcon    = document.getElementById('jarvis-btn-icon');
-  const btnText    = document.getElementById('jarvis-btn-text');
+  const endpoints = {
+    run: '{% url "harvest-jarvis" %}',
+    status: '{% url "harvest-jarvis-status" %}',
+    approve: '{% url "harvest-jarvis-approve" %}',
+    rescrape: '{% url "harvest-jarvis-rescrape" %}',
+  };
+
+  const form = document.getElementById('jarvis-form');
+  const input = document.getElementById('jarvis-input');
+  const clearBtn = document.getElementById('clear-btn');
+  const btn = document.getElementById('jarvis-btn');
+  const btnIcon = document.getElementById('jarvis-btn-icon');
+  const btnText = document.getElementById('jarvis-btn-text');
   const progressEl = document.getElementById('jarvis-progress');
-  const progressBar= document.getElementById('progress-bar');
-  const progressMsg= document.getElementById('progress-msg');
-  const progressPct= document.getElementById('progress-pct');
-  const errorEl    = document.getElementById('jarvis-error');
-  const errorMsg   = document.getElementById('jarvis-error-msg');
-  const errorHint  = document.getElementById('jarvis-error-hint');
-  const resultEl   = document.getElementById('jarvis-result');
-  const urlHint    = document.getElementById('url-hint');
+  const progressBar = document.getElementById('progress-bar');
+  const progressMsg = document.getElementById('progress-msg');
+  const progressPct = document.getElementById('progress-pct');
+  const errorEl = document.getElementById('jarvis-error');
+  const errorMsg = document.getElementById('jarvis-error-msg');
+  const errorHint = document.getElementById('jarvis-error-hint');
+  const resultEl = document.getElementById('jarvis-result');
+  const urlHint = document.getElementById('url-hint');
   const urlHintBadge = document.getElementById('url-hint-badge');
   const urlHintStrategy = document.getElementById('url-hint-strategy');
 
   let pollTimer = null;
-  let currentJobId = null;
+  let currentRawJobId = null;
+  let currentLiveJobId = null;
+  let currentSourceUrl = '';
+  let descExpanded = false;
 
-  // ── Platform URL pattern detection ──────────────────────────────────────
   const PLATFORM_PATTERNS = [
-    { slug: 'greenhouse',       label: 'Greenhouse',       strategy: 'REST API',  patterns: ['boards.greenhouse.io', 'greenhouse.io/jobs'] },
-    { slug: 'lever',            label: 'Lever',            strategy: 'REST API',  patterns: ['jobs.lever.co', 'lever.co/'] },
-    { slug: 'ashby',            label: 'Ashby',            strategy: 'GraphQL',   patterns: ['jobs.ashbyhq.com', 'ashbyhq.com'] },
-    { slug: 'workday',          label: 'Workday',          strategy: 'REST API',  patterns: ['myworkdayjobs.com', 'workday.com/'] },
-    { slug: 'workable',         label: 'Workable',         strategy: 'REST API',  patterns: ['apply.workable.com', 'jobs.workable.com'] },
-    { slug: 'smartrecruiters',  label: 'SmartRecruiters',  strategy: 'REST API',  patterns: ['jobs.smartrecruiters.com'] },
-    { slug: 'bamboohr',         label: 'BambooHR',         strategy: 'HTML Scrape', patterns: ['bamboohr.com/careers'] },
-    { slug: 'linkedin',         label: 'LinkedIn',         strategy: 'HTML Scrape', patterns: ['linkedin.com/jobs'] },
-    { slug: 'indeed',           label: 'Indeed',           strategy: 'HTML Scrape', patterns: ['indeed.com/viewjob', 'indeed.com/jobs'] },
+    { slug: 'greenhouse', label: 'Greenhouse', strategy: 'REST API', patterns: ['boards.greenhouse.io', 'greenhouse.io/jobs'] },
+    { slug: 'lever', label: 'Lever', strategy: 'REST API', patterns: ['jobs.lever.co', 'lever.co/'] },
+    { slug: 'ashby', label: 'Ashby', strategy: 'REST API', patterns: ['jobs.ashbyhq.com', 'ashbyhq.com/jobs'] },
+    { slug: 'workday', label: 'Workday', strategy: 'REST API', patterns: ['myworkdayjobs.com'] },
+    { slug: 'smartrecruiters', label: 'SmartRecruiters', strategy: 'REST API', patterns: ['smartrecruiters.com'] },
+    { slug: 'workable', label: 'Workable', strategy: 'REST API', patterns: ['workable.com'] },
+    { slug: 'bamboohr', label: 'BambooHR', strategy: 'JSON Endpoint', patterns: ['bamboohr.com/careers'] },
+    { slug: 'linkedin', label: 'LinkedIn', strategy: 'HTML Fallback', patterns: ['linkedin.com/jobs'] },
+    { slug: 'indeed', label: 'Indeed', strategy: 'HTML Fallback', patterns: ['indeed.com/viewjob', 'indeed.com/jobs'] },
   ];
 
+  function getCsrf() {
+    const el = document.querySelector('[name=csrfmiddlewaretoken]');
+    return el ? el.value : '';
+  }
+
   function detectPlatform(url) {
-    const lower = url.toLowerCase();
+    const lower = (url || '').toLowerCase();
     for (const p of PLATFORM_PATTERNS) {
-      if (p.patterns.some(pat => lower.includes(pat))) return p;
+      if (p.patterns.some((pat) => lower.includes(pat))) return p;
     }
     return null;
   }
 
-  // ── URL input events ──────────────────────────────────────────────────────
-  input.addEventListener('input', () => {
-    const val = input.value.trim();
-    clearBtn.style.display = val ? 'block' : 'none';
-    if (val.startsWith('http')) {
-      const p = detectPlatform(val);
-      if (p) {
-        urlHintBadge.textContent = p.label;
-        urlHintBadge.className = '';
-        urlHintBadge.style.cssText = 'font-size:11px;font-weight:700;padding:2px 8px;border-radius:12px;background:#1e293b;color:#94a3b8;';
-        urlHintStrategy.textContent = '· ' + p.strategy;
-        urlHint.style.display = 'flex';
-      } else {
-        urlHintBadge.textContent = 'Unknown — will attempt HTML scrape';
-        urlHintBadge.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:12px;background:#1e293b;color:#64748b;';
-        urlHintStrategy.textContent = '';
-        urlHint.style.display = 'flex';
-      }
-    } else {
-      urlHint.style.display = 'none';
-    }
-  });
-
-  // ── Step helpers ──────────────────────────────────────────────────────────
   function setStep(n) {
-    [1,2,3,4].forEach(i => {
-      const dot  = document.getElementById('step-' + i);
-      const line = document.getElementById('line-' + i);
-      if (i < n)  { dot.className = 'step-dot done'; dot.textContent = '✓'; }
-      else if (i === n) { dot.className = 'step-dot active'; dot.textContent = i; }
-      else        { dot.className = 'step-dot'; dot.textContent = i; }
-      if (line) line.className = 'step-line' + (i < n ? ' done' : '');
+    [1, 2, 3, 4].forEach((idx) => {
+      const el = document.getElementById(`step-${idx}`);
+      if (!el) return;
+      el.classList.remove('active', 'done');
+      if (idx < n) el.classList.add('done');
+      else if (idx === n) el.classList.add('active');
+      const num = el.querySelector('.jarvis-step-num');
+      if (num) num.textContent = idx < n ? 'OK' : String(idx);
     });
   }
 
   function pctToStep(pct) {
-    if (pct < 25) return 1;
-    if (pct < 55) return 2;
-    if (pct < 85) return 3;
+    if (pct < 24) return 1;
+    if (pct < 52) return 2;
+    if (pct < 80) return 3;
     return 4;
   }
 
-  // ── Submit ──────────────────────────────────────────────────────────────
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const url = input.value.trim();
-    if (!url) return;
-
-    const csrf = getCsrf();
-    const body = new URLSearchParams({ url, csrfmiddlewaretoken: csrf });
-
-    setLoading(true);
-    hideError();
-    resultEl.style.display = 'none';
-    currentJobId = null;
-
-    try {
-      const resp = await fetch('{% url "harvest-jarvis" %}', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-      });
-      const json = await resp.json();
-      if (!json.ok) { showError(json.error, ''); setLoading(false); return; }
-      pollStatus(json.task_id);
-    } catch (err) {
-      showError('Request failed: ' + err.message, 'Check your network connection and try again.');
-      setLoading(false);
+  function setLoading(on) {
+    btn.disabled = on;
+    input.disabled = on;
+    if (on) {
+      btnIcon.innerHTML = '<svg width="14" height="14" viewBox="0 0 20 20" style="animation:jarvisSpin .8s linear infinite"><circle cx="10" cy="10" r="8" stroke="#fff" stroke-width="2" fill="none" stroke-dasharray="30 18"/></svg>';
+      btnText.textContent = 'Running...';
+      progressEl.style.display = 'block';
+      setStep(1);
+    } else {
+      btnIcon.textContent = 'Analyze';
+      btnText.textContent = 'Run Jarvis';
+      setTimeout(() => { progressEl.style.display = 'none'; }, 900);
     }
-  });
+  }
 
-  // ── Polling ───────────────────────────────────────────────────────────────
+  function showError(message, hint) {
+    errorMsg.textContent = message || 'Something failed.';
+    errorHint.textContent = hint || '';
+    errorEl.style.display = 'block';
+  }
+
+  function hideError() {
+    errorEl.style.display = 'none';
+  }
+
+  function resetResultView() {
+    resultEl.style.display = 'none';
+    currentRawJobId = null;
+    currentLiveJobId = null;
+    descExpanded = false;
+  }
+
+  function renderDetailsGrid(cells) {
+    const grid = document.getElementById('r-details-grid');
+    const html = cells.map((cell) => {
+      return `\n        <div class="jarvis-detail-cell">\n          <span class="jarvis-detail-label">${cell.label}</span>\n          <span class="jarvis-detail-value">${cell.value}</span>\n        </div>\n      `;
+    }).join('');
+    grid.innerHTML = html;
+  }
+
+  function setQualityBadge(score) {
+    const badge = document.getElementById('r-quality-badge');
+    if (score == null || Number.isNaN(Number(score))) {
+      badge.style.display = 'none';
+      return;
+    }
+    const pct = Math.round(Number(score) * 100);
+    badge.style.display = 'inline-flex';
+    badge.textContent = `Q ${pct}%`;
+    if (pct >= 70) badge.style.cssText = 'display:inline-flex;background:#e9f8ef;color:#1f8c48;border-color:#bce4ca;';
+    else if (pct >= 40) badge.style.cssText = 'display:inline-flex;background:#fff5e7;color:#99611c;border-color:#f1d3a6;';
+    else badge.style.cssText = 'display:inline-flex;background:#fff2f2;color:#a63737;border-color:#efc7c7;';
+  }
+
+  function setPlatformPill(job, result) {
+    const badge = document.getElementById('r-platform-badge');
+    const slug = String(job.detected_ats || job.platform_slug || result.platform_slug || 'jarvis').toLowerCase();
+    const labels = {
+      greenhouse: 'Greenhouse', lever: 'Lever', ashby: 'Ashby', workday: 'Workday',
+      workable: 'Workable', linkedin: 'LinkedIn', indeed: 'Indeed', smartrecruiters: 'SmartRecruiters',
+      bamboohr: 'BambooHR', jarvis: 'Jarvis',
+    };
+    badge.textContent = labels[slug] || (job.platform_name || slug);
+  }
+
+  function setStrategyPill(result) {
+    const badge = document.getElementById('r-strategy-badge');
+    const strategy = result.strategy || '';
+    if (!strategy) {
+      badge.style.display = 'none';
+      return;
+    }
+    badge.style.display = 'inline-flex';
+    badge.textContent = strategy.replace(/api:/g, '').replace(/_/g, '-');
+  }
+
+  function renderResult(job, result) {
+    currentRawJobId = job.id || null;
+    currentLiveJobId = job.live_job_id || job.duplicate_job_id || null;
+    currentSourceUrl = job.original_url || job.apply_url || currentSourceUrl || '';
+
+    document.getElementById('r-title').textContent = job.title || result.title || 'Untitled job';
+    const companyName = job.company_name || result.company_name || '';
+    const companyEl = document.getElementById('r-company');
+    companyEl.innerHTML = job.company_url
+      ? `<a href="${job.company_url}" style="color:#0b7d72;text-decoration:none;" target="_blank">${companyName}</a>`
+      : companyName;
+
+    setPlatformPill(job, result);
+    setStrategyPill(result);
+    setQualityBadge(job.quality_score);
+
+    const remoteBadge = document.getElementById('r-remote-badge');
+    remoteBadge.style.display = job.is_remote ? 'inline-flex' : 'none';
+
+    const locText = job.location_raw || '';
+    document.getElementById('r-location').textContent = locText ? `Location: ${locText}` : '';
+
+    const dedupWrap = document.getElementById('r-dedup-warn');
+    const dedupMsg = document.getElementById('r-dedup-msg');
+    if (job.duplicate_job_id) {
+      dedupWrap.style.display = 'block';
+      dedupMsg.textContent = `Potential duplicate detected. Existing live job ID: ${job.duplicate_job_id}.`;
+    } else {
+      dedupWrap.style.display = 'none';
+      dedupMsg.textContent = '';
+    }
+
+    const cells = [];
+    if (job.employment_type && job.employment_type !== 'Unknown') cells.push({ label: 'Job Type', value: job.employment_type });
+    if (job.experience_level && job.experience_level !== 'Unknown') cells.push({ label: 'Level', value: job.experience_level });
+    if (job.department) cells.push({ label: 'Department', value: job.department });
+    if (job.salary_raw || job.salary_min) {
+      const salary = job.salary_raw || (job.salary_min && job.salary_max
+        ? `${job.salary_currency || ''} ${Number(job.salary_min).toLocaleString()}-${Number(job.salary_max).toLocaleString()} / ${(job.salary_period || 'yr').toLowerCase()}`
+        : '');
+      if (salary) cells.push({ label: 'Salary', value: salary });
+    }
+    if (job.posted_date) cells.push({ label: 'Posted', value: new Date(job.posted_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) });
+    if (job.sync_status) cells.push({ label: 'Sync Status', value: job.sync_status });
+    if (job.original_url) cells.push({ label: 'URL Hash', value: 'SHA-256 Present' });
+
+    renderDetailsGrid(cells);
+
+    const descInner = document.getElementById('r-desc-inner');
+    const html = job.description || '';
+    const temp = document.createElement('div');
+    temp.innerHTML = html;
+    const plain = (temp.textContent || temp.innerText || '').trim();
+    descInner.textContent = plain || '(No description extracted)';
+    document.getElementById('r-desc-chars').textContent = plain ? `${plain.length.toLocaleString()} characters extracted` : '';
+
+    const viewBtn = document.getElementById('r-view-btn');
+    viewBtn.href = job.live_job_url || job.detail_url || (job.id ? `/harvest/raw-jobs/${job.id}/` : '#');
+
+    const applyBtn = document.getElementById('r-apply-btn');
+    applyBtn.href = job.apply_url || job.original_url || '#';
+
+    const approveBtn = document.getElementById('r-approve-btn');
+    const approveTxt = document.getElementById('approve-btn-text');
+    if (currentLiveJobId) {
+      approveTxt.textContent = 'Open Live Job';
+      approveBtn.disabled = false;
+      approveBtn.title = 'Open existing live job';
+    } else if (job.id) {
+      approveTxt.textContent = 'Approve to Live';
+      approveBtn.disabled = false;
+      approveBtn.title = 'Sync and approve this job';
+    } else {
+      approveTxt.textContent = 'Approve to Live';
+      approveBtn.disabled = true;
+      approveBtn.title = 'No saved raw job ID';
+    }
+
+    resultEl.style.display = 'block';
+    resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   function pollStatus(taskId) {
     clearInterval(pollTimer);
+
     let pct = 5;
-    progressBar.style.width = pct + '%';
-    progressPct.textContent = pct + '%';
+    progressBar.style.width = `${pct}%`;
+    progressPct.textContent = `${pct}%`;
+    progressMsg.textContent = 'Queued...';
     setStep(1);
 
     pollTimer = setInterval(async () => {
       try {
-        const resp = await fetch(`{% url "harvest-jarvis-status" %}?task_id=${taskId}`);
+        const resp = await fetch(`${endpoints.status}?task_id=${taskId}`);
         const json = await resp.json();
 
         if (json.state === 'PENDING' || json.state === 'PROGRESS') {
           pct = Math.max(pct, json.percent || 0);
-          progressBar.style.width = pct + '%';
-          progressPct.textContent = pct + '%';
-          progressMsg.textContent = json.message || 'Working…';
+          progressBar.style.width = `${pct}%`;
+          progressPct.textContent = `${pct}%`;
+          progressMsg.textContent = json.message || 'Working...';
           setStep(pctToStep(pct));
           return;
         }
@@ -507,207 +1305,236 @@
         setStep(4);
         progressBar.style.width = '100%';
         progressPct.textContent = '100%';
-        progressMsg.textContent = json.state === 'SUCCESS' ? 'Done!' : 'Failed';
-        setTimeout(() => setLoading(false), 600);
 
         if (json.state === 'SUCCESS') {
           const result = json.result || {};
           if (!result.ok) {
-            showError(result.error || 'Extraction failed — could not read job data from this URL.', 'Try a direct ATS URL (Greenhouse/Lever/Workday) rather than a redirect page.');
+            showError(result.error || 'Extraction failed.', 'Try a direct ATS posting URL.');
+            setLoading(false);
             return;
           }
+          progressMsg.textContent = 'Extraction completed';
           renderResult(json.raw_job || {}, result);
         } else if (json.state === 'FAILURE') {
-          showError(json.error || 'Task failed unexpectedly.', 'This URL may be behind a login wall or bot protection.');
+          progressMsg.textContent = 'Failed';
+          showError(json.error || 'Task failed.', 'The URL may be blocked, expired, or unsupported.');
         } else {
-          showError('Unexpected task state: ' + json.state, '');
+          progressMsg.textContent = json.state || 'Unknown state';
+          showError(`Unexpected task state: ${json.state}`, '');
         }
       } catch (err) {
         clearInterval(pollTimer);
-        setLoading(false);
-        showError('Poll failed: ' + err.message, '');
+        showError(`Status polling failed: ${err.message}`, '');
+      } finally {
+        setTimeout(() => setLoading(false), 520);
       }
-    }, 1800);
+    }, 1600);
   }
 
-  // ── Render result ─────────────────────────────────────────────────────────
-  function renderResult(job, result) {
-    currentJobId = job.id || null;
-
-    document.getElementById('r-title').textContent = job.title || result.title || 'Untitled';
-
-    // Company
-    const compEl = document.getElementById('r-company');
-    const compName = job.company_name || result.company_name || '';
-    compEl.innerHTML = job.company_url
-      ? `<a href="${job.company_url}" style="color:#38bdf8;text-decoration:none;" target="_blank">${compName}</a>`
-      : compName;
-
-    // Remote badge
-    document.getElementById('r-remote-badge').style.display = job.is_remote ? 'inline-flex' : 'none';
-
-    // Quality badge
-    const qBadge = document.getElementById('r-quality-badge');
-    if (job.quality_score != null) {
-      const q = Math.round(job.quality_score * 100);
-      qBadge.textContent = 'Q:' + q + '%';
-      qBadge.style.display = 'inline-block';
-      qBadge.style.cssText += q >= 70
-        ? ';background:#052e16;color:#22c55e;border:1px solid #166534;'
-        : q >= 40
-          ? ';background:#422006;color:#fb923c;border:1px solid #7c2d12;'
-          : ';background:#450a0a;color:#f87171;border:1px solid #7f1d1d;';
-    }
-
-    // Location
-    const locText = job.location_raw || '';
-    document.getElementById('r-location').textContent = locText ? '📍 ' + locText : '';
-
-    // Platform badge
-    const slug = (job.detected_ats || job.platform_slug || result.platform_slug || 'jarvis').toLowerCase();
-    const platBadge = document.getElementById('r-platform-badge');
-    const LABELS = { greenhouse:'Greenhouse', lever:'Lever', ashby:'Ashby', workday:'Workday', workable:'Workable', linkedin:'LinkedIn', indeed:'Indeed', smartrecruiters:'SmartRecruiters', jarvis:'Jarvis', bamboohr:'BambooHR' };
-    platBadge.textContent = LABELS[slug] || (job.platform_name || slug);
-    platBadge.className   = 'platform-badge platform-' + (LABELS[slug] ? slug : 'default');
-
-    // Strategy badge
-    const strat = result.strategy || '';
-    const stratBadge = document.getElementById('r-strategy-badge');
-    stratBadge.textContent = strat ? strat.replace(/api:/,'').replace(/_/g,'-') : '';
-    stratBadge.style.display = strat ? 'inline-block' : 'none';
-
-    // Dedup
-    const dedupWarn = document.getElementById('r-dedup-warn');
-    if (job.duplicate_job_id) {
-      document.getElementById('r-dedup-msg').textContent = `A job with the same URL already exists in the system (ID #${job.duplicate_job_id}).`;
-      dedupWarn.style.display = 'block';
-    } else {
-      dedupWarn.style.display = 'none';
-    }
-
-    // Details grid
-    const grid = document.getElementById('r-details-grid');
-    const cells = [];
-    if (job.employment_type && job.employment_type !== 'Unknown') cells.push({ label:'Job Type', value:job.employment_type });
-    if (job.experience_level && job.experience_level !== 'Unknown') cells.push({ label:'Level', value:job.experience_level });
-    if (job.department) cells.push({ label:'Department', value:job.department });
-    if (job.salary_raw || job.salary_min) {
-      const sal = job.salary_raw || (job.salary_min && job.salary_max
-        ? `${job.salary_currency||''} ${Number(job.salary_min).toLocaleString()}–${Number(job.salary_max).toLocaleString()} / ${(job.salary_period||'yr').toLowerCase()}`
-        : '');
-      if (sal) cells.push({ label:'Salary', value:sal, green:true });
-    }
-    if (job.posted_date) cells.push({ label:'Posted', value:new Date(job.posted_date).toLocaleDateString('en-US', {month:'short',day:'numeric',year:'numeric'}) });
-    if (job.original_url) cells.push({ label:'URL Hash', value:'SHA-256 ✓', mono:true });
-
-    grid.innerHTML = cells.map((c, i) => `
-      <div style="padding:14px 16px;${i % 3 < 2 ? 'border-right:1px solid #1e293b;':''};${i >= 3 ? 'border-top:1px solid #1e293b;':''}">
-        <p style="font-size:10px;text-transform:uppercase;color:#475569;font-weight:700;margin:0 0 4px;letter-spacing:.4px;">${c.label}</p>
-        <p style="font-size:13px;font-weight:${c.mono?'500':'700'};color:${c.green ? '#22c55e' : c.mono ? '#64748b' : '#e2e8f0'};margin:0;font-family:${c.mono?'monospace':'inherit'}">${c.value}</p>
-      </div>
-    `).join('');
-
-    // Description
-    const descInner = document.getElementById('r-desc-inner');
-    const rawDesc   = job.description || '';
-    const tmp = document.createElement('div');
-    tmp.innerHTML = rawDesc;
-    const text = (tmp.textContent || tmp.innerText || '').trim();
-    descInner.textContent = text || '(no description extracted)';
-    document.getElementById('r-desc-chars').textContent = text ? `${text.length.toLocaleString()} characters extracted` : '';
-
-    // Buttons
-    const viewBtn = document.getElementById('r-view-btn');
-    viewBtn.href = job.detail_url || (job.id ? `/harvest/raw-jobs/${job.id}/` : '#');
-    document.getElementById('r-apply-btn').href = job.apply_url || job.original_url || '#';
-
-    // Approve button — only if approved endpoint exists and job was saved
-    const approveBtn = document.getElementById('r-approve-btn');
-    approveBtn.disabled = !job.id;
-    approveBtn.title = job.id ? 'Approve directly to Live' : 'Job not saved yet';
-
-    resultEl.style.display = 'block';
-    resultEl.scrollIntoView({ behavior:'smooth', block:'start' });
+  async function submitRun(url) {
+    const csrf = getCsrf();
+    const body = new URLSearchParams({ url, csrfmiddlewaretoken: csrf });
+    const resp = await fetch(endpoints.run, {
+      method: 'POST',
+      headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+      body,
+    });
+    return resp.json();
   }
 
-  // ── Approve directly to Live ──────────────────────────────────────────────
-  window.approveJob = async function () {
-    if (!currentJobId) return;
-    const approveBtn = document.getElementById('r-approve-btn');
-    const btnTxt = document.getElementById('approve-btn-text');
-    approveBtn.disabled = true;
-    btnTxt.textContent = 'Approving…';
-    try {
-      const resp = await fetch(`/jobs/${currentJobId}/approve/`, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': getCsrf(), 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ csrfmiddlewaretoken: getCsrf() }),
-      });
-      if (resp.ok || resp.redirected) {
-        btnTxt.textContent = '✓ Approved!';
-        approveBtn.style.background = 'linear-gradient(135deg,#16a34a,#166534)';
-      } else {
-        btnTxt.textContent = 'Approve to Live';
-        approveBtn.disabled = false;
-        showError('Approval failed — try from the Vet Queue.', '');
-      }
-    } catch {
-      btnTxt.textContent = 'Approve to Live';
-      approveBtn.disabled = false;
-    }
-  };
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const url = input.value.trim();
+    if (!url) return;
 
-  // ── Description toggle ────────────────────────────────────────────────────
-  let descExpanded = false;
-  window.toggleDesc = function () {
-    const desc  = document.getElementById('r-desc');
-    const fade  = document.getElementById('r-desc-fade');
-    const togBtn= document.getElementById('desc-toggle');
-    descExpanded = !descExpanded;
-    desc.style.maxHeight = descExpanded ? '2000px' : '160px';
-    fade.style.opacity   = descExpanded ? '0' : '1';
-    togBtn.textContent   = descExpanded ? 'Show less' : 'Show more';
-  };
-
-  // ── Helpers ───────────────────────────────────────────────────────────────
-  function setLoading(on) {
-    btn.disabled   = on;
-    input.disabled = on;
-    if (on) {
-      btnIcon.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" style="animation:spin .8s linear infinite;"><circle cx="8" cy="8" r="6" stroke="#fff" stroke-width="2" fill="none" stroke-dasharray="20 15"/></svg>';
-      btnText.textContent = 'Analyzing…';
-      progressEl.style.display = 'block';
-    } else {
-      btnIcon.textContent = '🔍';
-      btnText.textContent = 'Analyze & Import Job';
-      setTimeout(() => { progressEl.style.display = 'none'; }, 800);
-    }
-  }
-
-  function showError(msg, hint) {
-    errorMsg.textContent  = msg;
-    errorHint.textContent = hint || '';
-    errorEl.style.display = 'flex';
-  }
-
-  function hideError()  { errorEl.style.display = 'none'; }
-
-  function getCsrf() {
-    const el = document.querySelector('[name=csrfmiddlewaretoken]');
-    return el ? el.value : '';
-  }
-
-  window.resetJarvis = function () {
-    resultEl.style.display = 'none';
+    currentSourceUrl = url;
     hideError();
+    resetResultView();
+    setLoading(true);
+
+    try {
+      const json = await submitRun(url);
+      if (!json.ok) {
+        showError(json.error || 'Failed to queue jarvis task.', '');
+        setLoading(false);
+        return;
+      }
+      pollStatus(json.task_id);
+    } catch (err) {
+      showError(`Request failed: ${err.message}`, 'Check network and worker health.');
+      setLoading(false);
+    }
+  });
+
+  window.approveJob = async function approveJob() {
+    if (currentLiveJobId) {
+      window.open(`/jobs/${currentLiveJobId}/`, '_blank');
+      return;
+    }
+    if (!currentRawJobId) return;
+
+    const approveBtn = document.getElementById('r-approve-btn');
+    const approveTxt = document.getElementById('approve-btn-text');
+    approveBtn.disabled = true;
+    approveTxt.textContent = 'Approving...';
+
+    try {
+      const csrf = getCsrf();
+      const resp = await fetch(endpoints.approve, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrfmiddlewaretoken: csrf, raw_job_id: String(currentRawJobId) }),
+      });
+      const json = await resp.json();
+
+      if (resp.ok && json.ok) {
+        currentLiveJobId = json.job_id || null;
+        approveTxt.textContent = 'Approved';
+        approveBtn.title = 'Job is live';
+        if (json.job_url) {
+          const viewBtn = document.getElementById('r-view-btn');
+          viewBtn.href = json.job_url;
+        }
+        return;
+      }
+
+      approveTxt.textContent = 'Approve to Live';
+      approveBtn.disabled = false;
+      showError(json.error || 'Approval failed.', 'Use vet queue fallback if needed.');
+    } catch (err) {
+      approveTxt.textContent = 'Approve to Live';
+      approveBtn.disabled = false;
+      showError(`Approval failed: ${err.message}`, '');
+    }
+  };
+
+  function applyRescrapePreview(data) {
+    if (!data || typeof data !== 'object') return;
+
+    if (data.title) document.getElementById('r-title').textContent = data.title;
+
+    if (typeof data.is_remote === 'boolean') {
+      document.getElementById('r-remote-badge').style.display = data.is_remote ? 'inline-flex' : 'none';
+    }
+
+    const loc = data.location_raw || '';
+    document.getElementById('r-location').textContent = loc ? `Location: ${loc}` : '';
+
+    const strategyBadge = document.getElementById('r-strategy-badge');
+    const strategy = data.strategy || '';
+    if (strategy) {
+      strategyBadge.style.display = 'inline-flex';
+      strategyBadge.textContent = strategy.replace(/api:/g, '').replace(/_/g, '-');
+    }
+
+    if (data.platform_slug) {
+      setPlatformPill({ platform_slug: data.platform_slug }, {});
+    }
+
+    const descInner = document.getElementById('r-desc-inner');
+    const temp = document.createElement('div');
+    temp.innerHTML = data.description || '';
+    const plain = (temp.textContent || temp.innerText || '').trim();
+    descInner.textContent = plain || '(No description extracted)';
+    document.getElementById('r-desc-chars').textContent = plain ? `${plain.length.toLocaleString()} characters extracted (preview)` : '';
+  }
+
+  window.reScrapeCurrent = async function reScrapeCurrent() {
+    const targetUrl = currentSourceUrl || input.value.trim();
+    if (!targetUrl) {
+      showError('No URL available for re-scrape.', '');
+      return;
+    }
+
+    const btnRescrape = document.getElementById('r-rescrape-btn');
+    const prev = btnRescrape.textContent;
+    btnRescrape.disabled = true;
+    btnRescrape.textContent = 'Re-scraping...';
+
+    try {
+      const csrf = getCsrf();
+      const resp = await fetch(endpoints.rescrape, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrfmiddlewaretoken: csrf, url: targetUrl }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.ok) {
+        showError(json.error || 'Re-scrape failed.', '');
+        return;
+      }
+      applyRescrapePreview(json.data || {});
+    } catch (err) {
+      showError(`Re-scrape failed: ${err.message}`, '');
+    } finally {
+      btnRescrape.disabled = false;
+      btnRescrape.textContent = prev;
+    }
+  };
+
+  window.toggleDesc = function toggleDesc() {
+    const desc = document.getElementById('r-desc');
+    const fade = document.getElementById('r-desc-fade');
+    const toggle = document.getElementById('desc-toggle');
+    descExpanded = !descExpanded;
+    desc.style.maxHeight = descExpanded ? '2200px' : '170px';
+    fade.style.opacity = descExpanded ? '0' : '1';
+    toggle.textContent = descExpanded ? 'Show less' : 'Show more';
+  };
+
+  window.resetJarvis = function resetJarvis() {
+    hideError();
+    clearInterval(pollTimer);
+    setLoading(false);
     input.value = '';
     input.disabled = false;
     clearBtn.style.display = 'none';
     urlHint.style.display = 'none';
-    currentJobId = null;
+    currentRawJobId = null;
+    currentLiveJobId = null;
+    currentSourceUrl = '';
+    descExpanded = false;
+    resultEl.style.display = 'none';
+    progressBar.style.width = '0%';
+    progressPct.textContent = '0%';
+    progressMsg.textContent = 'Queued...';
+    setStep(1);
     input.focus();
-    window.scrollTo({ top:0, behavior:'smooth' });
   };
+
+  clearBtn.addEventListener('click', function () {
+    input.value = '';
+    clearBtn.style.display = 'none';
+    urlHint.style.display = 'none';
+    input.focus();
+  });
+
+  input.addEventListener('input', function () {
+    const value = input.value.trim();
+    clearBtn.style.display = value ? 'block' : 'none';
+
+    if (!value.startsWith('http')) {
+      urlHint.style.display = 'none';
+      return;
+    }
+
+    const platform = detectPlatform(value);
+    if (platform) {
+      urlHint.style.display = 'inline-flex';
+      urlHintBadge.textContent = platform.label;
+      urlHintBadge.style.background = '#e6f4f2';
+      urlHintBadge.style.color = '#0f7e74';
+      urlHintBadge.style.borderColor = '#b8ddd8';
+      urlHintStrategy.textContent = `via ${platform.strategy}`;
+    } else {
+      urlHint.style.display = 'inline-flex';
+      urlHintBadge.textContent = 'Unknown';
+      urlHintBadge.style.background = '#eef3f2';
+      urlHintBadge.style.color = '#5f7e7a';
+      urlHintBadge.style.borderColor = '#d5e1df';
+      urlHintStrategy.textContent = 'using resilient HTML fallback';
+    }
+  });
 
   input.focus();
 })();

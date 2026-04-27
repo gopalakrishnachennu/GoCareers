@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
+from django.db import transaction
 from django.db.models import Count, F, Q, Sum, Value
 from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
@@ -28,6 +29,75 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _find_existing_live_job_for_rawjob(raw_job):
+    """Find existing non-archived Job mapped to a RawJob URL hash/link."""
+    from jobs.dedup import find_existing_job_by_url
+    from jobs.models import Job
+
+    if raw_job.url_hash:
+        by_hash = Job.objects.filter(url_hash=raw_job.url_hash, is_archived=False).first()
+        if by_hash:
+            return by_hash
+    if raw_job.original_url:
+        by_url = find_existing_job_by_url(raw_job.original_url)
+        if by_url and not by_url.is_archived:
+            return by_url
+        by_link = Job.objects.filter(original_link=raw_job.original_url, is_archived=False).first()
+        if by_link:
+            return by_link
+    return None
+
+
+def _sync_rawjob_to_pool(raw_job, *, posted_by):
+    """
+    Sync one RawJob into Job pool (same mapping as bulk sync task).
+
+    Returns ``(job, created_new)``.
+    """
+    from django.utils import timezone as _tz
+    from jobs.models import Job
+    from jobs.quality import compute_quality_score
+
+    existing = _find_existing_live_job_for_rawjob(raw_job)
+    if existing:
+        if raw_job.sync_status != "SYNCED":
+            raw_job.sync_status = "SKIPPED"
+            raw_job.save(update_fields=["sync_status", "updated_at"])
+        return existing, False
+
+    desc = (raw_job.description or "").strip()
+    if not desc or len(desc) <= 50:
+        raise ValueError("Cannot approve: job description is too short or missing.")
+    if not raw_job.company_id:
+        raise ValueError("Cannot approve: no company mapped to this import.")
+    if not raw_job.original_url:
+        raise ValueError("Cannot approve: original job URL is missing.")
+
+    platform_slug = raw_job.platform_slug or (raw_job.job_platform.slug if raw_job.job_platform else "")
+    with transaction.atomic():
+        job = Job.objects.create(
+            title=raw_job.title,
+            company=raw_job.company_name or (raw_job.company.name if raw_job.company else ""),
+            company_obj=raw_job.company,
+            location=raw_job.location_raw or "",
+            description=raw_job.description or raw_job.title,
+            original_link=raw_job.original_url,
+            salary_range=raw_job.salary_raw or "",
+            job_type=raw_job.employment_type if raw_job.employment_type != "UNKNOWN" else "FULL_TIME",
+            status="POOL",
+            stage=Job.Stage.VETTED,
+            stage_changed_at=_tz.now(),
+            url_hash=raw_job.url_hash or "",
+            job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
+            posted_by=posted_by,
+        )
+        job.quality_score = compute_quality_score(job)
+        Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
+        raw_job.sync_status = "SYNCED"
+        raw_job.save(update_fields=["sync_status", "updated_at"])
+    return job, True
 
 
 def _raw_jobs_missing_jd_base_qs():
@@ -1379,6 +1449,8 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
                     job = RawJob.objects.select_related("company", "job_platform").get(
                         pk=result["raw_job_id"]
                     )
+                    payload = job.raw_payload if isinstance(job.raw_payload, dict) else {}
+                    existing_live_job = _find_existing_live_job_for_rawjob(job)
                     raw_job_data = {
                         "id": job.pk,
                         "title": job.title,
@@ -1396,15 +1468,19 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
                         "salary_max": str(job.salary_max) if job.salary_max else None,
                         "salary_currency": job.salary_currency,
                         "salary_period": job.salary_period,
+                        "quality_score": job.quality_score,
                         "description": (job.description or "")[:3000],
                         "platform_slug": job.platform_slug,
-                        "platform_name": job.job_platform.name if job.job_platform else (job.raw_payload.get("jarvis_detected_ats") or job.platform_slug).title(),
-                        "detected_ats": job.raw_payload.get("jarvis_detected_ats", ""),
+                        "platform_name": job.job_platform.name if job.job_platform else (payload.get("jarvis_detected_ats") or job.platform_slug).title(),
+                        "detected_ats": payload.get("jarvis_detected_ats", ""),
                         "original_url": job.original_url,
                         "apply_url": job.apply_url,
                         "posted_date": job.posted_date.isoformat() if job.posted_date else "",
                         "sync_status": job.sync_status,
                         "detail_url": f"/harvest/raw-jobs/{job.pk}/",
+                        "duplicate_job_id": existing_live_job.pk if existing_live_job else None,
+                        "live_job_id": existing_live_job.pk if existing_live_job else None,
+                        "live_job_url": f"/jobs/{existing_live_job.pk}/" if existing_live_job else "",
                     }
                 except RawJob.DoesNotExist:
                     pass
@@ -1422,6 +1498,74 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
 
         # REVOKED or other
         return JsonResponse({"state": state})
+
+
+class JarvisApproveView(SuperuserRequiredMixin, View):
+    """POST { raw_job_id } -> sync RawJob to pool then approve to live in one step."""
+
+    def post(self, request, *args, **kwargs):
+        from jobs.models import Job
+
+        raw_job_id = (request.POST.get("raw_job_id") or "").strip()
+        if not raw_job_id.isdigit():
+            return JsonResponse({"ok": False, "error": "Missing or invalid raw_job_id."}, status=400)
+
+        try:
+            raw_job = RawJob.objects.select_related("company", "job_platform").get(pk=int(raw_job_id))
+        except RawJob.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "Raw job not found."}, status=404)
+
+        try:
+            job, created_new = _sync_rawjob_to_pool(raw_job, posted_by=request.user)
+        except ValueError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            logger.exception("Jarvis approve sync failed for raw_job=%s", raw_job.pk)
+            return JsonResponse({"ok": False, "error": f"Failed to sync job: {exc}"}, status=500)
+
+        approved_now = False
+        if job.status == Job.Status.POOL:
+            job.status = Job.Status.OPEN
+            job.validated_by = request.user
+            job.validation_run_at = timezone.now()
+            job.save(update_fields=["status", "validated_by", "validation_run_at", "updated_at"])
+            approved_now = True
+            try:
+                from jobs.notify import notify_new_open_job_to_consultants, notify_job_pool_status
+
+                notify_new_open_job_to_consultants(job)
+                notify_job_pool_status(job, approved=True, actor=request.user)
+            except Exception:
+                logger.exception("Jarvis approve notifications failed for job=%s", job.pk)
+            try:
+                from jobs.tasks import generate_job_matches_task
+
+                generate_job_matches_task.delay(job.pk, notify=True)
+            except Exception:
+                logger.exception("Jarvis approve match task dispatch failed for job=%s", job.pk)
+
+        if job.status not in (Job.Status.OPEN, Job.Status.POOL):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": f"Job exists but cannot be auto-approved from status {job.status}.",
+                    "job_id": job.pk,
+                    "job_url": f"/jobs/{job.pk}/",
+                },
+                status=409,
+            )
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "raw_job_id": raw_job.pk,
+                "job_id": job.pk,
+                "job_url": f"/jobs/{job.pk}/",
+                "created_job": created_new,
+                "approved_now": approved_now,
+                "job_status": job.status,
+            }
+        )
 
 
 class JarvisReScrapeView(SuperuserRequiredMixin, View):
