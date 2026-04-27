@@ -2009,6 +2009,10 @@ def _extract_company_from_url(url: str) -> str:
             ".dayforcehcm.com", ".icims.com", ".smartrecruiters.com",
             ".taleo.net", ".jobvite.com", ".zohorecruit.com",
         ):
+            suffix_root = suffix.lstrip(".")
+            if host == suffix_root:
+                host = ""
+                break
             if host.endswith(suffix):
                 host = host[: -len(suffix)]
         if host in {"dayforcehcm.com", "greenhouse.io", "lever.co", "ashbyhq.com"}:
@@ -2127,7 +2131,8 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             ".dayforcehcm.com",
         )
         for ats in ATS_DOMAINS:
-            if host.endswith(ats):
+            ats_root = ats.lstrip(".")
+            if host == ats_root or host.endswith(ats):
                 host = ""
                 break
         if host:
