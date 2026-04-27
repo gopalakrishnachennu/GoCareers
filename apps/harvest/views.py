@@ -53,6 +53,53 @@ def _find_existing_live_job_for_rawjob(raw_job):
     return None
 
 
+def _invalidate_rawjobs_dashboard_cache() -> None:
+    """Best-effort cache bust for Raw Jobs KPI cards."""
+    try:
+        cache.delete("rawjobs_dashboard_stats")
+        cache.delete("rawjobs_expired_missing_jd")
+    except Exception:
+        pass
+
+
+def _load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
+    """
+    Unified dashboard stats payload used by both HTML and JSON views.
+
+    Keeping this in one place avoids KPI drift between initial render and polling.
+    """
+    from django.utils.timezone import now as _now
+
+    stats_key = "rawjobs_dashboard_stats"
+    expired_key = "rawjobs_expired_missing_jd"
+    stats_ttl_sec = 20
+    expired_ttl_sec = 120
+
+    stats = None if force_refresh else cache.get(stats_key)
+    if stats is not None:
+        return stats
+
+    today = _now().date()
+    agg = RawJob.objects.aggregate(
+        total=Count("id"),
+        active=Count("id", filter=Q(is_active=True)),
+        remote=Count("id", filter=Q(is_remote=True)),
+        synced=Count("id", filter=Q(sync_status="SYNCED")),
+        pending=Count("id", filter=Q(sync_status="PENDING")),
+        failed=Count("id", filter=Q(sync_status="FAILED")),
+        # "Today" tracks activity (new + refreshed rows), not only first-seen inserts.
+        new_today=Count("id", filter=Q(updated_at__date=today)),
+        missing_jd=Count("id", filter=Q(has_description=False)),
+    )
+    expired_missing = None if force_refresh else cache.get(expired_key)
+    if expired_missing is None:
+        expired_missing = raw_jobs_missing_jd_expired_count()
+        cache.set(expired_key, expired_missing, expired_ttl_sec)
+    agg["expired_missing"] = expired_missing
+    cache.set(stats_key, agg, stats_ttl_sec)
+    return agg
+
+
 def _sync_rawjob_to_pool(raw_job, *, posted_by):
     """
     Sync one RawJob into Job pool (same mapping as bulk sync task).
@@ -68,6 +115,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
         if raw_job.sync_status != "SYNCED":
             raw_job.sync_status = "SKIPPED"
             raw_job.save(update_fields=["sync_status", "updated_at"])
+            _invalidate_rawjobs_dashboard_cache()
         return existing, False
 
     desc = (raw_job.description or "").strip()
@@ -100,6 +148,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
         Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
         raw_job.sync_status = "SYNCED"
         raw_job.save(update_fields=["sync_status", "updated_at"])
+    _invalidate_rawjobs_dashboard_cache()
     return job, True
 
 
@@ -576,6 +625,14 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 Q(title__icontains=q) | Q(company_name__icontains=q)
             )
 
+        company_id_f = self.request.GET.get("company_id", "").strip()
+        if company_id_f.isdigit():
+            qs = qs.filter(company_id=int(company_id_f))
+
+        label_pk_f = self.request.GET.get("label_pk", "").strip()
+        if label_pk_f.isdigit():
+            qs = qs.filter(platform_label_id=int(label_pk_f))
+
         platform_f = self.request.GET.get("platform", "").strip()
         if platform_f:
             qs = qs.filter(platform_slug=platform_f)
@@ -649,31 +706,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "rawjobs"
 
-        # ── Stats: one aggregation query instead of 8 separate COUNTs ──────────
-        # Cache for 60 s — stat cards refresh via /raw-jobs/stats/ polling anyway.
-        stats = cache.get("rawjobs_dashboard_stats")
-        if stats is None:
-            from django.utils.timezone import now as _now
-            today = _now().date()
-            agg = RawJob.objects.aggregate(
-                total=Count("id"),
-                active=Count("id", filter=Q(is_active=True)),
-                remote=Count("id", filter=Q(is_remote=True)),
-                synced=Count("id", filter=Q(sync_status="SYNCED")),
-                pending=Count("id", filter=Q(sync_status="PENDING")),
-                failed=Count("id", filter=Q(sync_status="FAILED")),
-                # "Today" should reflect activity (new + refreshed rows), not only first-seen inserts.
-                new_today=Count("id", filter=Q(updated_at__date=today)),
-                missing_jd=Count("id", filter=Q(has_description=False)),
-            )
-            # Expired-missing-JD still needs the complex query; cache separately
-            expired_missing = cache.get("rawjobs_expired_missing_jd")
-            if expired_missing is None:
-                expired_missing = raw_jobs_missing_jd_expired_count()
-                cache.set("rawjobs_expired_missing_jd", expired_missing, 120)
-            agg["expired_missing"] = expired_missing
-            stats = agg
-            cache.set("rawjobs_dashboard_stats", stats, 60)
+        # Unified KPI aggregation with short TTL + invalidation on writes.
+        stats = _load_rawjobs_dashboard_stats(force_refresh=False)
 
         ctx["total_jobs"] = stats["total"]
         ctx["active_jobs"] = stats["active"]
@@ -718,6 +752,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
+        ctx["selected_company_id"] = self.request.GET.get("company_id", "")
+        ctx["selected_label_pk"] = self.request.GET.get("label_pk", "")
 
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
@@ -1273,12 +1309,10 @@ class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
         return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
 
 
+@method_decorator(never_cache, name="dispatch")
 class RawJobStatsView(SuperuserRequiredMixin, View):
     """JSON endpoint — live stats for dashboard polling."""
     def get(self, request):
-        from django.utils.timezone import now
-        today = now().date()
-
         # Running batch info
         running_batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
         batch_data = None
@@ -1294,27 +1328,8 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 "total_jobs_new": running_batch.total_jobs_new,
             }
 
-        # Reuse cached aggregation; bust it if a batch is running (counts change fast)
-        stats = cache.get("rawjobs_dashboard_stats")
-        if stats is None or running_batch:
-            agg = RawJob.objects.aggregate(
-                total=Count("id"),
-                active=Count("id", filter=Q(is_active=True)),
-                remote=Count("id", filter=Q(is_remote=True)),
-                synced=Count("id", filter=Q(sync_status="SYNCED")),
-                pending=Count("id", filter=Q(sync_status="PENDING")),
-                failed=Count("id", filter=Q(sync_status="FAILED")),
-                # Keep KPI behavior consistent with RawJobListView context aggregation.
-                new_today=Count("id", filter=Q(updated_at__date=today)),
-                missing_jd=Count("id", filter=Q(has_description=False)),
-            )
-            expired_missing = cache.get("rawjobs_expired_missing_jd")
-            if expired_missing is None:
-                expired_missing = raw_jobs_missing_jd_expired_count()
-                cache.set("rawjobs_expired_missing_jd", expired_missing, 120)
-            agg["expired_missing"] = expired_missing
-            stats = agg
-            cache.set("rawjobs_dashboard_stats", stats, 60)
+        # Force refresh while a batch is running; otherwise use short-lived cache.
+        stats = _load_rawjobs_dashboard_stats(force_refresh=bool(running_batch))
 
         return JsonResponse({
             "total_jobs": stats["total"],
@@ -1333,6 +1348,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 .order_by("-count")
                 .values("platform_slug", "count")
             ),
+            "meta": {"cache": "fresh" if running_batch else "short_ttl"},
         })
 
 
@@ -1732,7 +1748,7 @@ class JarvisFetchProgressView(SuperuserRequiredMixin, TemplateView):
         ctx["platform_slug"] = self.request.GET.get("platform_slug", "").strip()
         ctx["company_jobs_url"] = self.request.GET.get("company_jobs_url", "").strip()
         ctx["jarvis_url"] = reverse("harvest-jarvis")
-        ctx["rawjobs_url"] = reverse("harvest-rawjobs")
+        ctx["rawjobs_url"] = f"{reverse('harvest-rawjobs')}?_subtab=jobs"
         ctx["progress_api_url"] = reverse("harvest-jarvis-fetch-all-progress-api")
         return ctx
 
@@ -1783,9 +1799,18 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
 
             if done:
                 if state == CompanyFetchRun.Status.SUCCESS:
-                    message = "Company fetch complete."
+                    message = (
+                        "Company fetch complete."
+                        if found > 0
+                        else "Company fetch complete (no jobs returned from board)."
+                    )
                 elif state == CompanyFetchRun.Status.PARTIAL:
-                    message = "Company fetch completed with partial failures."
+                    if int(run.jobs_failed or 0) > 0:
+                        message = f"Company fetch completed with partial failures ({run.jobs_failed} failed)."
+                    elif run.error_message:
+                        message = run.error_message
+                    else:
+                        message = "Company fetch completed with warnings."
                 elif state == CompanyFetchRun.Status.SKIPPED:
                     message = run.error_message or "Company fetch skipped."
                 else:
@@ -1824,9 +1849,16 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                 for row in recent_jobs
             ]
 
-            rawjobs_qs = {"q": run.label.company.name if run.label and run.label.company else ""}
+            rawjobs_qs = {
+                "_subtab": "jobs",
+                "q": run.label.company.name if run.label and run.label.company else "",
+            }
+            if run.label and run.label.company_id:
+                rawjobs_qs["company_id"] = str(run.label.company_id)
             if run.label and run.label.platform:
                 rawjobs_qs["platform"] = run.label.platform.slug
+            if run.label_id:
+                rawjobs_qs["label_pk"] = str(run.label_id)
             rawjobs_url = f"{reverse('harvest-rawjobs')}?{urlencode(rawjobs_qs)}"
 
             return JsonResponse(
@@ -1847,6 +1879,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                         "new": int(run.jobs_new),
                         "updated": int(run.jobs_updated),
                         "duplicate": int(run.jobs_duplicate),
+                        "skipped": int(run.jobs_duplicate),
                         "failed": int(run.jobs_failed),
                     },
                     "run": {
@@ -1879,9 +1912,9 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                     "done": False,
                     "percent": max(1, min(95, percent)),
                     "message": message,
-                    "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "failed": 0},
+                    "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 0},
                     "recent_jobs": [],
-                    "rawjobs_url": reverse("harvest-rawjobs"),
+                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
                 }
             )
 
@@ -1902,10 +1935,11 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                         "new": int(result.get("jobs_new", 0) or 0),
                         "updated": int(result.get("jobs_updated", 0) or 0),
                         "duplicate": 0,
+                        "skipped": 0,
                         "failed": int(result.get("jobs_failed", 0) or 0),
                     },
                     "recent_jobs": [],
-                    "rawjobs_url": reverse("harvest-rawjobs"),
+                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
                 }
             )
 
@@ -1920,9 +1954,9 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                 "done": True,
                 "percent": 100,
                 "message": err,
-                "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "failed": 1},
+                "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 1},
                 "recent_jobs": [],
-                "rawjobs_url": reverse("harvest-rawjobs"),
+                "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
             }
         )
 

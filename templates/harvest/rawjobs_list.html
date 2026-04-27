@@ -510,7 +510,7 @@
     <div id="panel-jobs" style="display:none;">
 
       <!-- Active filter banner -->
-      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level %}
+      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk %}
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
@@ -524,6 +524,8 @@
           {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Posted: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
           {% if q %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Search: "{{ q }}"</span>{% endif %}
           {% if selected_platform %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Platform: {{ selected_platform }}</span>{% endif %}
+          {% if selected_company_id %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Company ID: {{ selected_company_id }}</span>{% endif %}
+          {% if selected_label_pk %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Label: {{ selected_label_pk }}</span>{% endif %}
         </div>
         <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="font-size:11px;color:#64748b;text-decoration:none;padding:3px 10px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;font-weight:600;">✕ Clear filters</a>
       </div>
@@ -532,6 +534,8 @@
       <!-- Filter bar -->
       <form method="GET" action="{% url 'harvest-rawjobs' %}" id="jobs-filter-form" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
         <input type="hidden" name="_subtab" value="jobs">
+        {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+        {% if selected_label_pk %}<input type="hidden" name="label_pk" value="{{ selected_label_pk }}">{% endif %}
         <!-- Row 1: search + main dropdowns -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
           <input type="text" name="q" id="jf-q" value="{{ q }}" placeholder="Search title / company…" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
@@ -904,7 +908,8 @@ function stopPolling() {
 }
 
 function pollStats() {
-  fetch('{% url "harvest-rawjobs-stats" %}')
+  const statsUrl = `{% url "harvest-rawjobs-stats" %}?_ts=${Date.now()}`;
+  fetch(statsUrl, { cache: 'no-store' })
     .then(r => r.json())
     .then(data => {
       // Update stat cards

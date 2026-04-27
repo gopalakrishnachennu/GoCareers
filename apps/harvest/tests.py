@@ -686,6 +686,76 @@ class JarvisCompanyFallbackTests(SimpleTestCase):
         )
 
 
+class JarvisPlatformLabelRepairTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform
+
+        self.company = Company.objects.create(name="Appliedsystems")
+        self.greenhouse = JobBoardPlatform.objects.create(
+            name="Greenhouse",
+            slug="greenhouse",
+            is_enabled=True,
+        )
+        self.icims = JobBoardPlatform.objects.create(
+            name="iCIMS",
+            slug="icims",
+            is_enabled=True,
+        )
+        self.label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.greenhouse,
+            tenant_id="appliedsystems",
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            confidence=CompanyPlatformLabel.Confidence.MEDIUM,
+        )
+
+    def test_jarvis_can_repair_stale_platform_label_when_not_manual(self):
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        source_url = "https://careers-appliedsystems.icims.com/jobs/search"
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url=source_url,
+            job_platform=self.icims,
+        )
+        label.refresh_from_db()
+        self.assertIsNotNone(label)
+        self.assertEqual(label.platform.slug, "icims")
+        self.assertEqual(label.tenant_id, "careers-appliedsystems")
+        self.assertEqual(board_ctx.get("platform_slug"), "icims")
+        self.assertEqual(board_ctx.get("tenant_id"), "careers-appliedsystems")
+        self.assertEqual(
+            board_ctx.get("company_jobs_url"),
+            "https://careers-appliedsystems.icims.com/jobs/search",
+        )
+        self.assertTrue(board_ctx.get("fetch_all_supported"))
+
+    def test_manual_verified_label_is_not_overridden(self):
+        from harvest.models import CompanyPlatformLabel
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        self.label.detection_method = CompanyPlatformLabel.DetectionMethod.MANUAL
+        self.label.is_verified = True
+        self.label.save(update_fields=["detection_method", "is_verified"])
+
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url="https://careers-appliedsystems.icims.com/jobs/search",
+            job_platform=self.icims,
+        )
+        label.refresh_from_db()
+        self.assertEqual(label.platform.slug, "greenhouse")
+        self.assertEqual(board_ctx.get("platform_slug"), "greenhouse")
+        self.assertEqual(board_ctx.get("tenant_id"), "appliedsystems")
+        self.assertEqual(
+            board_ctx.get("company_jobs_url"),
+            "https://boards.greenhouse.io/appliedsystems",
+        )
+
+
 class JarvisIngestDayforceIntegrationTests(TestCase):
     def test_ingest_auto_creates_dayforce_platform_and_company(self):
         from companies.models import Company
@@ -811,7 +881,7 @@ class JarvisFetchAllCompanyViewTests(TestCase):
             company=self.company,
             platform=self.platform,
             tenant_id="kestra|KESTRACAREERSITE",
-            confidence_score=0.98,
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
         )
         self.raw_job.platform_label = label
         self.raw_job.save(update_fields=["platform_label", "updated_at"])
@@ -848,3 +918,9 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         self.assertEqual(body.get("counts", {}).get("new"), 1)
         self.assertTrue(body.get("rawjobs_url"))
         self.assertIn("recent_jobs", body)
+        parsed = urlparse(body["rawjobs_url"])
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("_subtab"), ["jobs"])
+        self.assertEqual(qs.get("platform"), ["dayforce"])
+        self.assertEqual(qs.get("company_id"), [str(self.company.pk)])
+        self.assertEqual(qs.get("label_pk"), [str(label.pk)])

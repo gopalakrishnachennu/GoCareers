@@ -1690,11 +1690,13 @@ def _jarvis_ensure_company_platform_label(*, company, detected_ats: str, source_
         "company_jobs_url": company_jobs_url,
         "fetch_all_supported": False,
     }
-    if not company or not platform_slug:
+    if not company:
         return None, board_ctx
 
+    now_ts = timezone.now()
+
     platform = job_platform if getattr(job_platform, "slug", "") == platform_slug else None
-    if not platform:
+    if not platform and platform_slug:
         platform = JobBoardPlatform.objects.filter(slug=platform_slug).first()
     if not platform and platform_slug == "dayforce":
         platform, _ = JobBoardPlatform.objects.get_or_create(
@@ -1707,44 +1709,81 @@ def _jarvis_ensure_company_platform_label(*, company, detected_ats: str, source_
             },
         )
 
-    label, _ = CompanyPlatformLabel.objects.get_or_create(
-        company=company,
-        defaults={
-            "platform": platform,
-            "tenant_id": tenant_id,
-            "confidence": CompanyPlatformLabel.Confidence.HIGH,
-            "detection_method": CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
-            "detected_at": timezone.now() if platform else None,
-            "last_checked_at": timezone.now(),
-        },
-    )
+    label = CompanyPlatformLabel.objects.filter(company=company).first()
+    if not label and not platform_slug:
+        return None, board_ctx
+    if not label:
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id=tenant_id,
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            detected_at=now_ts if platform else None,
+            last_checked_at=now_ts,
+        )
 
     changed: list[str] = []
-    if platform and not label.platform_id:
-        label.platform = platform
-        changed.append("platform")
-    if tenant_id and not (label.tenant_id or "").strip():
-        label.tenant_id = tenant_id
-        changed.append("tenant_id")
+    is_manual_locked = bool(
+        label.is_verified
+        or label.detection_method == CompanyPlatformLabel.DetectionMethod.MANUAL
+    )
+
+    # Jarvis URL should correct stale auto-detected platform labels unless manually locked.
+    if platform:
+        if not label.platform_id:
+            label.platform = platform
+            changed.append("platform")
+        elif label.platform_id != platform.pk and not is_manual_locked:
+            label.platform = platform
+            changed.append("platform")
+
+    # Prefer extracted tenant when we have one. If platform changed, refresh tenant too.
+    if tenant_id:
+        platform_changed = "platform" in changed
+        if not (label.tenant_id or "").strip() or platform_changed or (label.tenant_id != tenant_id and not is_manual_locked):
+            label.tenant_id = tenant_id
+            changed.append("tenant_id")
+
+    # Keep detection metadata healthy for auto-detected labels.
     if platform and label.detection_method == CompanyPlatformLabel.DetectionMethod.UNDETECTED:
         label.detection_method = CompanyPlatformLabel.DetectionMethod.URL_PATTERN
         changed.append("detection_method")
     if platform and not label.detected_at:
-        label.detected_at = timezone.now()
+        label.detected_at = now_ts
         changed.append("detected_at")
-    if not label.last_checked_at:
-        label.last_checked_at = timezone.now()
-        changed.append("last_checked_at")
-    if changed:
-        label.save(update_fields=changed)
+    label.last_checked_at = now_ts
+    changed.append("last_checked_at")
 
-    if company_jobs_url and not (company.career_site_url or "").strip():
-        company.career_site_url = company_jobs_url
+    if changed:
+        # Preserve field order while removing duplicates.
+        deduped_fields = list(dict.fromkeys(changed))
+        label.save(update_fields=deduped_fields)
+
+    resolved_platform_slug = (
+        (label.platform.slug if label.platform else "")
+        or platform_slug
+        or ""
+    )
+    resolved_tenant = (label.tenant_id or "").strip() or tenant_id
+    resolved_company_jobs_url = (
+        _jarvis_company_jobs_url(resolved_platform_slug, resolved_tenant)
+        or label.career_page_url
+        or company_jobs_url
+        or ""
+    )
+
+    if resolved_company_jobs_url and not (company.career_site_url or "").strip():
+        company.career_site_url = resolved_company_jobs_url
         company.save(update_fields=["career_site_url", "updated_at"])
 
-    support_slug = (label.platform.slug if label.platform else "") or ""
+    board_ctx["platform_slug"] = resolved_platform_slug
+    board_ctx["tenant_id"] = resolved_tenant
+    board_ctx["company_jobs_url"] = resolved_company_jobs_url
     board_ctx["fetch_all_supported"] = bool(
-        support_slug and tenant_id and get_harvester(support_slug) is not None
+        resolved_platform_slug
+        and resolved_tenant
+        and get_harvester(resolved_platform_slug) is not None
     )
     return label, board_ctx
 
