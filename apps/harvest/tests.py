@@ -417,18 +417,19 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         next_data = {
             "props": {
                 "pageProps": {
-                    "pageData": {
-                        "jobPostingTitle": "Platform Engineer",
-                        "organizationName": "Kestra Financial",
-                        "jobDescription": "<p>Lead and build secure cloud platforms.</p>",
-                        "jobDescriptionFooter": "<p>Benefits package and growth opportunities.</p>",
+                    "jobData": {
+                        "jobTitle": "Platform Engineer",
+                        "jobReqId": "6503",
                         "postingLocations": [
                             {"formattedAddress": "Austin, Texas, United States of America"},
                             {"formattedAddress": "Tempe, Arizona, United States of America"},
                         ],
                         "jobPostingAttributes": [{"name": "JobFamily", "value": "Technology"}],
-                        "jobPostingId": 6503,
-                        "postingDate": "2026-04-02T03:00:00Z",
+                        "postingStartTimestampUTC": "2026-04-02T03:00:00Z",
+                        "jobPostingContent": {
+                            "jobDescription": "<p>Lead and build secure cloud platforms.</p>",
+                            "jobDescriptionFooter": "<p>Benefits package and growth opportunities.</p>",
+                        },
                     }
                 }
             },
@@ -457,7 +458,7 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
 
         self.assertIsNotNone(out)
         self.assertEqual(out.get("title"), "Platform Engineer")
-        self.assertEqual(out.get("company_name"), "Kestra Financial")
+        self.assertEqual(out.get("company_name"), "Kestra")
         self.assertEqual(out.get("department"), "Technology")
         self.assertEqual(out.get("external_id"), "6503")
         self.assertIn("Austin, Texas", out.get("location_raw", ""))

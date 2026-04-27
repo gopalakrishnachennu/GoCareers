@@ -1307,11 +1307,16 @@ class JobJarvis:
         candidates: list[dict] = []
         if page_data:
             candidates.append(page_data)
-            for key in ("jobPosting", "jobPostingInfo", "posting", "job", "data"):
+            for key in ("jobPosting", "jobPostingInfo", "posting", "job", "data", "jobData"):
                 sub = page_data.get(key)
                 if isinstance(sub, dict):
                     candidates.append(sub)
 
+        if page_props:
+            for key in ("jobData", "data", "pageData"):
+                sub = page_props.get(key)
+                if isinstance(sub, dict):
+                    candidates.append(sub)
         if not candidates and page_props:
             candidates.append(page_props)
 
@@ -1360,6 +1365,7 @@ class JobJarvis:
         title = (
             _safe_text(payload.get("jobPostingTitle"))
             or _safe_text(payload.get("JobTitle"))
+            or _safe_text(payload.get("jobTitle"))
             or _safe_text(payload.get("title"))
             or _safe_text(payload.get("Title"))
         ).strip()
@@ -1383,6 +1389,12 @@ class JobJarvis:
             val = _safe_text(payload.get(key)).strip()
             if val and val not in desc_parts:
                 desc_parts.append(val)
+        content = payload.get("jobPostingContent")
+        if isinstance(content, dict):
+            for key in ("jobDescriptionHeader", "jobDescription", "jobDescriptionFooter"):
+                val = _safe_text(content.get(key)).strip()
+                if val and val not in desc_parts:
+                    desc_parts.append(val)
         description = "\n\n".join(desc_parts).strip()
 
         locations: list[str] = []
@@ -1448,6 +1460,7 @@ class JobJarvis:
 
         external_id = (
             _safe_text(payload.get("jobPostingId"))
+            or _safe_text(payload.get("jobReqId"))
             or _safe_text(payload.get("JobRequisitionId"))
             or _safe_text(payload.get("id"))
             or _safe_text(payload.get("Id"))
@@ -1456,11 +1469,13 @@ class JobJarvis:
 
         posted_date_raw = (
             _safe_text(payload.get("postingDate"))
+            or _safe_text(payload.get("postingStartTimestampUTC"))
             or _safe_text(payload.get("PostedDate"))
             or _safe_text(payload.get("datePosted"))
         ).strip()
         closing_date_raw = (
             _safe_text(payload.get("closingDate"))
+            or _safe_text(payload.get("postingExpiryTimestampUTC"))
             or _safe_text(payload.get("validThrough"))
         ).strip()
 
