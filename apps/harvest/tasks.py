@@ -52,24 +52,21 @@ def _supports_select_for_update_skip_locked() -> bool:
 def _backfill_eligible_queryset(platform_slug: str | None):
     """Rows that still need a JD and are not actively claimed (unless lock is stale).
 
-    Must match the Jobs Browser / stats rule: only trivial whitespace (or empty) counts
-    as “no JD”. Failed/skipped backfill sets ``description=' '`` — those rows must stay
-    eligible; the old filter ``description='' OR NULL`` excluded them forever.
+    Uses the indexed has_description column - avoids a full-table annotation scan.
+    The has_description field is kept in sync by save() and by all backfill update
+    paths, so it's safe to rely on here.
     """
     from .models import RawJob
 
     stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
     q = (
-        RawJob.objects.annotate(
-            _jd_len=Length(Trim(Coalesce(F("description"), Value("")))),
-        )
-        .filter(_jd_len__lte=1)
+        RawJob.objects.filter(has_description=False)
         .exclude(original_url="")
         .exclude(original_url__isnull=True)
-    )
-    q = q.filter(
-        Q(jd_backfill_locked_at__isnull=True)
-        | Q(jd_backfill_locked_at__lt=stale_before),
+        .filter(
+            Q(jd_backfill_locked_at__isnull=True)
+            | Q(jd_backfill_locked_at__lt=stale_before),
+        )
     )
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
@@ -1723,6 +1720,315 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 
 # ─── Description Backfill ────────────────────────────────────────────────────
 
+def _fast_workday_description(job_url: str) -> str:
+    """Fetch a Workday JD directly via the CXS JSON API — no Jarvis/scraping needed.
+
+    Returns the description HTML string or '' on any failure.
+    Workday's CXS endpoint returns structured JSON at:
+      https://{subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}
+    """
+    import re as _re2
+    import requests as _req
+
+    m = _re2.match(
+        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
+        job_url,
+        _re2.I,
+    )
+    if not m:
+        return ""
+    full_subdomain = m.group(1)
+    jobboard = m.group(2)
+    ext_path = m.group(3).split("?")[0]
+    tenant = _re2.sub(r"\.wd\d+$", "", full_subdomain, flags=_re2.I)
+    cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
+    try:
+        resp = _req.get(cxs_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        data = resp.json()
+        if not isinstance(data, dict):
+            return ""
+        info = data.get("jobPostingInfo") or data
+        for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
+            val = info.get(key) or data.get(key) or ""
+            if isinstance(val, dict):
+                val = val.get("content", "") or ""
+            val = str(val).strip()
+            if val:
+                return val
+    except Exception:
+        pass
+    return ""
+
+
+def _fast_greenhouse_description(job_url: str) -> str:
+    """Greenhouse public boards API — returns full description in one JSON call."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"boards\.greenhouse\.io/([^/]+)/jobs/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"greenhouse\.io/(?:jobs|careers)/(\d+)", job_url, _re.I)
+        if m:
+            return ""  # can't derive board token from this URL form
+    if not m:
+        return ""
+    board_token, job_id = m.group(1), m.group(2)
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?content=true"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        return str(d.get("content") or "").strip()
+    except Exception:
+        return ""
+
+
+def _fast_lever_description(job_url: str) -> str:
+    """Lever public postings API — returns full description including lists."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})", job_url, _re.I)
+    if not m:
+        return ""
+    company, posting_id = m.group(1), m.group(2)
+    api_url = f"https://api.lever.co/v0/postings/{company}/{posting_id}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        parts = []
+        desc = d.get("descriptionPlain") or d.get("description") or ""
+        if desc:
+            parts.append(str(desc).strip())
+        for lst in d.get("lists") or d.get("listsPlain") or []:
+            if isinstance(lst, dict):
+                text = lst.get("content") or lst.get("text") or ""
+                if text:
+                    parts.append(str(text).strip())
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+def _fast_ashby_description(job_url: str) -> str:
+    """Ashby public REST job-board API — fetches full board and finds job by ID.
+
+    api.ashbyhq.com/posting-api/job-board/{company} returns all jobs with
+    descriptionHtml inline; no per-job auth required.
+    """
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.ashbyhq\.com/([^/]+)/([0-9a-f-]{36})", job_url, _re.I)
+    if not m:
+        return ""
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        jobs = resp.json().get("jobs") or []
+        match = next((j for j in jobs if (j.get("id") or "").lower() == job_id.lower()), None)
+        if not match:
+            return ""
+        desc = match.get("descriptionHtml") or match.get("descriptionPlain") or ""
+        return str(desc).strip()
+    except Exception:
+        return ""
+
+
+def _fast_bamboohr_description(job_url: str) -> str:
+    """BambooHR — extract job description from JSON-LD on the careers detail page."""
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.bamboohr\.com/(?:careers|jobs)/(\d+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, job_id = m.group(1), m.group(2)
+    detail_url = f"https://{slug}.bamboohr.com/careers/{job_id}"
+    try:
+        resp = _req.get(
+            detail_url,
+            headers={"Accept": "text/html", "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)"},
+            timeout=15,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+        for block in _re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I
+        ):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting",):
+                    desc = schema.get("description") or ""
+                    if desc:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        return ""
+    except Exception:
+        return ""
+
+
+def _fast_workable_description(job_url: str) -> str:
+    """Workable public API v1 — per-job detail endpoint."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"apply\.workable\.com/([^/]+)/j/([A-Z0-9]+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, shortcode = m.group(1), m.group(2)
+    api_url = f"https://apply.workable.com/api/v1/accounts/{slug}/jobs/{shortcode}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        parts = [
+            str(d.get("description") or "").strip(),
+            str(d.get("requirements") or "").strip(),
+            str(d.get("benefits") or "").strip(),
+        ]
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+def _fast_icims_description(job_url: str) -> str:
+    """iCIMS — extract structured JSON-LD from job detail page."""
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.icims\.com/jobs/(\d+)/", job_url, _re.I)
+    if not m:
+        return ""
+    tenant, job_id = m.group(1), m.group(2)
+    detail_url = f"https://{tenant}.icims.com/jobs/{job_id}/job"
+    try:
+        resp = _req.get(
+            detail_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)",
+            },
+            timeout=15,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+        for block in _re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting", "jobPosting"):
+                    desc = schema.get("description") or schema.get("responsibilities") or ""
+                    if desc:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        m2 = _re.search(r'<div[^>]+class=["\'][^"\']*iCIMS_JobDescription[^"\']*["\'][^>]*>(.*?)</div>', html, _re.S | _re.I)
+        if m2:
+            text = _re.sub(r"<[^>]+>", " ", m2.group(1)).strip()
+            if len(text) > 50:
+                return text
+        return ""
+    except Exception:
+        return ""
+
+
+def _fast_oracle_description(job_url: str) -> str:
+    """Oracle HCM — extract description via the Recruiting Cloud REST API."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w.-]+\.oraclecloud\.com)/hcmUI/CandidateExperience/[^/]+/sites/([^/]+)/(?:requisitions?(?:/preview)?|job(?:s)?)/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"([\w.-]+\.oraclecloud\.com).*?/(\d{5,})", job_url, _re.I)
+        if not m:
+            return ""
+        host, req_num = m.group(1), m.group(2)
+    else:
+        host, req_num = m.group(1), m.group(3)
+    api_url = (
+        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+        f"?onlyData=true&expand=requisitionList.requisitionFlexFields,requisitionList.secondaryLocations"
+        f"&finder=findReqs;RequisitionNumber={req_num}"
+    )
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        items = d.get("items") or []
+        if not items:
+            return ""
+        req_list = (items[0].get("requisitionList") or {}).get("items") or []
+        for req in req_list:
+            desc = req.get("ExternalDescriptionStr") or req.get("jobDescription") or req.get("description") or ""
+            if desc:
+                return str(desc).strip()
+        return ""
+    except Exception:
+        return ""
+
+
+def _fast_smartrecruiters_description(job_url: str) -> str:
+    """SmartRecruiters public API — per-job detail endpoint."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.smartrecruiters\.com/([^/]+)/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"smartrecruiters\.com/([^/]+)/(\d+)", job_url, _re.I)
+    if not m:
+        return ""
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        sections = (d.get("jobAd") or {}).get("sections") or {}
+        parts = [
+            str((sections.get("jobDescription") or {}).get("text") or "").strip(),
+            str((sections.get("qualifications") or {}).get("text") or "").strip(),
+            str((sections.get("additionalInformation") or {}).get("text") or "").strip(),
+        ]
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+# Maps platform_slug → fast-fetch function. Each function returns a description
+# string or "" on failure. Jarvis is the universal fallback for all platforms.
+_FAST_FETCH_REGISTRY: dict = {
+    "workday":         _fast_workday_description,
+    "greenhouse":      _fast_greenhouse_description,
+    "lever":           _fast_lever_description,
+    "ashby":           _fast_ashby_description,
+    "bamboohr":        _fast_bamboohr_description,
+    "workable":        _fast_workable_description,
+    "icims":           _fast_icims_description,
+    "oracle":          _fast_oracle_description,
+    "smartrecruiters": _fast_smartrecruiters_description,
+}
+
+
 def _backfill_process_one_job(job, jarvis):
     """
     Fetch JD for a single RawJob row that was already claim-locked.
@@ -1735,9 +2041,10 @@ def _backfill_process_one_job(job, jarvis):
     from .models import RawJob
 
     fetch_url = (job.original_url or "").strip()
-    if (job.platform_slug or "").lower() == "smartrecruiters":
-        from .smartrecruiters_support import backfill_fetch_url_for_raw_job
+    platform = (job.platform_slug or "").lower()
 
+    if platform == "smartrecruiters":
+        from .smartrecruiters_support import backfill_fetch_url_for_raw_job
         fetch_url = backfill_fetch_url_for_raw_job(job) or fetch_url
 
     log_base = {
@@ -1748,20 +2055,39 @@ def _backfill_process_one_job(job, jarvis):
         "url": (fetch_url or "")[:120],
     }
 
-    try:
-        data = jarvis.ingest(fetch_url)
-    except SoftTimeLimitExceeded:
-        raise
-    except Exception as exc:
-        logger.warning("Backfill failed for job %s: %s", job.pk, exc)
-        RawJob.objects.filter(pk=job.pk).update(description=" ", jd_backfill_locked_at=None)
-        log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
-        return "failed", log
+    # Fast path: try platform-native JSON API before falling back to Jarvis scraping.
+    # Platforms like Greenhouse/Lever have public APIs that return structured JSON
+    # 10-50x faster than Jarvis browser-based scraping.
+    fast_fn = _FAST_FETCH_REGISTRY.get(platform)
+    fast_desc = ""
+    fast_strategy = ""
+    if fast_fn and fetch_url:
+        try:
+            fast_desc = fast_fn(fetch_url) or ""
+            if fast_desc:
+                fast_strategy = f"{platform}_api"
+        except Exception:
+            fast_desc = ""
+
+    if fast_desc:
+        data = {"description": fast_desc, "strategy": fast_strategy}
+    else:
+        try:
+            data = jarvis.ingest(fetch_url)
+        except SoftTimeLimitExceeded:
+            raise
+        except Exception as exc:
+            logger.warning("Backfill failed for job %s: %s", job.pk, exc)
+            RawJob.objects.filter(pk=job.pk).update(
+                description=" ", has_description=False, jd_backfill_locked_at=None
+            )
+            log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
+            return "failed", log
 
     desc_str = _backfill_str(data.get("description")).strip()
 
     if not desc_str:
-        upd: dict = {"description": " ", "jd_backfill_locked_at": None}
+        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": None}
         pl = {}
         if data.get("raw_payload"):
             # Prefer newest API/Jarvis payload over stale DB rows (fixes SmartRecruiters active flag).
@@ -1778,7 +2104,7 @@ def _backfill_process_one_job(job, jarvis):
         }
         return "skipped", log
 
-    update_fields: dict = {"description": desc_str[:50000], "jd_backfill_locked_at": None}
+    update_fields: dict = {"description": desc_str[:50000], "has_description": True, "jd_backfill_locked_at": None}
 
     for f, mx in (("requirements", 20000), ("benefits", 10000)):
         v = _backfill_str(data.get(f)).strip()
@@ -1978,10 +2304,8 @@ def backfill_descriptions_task(
             offset,
         )
 
-    # Duplicate-run guard: if another backfill_descriptions task is already
-    # PROGRESS on any worker, skip this firing. Celery Beat fires every hour
-    # at :15, but a full backfill can run for hours — without this guard a
-    # second instance would spawn 8 extra threads on top of the running one.
+    # Duplicate-run guard: Beat fires every hour; a full backfill can run for hours.
+    # If another instance is already active, skip this firing instead of stacking workers.
     try:
         from celery import current_app as _capp
         _inspect = _capp.control.inspect(timeout=2)
@@ -1993,7 +2317,7 @@ def backfill_descriptions_task(
                     and _t.get("id") != self.request.id
                 ):
                     logger.info(
-                        "backfill_descriptions: another instance %s is already running — skipping this firing.",
+                        "backfill_descriptions: instance %s already running — skipping this Beat firing.",
                         _t["id"],
                     )
                     return {"message": "Skipped — another backfill instance is already running.", "updated": 0}
