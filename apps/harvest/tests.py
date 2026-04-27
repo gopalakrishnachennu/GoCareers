@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import requests
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
 
 from apps.harvest.career_url import build_career_url
 from apps.harvest.detectors import extract_tenant
@@ -675,11 +676,19 @@ class JarvisCompanyFallbackTests(SimpleTestCase):
         url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
         self.assertEqual(_extract_company_from_url(url), "Kestra")
 
+    def test_jarvis_company_jobs_url_dayforce_board_root(self):
+        from harvest.tasks import _jarvis_company_jobs_url
+
+        self.assertEqual(
+            _jarvis_company_jobs_url("dayforce", "kestra|KESTRACAREERSITE"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+
 
 class JarvisIngestDayforceIntegrationTests(TestCase):
     def test_ingest_auto_creates_dayforce_platform_and_company(self):
         from companies.models import Company
-        from harvest.models import JobBoardPlatform, RawJob
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform, RawJob
         from harvest.tasks import jarvis_ingest_task
 
         JobBoardPlatform.objects.filter(slug="dayforce").delete()
@@ -708,4 +717,79 @@ class JarvisIngestDayforceIntegrationTests(TestCase):
         self.assertEqual(raw_job.company_id, company.pk)
         self.assertIsNotNone(raw_job.job_platform)
         self.assertEqual(raw_job.job_platform.slug, "dayforce")
+        self.assertIsNotNone(raw_job.platform_label)
+        self.assertEqual(raw_job.platform_label.tenant_id, "kestra|KESTRACAREERSITE")
+        self.assertEqual(raw_job.platform_label.platform.slug, "dayforce")
+        self.assertEqual((raw_job.raw_payload or {}).get("jarvis_tenant_id"), "kestra|KESTRACAREERSITE")
+        self.assertEqual(
+            (raw_job.raw_payload or {}).get("jarvis_company_jobs_url"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+        self.assertTrue((raw_job.raw_payload or {}).get("jarvis_fetch_all_supported"))
         self.assertEqual((raw_job.raw_payload or {}).get("jarvis_detected_ats"), "dayforce")
+        self.assertTrue(CompanyPlatformLabel.objects.filter(company=company, platform__slug="dayforce").exists())
+
+
+class JarvisFetchAllCompanyViewTests(TestCase):
+    def setUp(self):
+        import hashlib
+
+        from companies.models import Company
+        from harvest.models import JobBoardPlatform, RawJob
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="jarvis_fetch_admin",
+            email="jarvis_fetch_admin@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.client.force_login(self.user)
+        self.company = Company.objects.create(name="Kestra")
+        self.platform = JobBoardPlatform.objects.create(
+            name="Dayforce",
+            slug="dayforce",
+            is_enabled=True,
+        )
+        self.source_url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        h = hashlib.sha256(self.source_url.encode()).hexdigest()
+        self.raw_job = RawJob.objects.create(
+            company=self.company,
+            job_platform=self.platform,
+            title="Platform Engineer",
+            url_hash=h,
+            original_url=self.source_url,
+            apply_url=self.source_url,
+            description="JD text long enough for task wiring.",
+            platform_slug="jarvis",
+            raw_payload={"jarvis_detected_ats": "dayforce"},
+        )
+
+    def test_fetch_all_endpoint_queues_company_task_and_updates_payload(self):
+        from types import SimpleNamespace
+
+        from harvest.models import CompanyPlatformLabel
+
+        with patch("apps.harvest.tasks.fetch_raw_jobs_for_company_task.delay", return_value=SimpleNamespace(id="task-123")):
+            resp = self.client.post(
+                reverse("harvest-jarvis-fetch-all"),
+                {"raw_job_id": str(self.raw_job.pk)},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("task_id"), "task-123")
+        self.assertEqual(body.get("tenant_id"), "kestra|KESTRACAREERSITE")
+        self.assertEqual(
+            body.get("company_jobs_url"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+
+        self.raw_job.refresh_from_db()
+        self.assertIsNotNone(self.raw_job.platform_label)
+        self.assertEqual(self.raw_job.platform_label.tenant_id, "kestra|KESTRACAREERSITE")
+        self.assertTrue((self.raw_job.raw_payload or {}).get("jarvis_fetch_all_supported"))
+        self.assertTrue(
+            CompanyPlatformLabel.objects.filter(company=self.company, platform__slug="dayforce").exists()
+        )

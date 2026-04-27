@@ -1468,6 +1468,14 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     original_url = data.get("original_url") or url
     url_hash = hashlib.sha256(original_url.strip().encode()).hexdigest()
 
+    # ── Resolve company label context for fetch-all workflows ───────────────
+    platform_label, board_ctx = _jarvis_ensure_company_platform_label(
+        company=company,
+        detected_ats=detected_ats,
+        source_url=original_url,
+        job_platform=job_platform,
+    )
+
     # Parse posted_date
     posted_date = _jarvis_parse_date(data.get("posted_date_raw", ""))
     closing_date = _jarvis_parse_date(data.get("closing_date_raw", ""))
@@ -1482,6 +1490,10 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     raw_payload["jarvis_detected_ats"] = detected_ats
     raw_payload["jarvis_strategy"] = data.get("strategy", "")
     raw_payload["jarvis_source_url"] = url
+    raw_payload["jarvis_tenant_id"] = board_ctx.get("tenant_id") or ""
+    raw_payload["jarvis_company_jobs_url"] = board_ctx.get("company_jobs_url") or ""
+    raw_payload["jarvis_platform_label_id"] = platform_label.pk if platform_label else None
+    raw_payload["jarvis_fetch_all_supported"] = bool(board_ctx.get("fetch_all_supported"))
 
     # ── Run enrichment extraction ─────────────────────────────────────────
     from .enrichments import extract_enrichments
@@ -1503,6 +1515,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         url_hash=url_hash,
         defaults={
             "company": company,
+            "platform_label": platform_label,
             "job_platform": job_platform,
             "platform_slug": platform_slug,
             "external_id": (data.get("external_id") or "")[:512],
@@ -1556,8 +1569,118 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "company_id": company.pk,
         "platform_slug": platform_slug,
         "strategy": data.get("strategy", ""),
+        "detected_ats": detected_ats,
+        "tenant_id": board_ctx.get("tenant_id") or "",
+        "company_jobs_url": board_ctx.get("company_jobs_url") or "",
+        "platform_label_id": platform_label.pk if platform_label else None,
+        "fetch_all_supported": bool(board_ctx.get("fetch_all_supported")),
         "data": {k: v for k, v in data.items() if k != "raw_payload"},
     }
+
+
+def _jarvis_company_jobs_url(platform_slug: str, tenant_id: str) -> str:
+    """Build a user-facing company jobs URL from platform + tenant."""
+    if not platform_slug or not tenant_id:
+        return ""
+    try:
+        # Dayforce board root is cleaner than /jobs for user navigation.
+        if platform_slug == "dayforce":
+            if "|" in tenant_id:
+                tenant, board = tenant_id.split("|", 1)
+                tenant = (tenant or "").strip()
+                board = (board or "").strip() or "CANDIDATEPORTAL"
+                if tenant:
+                    return f"https://jobs.dayforcehcm.com/en-US/{tenant}/{board}"
+            t = tenant_id.strip()
+            if t:
+                return f"https://jobs.dayforcehcm.com/en-US/{t}/CANDIDATEPORTAL"
+
+        from .career_url import build_career_url
+        return build_career_url(platform_slug, tenant_id)
+    except Exception:
+        return ""
+
+
+def _jarvis_ensure_company_platform_label(*, company, detected_ats: str, source_url: str, job_platform=None):
+    """
+    Ensure CompanyPlatformLabel exists for Jarvis-ingested company.
+
+    Returns ``(label_or_none, board_context_dict)`` where board_context includes:
+      - tenant_id
+      - company_jobs_url
+      - fetch_all_supported
+      - platform_slug
+    """
+    from .detectors import extract_tenant
+    from .harvesters import get_harvester
+    from .models import CompanyPlatformLabel, JobBoardPlatform
+
+    platform_slug = (detected_ats or "").strip().lower()
+    tenant_id = extract_tenant(platform_slug, source_url) if platform_slug and source_url else ""
+    company_jobs_url = _jarvis_company_jobs_url(platform_slug, tenant_id)
+    board_ctx = {
+        "platform_slug": platform_slug,
+        "tenant_id": tenant_id,
+        "company_jobs_url": company_jobs_url,
+        "fetch_all_supported": False,
+    }
+    if not company or not platform_slug:
+        return None, board_ctx
+
+    platform = job_platform if getattr(job_platform, "slug", "") == platform_slug else None
+    if not platform:
+        platform = JobBoardPlatform.objects.filter(slug=platform_slug).first()
+    if not platform and platform_slug == "dayforce":
+        platform, _ = JobBoardPlatform.objects.get_or_create(
+            slug="dayforce",
+            defaults={
+                "name": "Dayforce",
+                "url_patterns": ["jobs.dayforcehcm.com", "dayforcehcm.com"],
+                "api_type": JobBoardPlatform.ApiType.UNKNOWN,
+                "notes": "Auto-created by Jarvis from Dayforce import detection.",
+            },
+        )
+
+    label, _ = CompanyPlatformLabel.objects.get_or_create(
+        company=company,
+        defaults={
+            "platform": platform,
+            "tenant_id": tenant_id,
+            "confidence": CompanyPlatformLabel.Confidence.HIGH,
+            "detection_method": CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            "detected_at": timezone.now() if platform else None,
+            "last_checked_at": timezone.now(),
+        },
+    )
+
+    changed: list[str] = []
+    if platform and not label.platform_id:
+        label.platform = platform
+        changed.append("platform")
+    if tenant_id and not (label.tenant_id or "").strip():
+        label.tenant_id = tenant_id
+        changed.append("tenant_id")
+    if platform and label.detection_method == CompanyPlatformLabel.DetectionMethod.UNDETECTED:
+        label.detection_method = CompanyPlatformLabel.DetectionMethod.URL_PATTERN
+        changed.append("detection_method")
+    if platform and not label.detected_at:
+        label.detected_at = timezone.now()
+        changed.append("detected_at")
+    if not label.last_checked_at:
+        label.last_checked_at = timezone.now()
+        changed.append("last_checked_at")
+    if changed:
+        label.save(update_fields=changed)
+
+    if company_jobs_url and not (company.career_site_url or "").strip():
+        company.career_site_url = company_jobs_url
+        company.save(update_fields=["career_site_url", "updated_at"])
+
+    support_slug = (label.platform.slug if label.platform else "") or ""
+    board_ctx["fetch_all_supported"] = bool(
+        support_slug and tenant_id and get_harvester(support_slug) is not None
+    )
+    return label, board_ctx
 
 
 def _extract_company_from_url(url: str) -> str:

@@ -486,6 +486,51 @@
   text-decoration: none;
 }
 
+.jarvis-board-band {
+  margin-top: 12px;
+  border: 1px solid #d7e7e4;
+  border-radius: 10px;
+  background: #f3f9f8;
+  padding: 10px 12px;
+}
+
+.jarvis-board-label {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: #60847f;
+  font-weight: 700;
+  margin-right: 6px;
+}
+
+.jarvis-board-link {
+  color: #0f7e74;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 700;
+  word-break: break-all;
+}
+
+.jarvis-board-link:hover {
+  text-decoration: underline;
+}
+
+#r-fetch-all-status {
+  display: none;
+  margin: 14px 20px 0;
+  border: 1px solid #d8e7e5;
+  border-radius: 10px;
+  background: #f6fbfa;
+  padding: 10px 12px;
+}
+
+#r-fetch-all-status-msg {
+  margin: 0;
+  color: #2f625e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 #r-details-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -929,6 +974,10 @@
             <div id="r-dedup-warn">
               <p id="r-dedup-msg"></p>
             </div>
+            <div id="r-company-board-wrap" class="jarvis-board-band" style="display:none;">
+              <span class="jarvis-board-label">Company Board</span>
+              <a id="r-company-board-link" class="jarvis-board-link" href="#" target="_blank" rel="noopener"></a>
+            </div>
           </div>
 
           <div class="jarvis-result-actions">
@@ -937,7 +986,11 @@
               <span id="approve-btn-text">Approve to Live</span>
             </button>
             <a id="r-apply-btn" class="jarvis-btn jarvis-btn-muted jarvis-action-link" href="#" target="_blank" rel="noopener">Original Posting</a>
+            <button id="r-fetch-company-btn" class="jarvis-btn jarvis-btn-muted" type="button" onclick="fetchCompanyJobs()">Fetch All Jobs From This Company</button>
             <button id="r-rescrape-btn" class="jarvis-btn jarvis-btn-muted" type="button" onclick="reScrapeCurrent()">Re-scrape Preview</button>
+          </div>
+          <div id="r-fetch-all-status">
+            <p id="r-fetch-all-status-msg"></p>
           </div>
 
           <div id="r-details-grid"></div>
@@ -1049,6 +1102,7 @@
     run: '{% url "harvest-jarvis" %}',
     status: '{% url "harvest-jarvis-status" %}',
     approve: '{% url "harvest-jarvis-approve" %}',
+    fetchAll: '{% url "harvest-jarvis-fetch-all" %}',
     rescrape: '{% url "harvest-jarvis-rescrape" %}',
   };
 
@@ -1071,9 +1125,12 @@
   const urlHintStrategy = document.getElementById('url-hint-strategy');
 
   let pollTimer = null;
+  let fetchAllPollTimer = null;
   let currentRawJobId = null;
   let currentLiveJobId = null;
   let currentSourceUrl = '';
+  let currentCompanyJobsUrl = '';
+  let currentFetchAllSupported = false;
   let descExpanded = false;
 
   const PLATFORM_PATTERNS = [
@@ -1146,11 +1203,35 @@
     errorEl.style.display = 'none';
   }
 
+  function showFetchAllStatus(message, tone) {
+    const wrap = document.getElementById('r-fetch-all-status');
+    const msg = document.getElementById('r-fetch-all-status-msg');
+    msg.textContent = message || '';
+    wrap.style.display = message ? 'block' : 'none';
+    if (tone === 'error') {
+      wrap.style.background = '#fff4f4';
+      wrap.style.borderColor = '#efc8c8';
+      msg.style.color = '#9f3535';
+    } else if (tone === 'success') {
+      wrap.style.background = '#ecfbf1';
+      wrap.style.borderColor = '#bae5cb';
+      msg.style.color = '#1f8a48';
+    } else {
+      wrap.style.background = '#f6fbfa';
+      wrap.style.borderColor = '#d8e7e5';
+      msg.style.color = '#2f625e';
+    }
+  }
+
   function resetResultView() {
     resultEl.style.display = 'none';
+    clearInterval(fetchAllPollTimer);
     currentRawJobId = null;
     currentLiveJobId = null;
+    currentCompanyJobsUrl = '';
+    currentFetchAllSupported = false;
     descExpanded = false;
+    showFetchAllStatus('', '');
   }
 
   function renderDetailsGrid(cells) {
@@ -1201,6 +1282,9 @@
     currentRawJobId = job.id || null;
     currentLiveJobId = job.live_job_id || job.duplicate_job_id || null;
     currentSourceUrl = job.original_url || job.apply_url || currentSourceUrl || '';
+    currentCompanyJobsUrl = job.company_jobs_url || '';
+    currentFetchAllSupported = Boolean(job.fetch_all_supported && job.id);
+    showFetchAllStatus('', '');
 
     document.getElementById('r-title').textContent = job.title || result.title || 'Untitled job';
     const companyName = job.company_name || result.company_name || '';
@@ -1242,6 +1326,7 @@
     if (job.posted_date) cells.push({ label: 'Posted', value: new Date(job.posted_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) });
     if (job.sync_status) cells.push({ label: 'Sync Status', value: job.sync_status });
     if (job.original_url) cells.push({ label: 'URL Hash', value: 'SHA-256 Present' });
+    if (job.tenant_id) cells.push({ label: 'Tenant', value: job.tenant_id });
 
     renderDetailsGrid(cells);
 
@@ -1258,6 +1343,27 @@
 
     const applyBtn = document.getElementById('r-apply-btn');
     applyBtn.href = job.apply_url || job.original_url || '#';
+
+    const boardWrap = document.getElementById('r-company-board-wrap');
+    const boardLink = document.getElementById('r-company-board-link');
+    if (currentCompanyJobsUrl) {
+      boardWrap.style.display = 'block';
+      boardLink.href = currentCompanyJobsUrl;
+      boardLink.textContent = currentCompanyJobsUrl;
+    } else {
+      boardWrap.style.display = 'none';
+      boardLink.href = '#';
+      boardLink.textContent = '';
+    }
+
+    const fetchBtn = document.getElementById('r-fetch-company-btn');
+    if (currentFetchAllSupported) {
+      fetchBtn.disabled = false;
+      fetchBtn.title = 'Fetch all jobs for this company board';
+    } else {
+      fetchBtn.disabled = true;
+      fetchBtn.title = 'Fetch-all unavailable until tenant/platform is resolved';
+    }
 
     const approveBtn = document.getElementById('r-approve-btn');
     const approveTxt = document.getElementById('approve-btn-text');
@@ -1409,6 +1515,93 @@
     }
   };
 
+  window.fetchCompanyJobs = async function fetchCompanyJobs() {
+    if (!currentRawJobId) {
+      showError('No saved raw job available for fetch-all.', 'Run Jarvis analyze first.');
+      return;
+    }
+    if (!currentFetchAllSupported) {
+      showError('Fetch-all is not available for this URL yet.', 'Make sure platform + tenant are detected.');
+      return;
+    }
+
+    const btnFetch = document.getElementById('r-fetch-company-btn');
+    const prevLabel = btnFetch.textContent;
+    btnFetch.disabled = true;
+    btnFetch.textContent = 'Queuing Company Fetch...';
+    showFetchAllStatus('Queuing full company fetch…', 'info');
+
+    try {
+      const csrf = getCsrf();
+      const resp = await fetch(endpoints.fetchAll, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrf, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ csrfmiddlewaretoken: csrf, raw_job_id: String(currentRawJobId) }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.ok) {
+        showFetchAllStatus(json.error || 'Could not queue company fetch.', 'error');
+        btnFetch.disabled = false;
+        btnFetch.textContent = prevLabel;
+        return;
+      }
+
+      if (json.company_jobs_url) {
+        currentCompanyJobsUrl = json.company_jobs_url;
+        const boardWrap = document.getElementById('r-company-board-wrap');
+        const boardLink = document.getElementById('r-company-board-link');
+        boardWrap.style.display = 'block';
+        boardLink.href = json.company_jobs_url;
+        boardLink.textContent = json.company_jobs_url;
+      }
+
+      showFetchAllStatus('Company fetch running…', 'info');
+      clearInterval(fetchAllPollTimer);
+      fetchAllPollTimer = setInterval(async () => {
+        try {
+          const statusResp = await fetch(`${endpoints.status}?task_id=${json.task_id}`);
+          const statusJson = await statusResp.json();
+
+          if (statusJson.state === 'PENDING' || statusJson.state === 'PROGRESS') {
+            showFetchAllStatus(statusJson.message || 'Company fetch in progress…', 'info');
+            return;
+          }
+
+          clearInterval(fetchAllPollTimer);
+
+          if (statusJson.state === 'SUCCESS') {
+            const result = statusJson.result || {};
+            const found = Number(result.jobs_found || 0);
+            const created = Number(result.jobs_new || 0);
+            const updated = Number(result.jobs_updated || 0);
+            const failed = Number(result.jobs_failed || 0);
+            showFetchAllStatus(
+              `Company fetch complete: ${found} found, ${created} new, ${updated} updated, ${failed} failed.`,
+              failed > 0 ? 'info' : 'success',
+            );
+            btnFetch.disabled = false;
+            btnFetch.textContent = prevLabel;
+            return;
+          }
+
+          const failureMsg = statusJson.error || `Company fetch failed (${statusJson.state}).`;
+          showFetchAllStatus(failureMsg, 'error');
+          btnFetch.disabled = false;
+          btnFetch.textContent = prevLabel;
+        } catch (err) {
+          clearInterval(fetchAllPollTimer);
+          showFetchAllStatus(`Company fetch polling failed: ${err.message}`, 'error');
+          btnFetch.disabled = false;
+          btnFetch.textContent = prevLabel;
+        }
+      }, 1800);
+    } catch (err) {
+      showFetchAllStatus(`Could not queue company fetch: ${err.message}`, 'error');
+      btnFetch.disabled = false;
+      btnFetch.textContent = prevLabel;
+    }
+  };
+
   function applyRescrapePreview(data) {
     if (!data || typeof data !== 'object') return;
 
@@ -1486,6 +1679,7 @@
   window.resetJarvis = function resetJarvis() {
     hideError();
     clearInterval(pollTimer);
+    clearInterval(fetchAllPollTimer);
     setLoading(false);
     input.value = '';
     input.disabled = false;
@@ -1494,8 +1688,16 @@
     currentRawJobId = null;
     currentLiveJobId = null;
     currentSourceUrl = '';
+    currentCompanyJobsUrl = '';
+    currentFetchAllSupported = false;
     descExpanded = false;
     resultEl.style.display = 'none';
+    showFetchAllStatus('', '');
+    const boardWrap = document.getElementById('r-company-board-wrap');
+    const boardLink = document.getElementById('r-company-board-link');
+    boardWrap.style.display = 'none';
+    boardLink.href = '#';
+    boardLink.textContent = '';
     progressBar.style.width = '0%';
     progressPct.textContent = '0%';
     progressMsg.textContent = 'Queued...';

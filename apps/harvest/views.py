@@ -1446,11 +1446,37 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
             raw_job_data = None
             if result.get("raw_job_id"):
                 try:
-                    job = RawJob.objects.select_related("company", "job_platform").get(
+                    from .harvesters import get_harvester
+
+                    job = RawJob.objects.select_related(
+                        "company",
+                        "job_platform",
+                        "platform_label",
+                        "platform_label__platform",
+                    ).get(
                         pk=result["raw_job_id"]
                     )
                     payload = job.raw_payload if isinstance(job.raw_payload, dict) else {}
                     existing_live_job = _find_existing_live_job_for_rawjob(job)
+                    tenant_id = (
+                        payload.get("jarvis_tenant_id")
+                        or (job.platform_label.tenant_id if job.platform_label else "")
+                        or ""
+                    )
+                    company_jobs_url = (
+                        payload.get("jarvis_company_jobs_url")
+                        or (job.platform_label.career_page_url if job.platform_label else "")
+                        or ""
+                    )
+                    support_slug = (
+                        payload.get("jarvis_detected_ats")
+                        or (job.platform_label.platform.slug if job.platform_label and job.platform_label.platform else "")
+                        or (job.job_platform.slug if job.job_platform else "")
+                        or ""
+                    )
+                    fetch_all_supported = bool(
+                        tenant_id and support_slug and get_harvester(support_slug) is not None
+                    )
                     raw_job_data = {
                         "id": job.pk,
                         "title": job.title,
@@ -1481,6 +1507,10 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
                         "duplicate_job_id": existing_live_job.pk if existing_live_job else None,
                         "live_job_id": existing_live_job.pk if existing_live_job else None,
                         "live_job_url": f"/jobs/{existing_live_job.pk}/" if existing_live_job else "",
+                        "platform_label_id": job.platform_label_id,
+                        "tenant_id": tenant_id,
+                        "company_jobs_url": company_jobs_url,
+                        "fetch_all_supported": fetch_all_supported,
                     }
                 except RawJob.DoesNotExist:
                     pass
@@ -1564,6 +1594,93 @@ class JarvisApproveView(SuperuserRequiredMixin, View):
                 "created_job": created_new,
                 "approved_now": approved_now,
                 "job_status": job.status,
+            }
+        )
+
+
+class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
+    """
+    POST { raw_job_id } → fetch all jobs for the detected company board.
+
+    Uses the existing `fetch_raw_jobs_for_company_task(fetch_all=True)` pipeline
+    so results are deduped/upserted into RawJob.
+    """
+
+    def post(self, request, *args, **kwargs):
+        from .harvesters import get_harvester
+        from .tasks import fetch_raw_jobs_for_company_task, _jarvis_ensure_company_platform_label
+
+        raw_job_id = (request.POST.get("raw_job_id") or "").strip()
+        if not raw_job_id.isdigit():
+            return JsonResponse({"ok": False, "error": "Missing or invalid raw_job_id."}, status=400)
+
+        try:
+            raw_job = RawJob.objects.select_related("company", "job_platform").get(pk=int(raw_job_id))
+        except RawJob.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "Raw job not found."}, status=404)
+
+        if not raw_job.company_id:
+            return JsonResponse({"ok": False, "error": "Company mapping is missing. Re-run Jarvis analyze."}, status=400)
+
+        payload = raw_job.raw_payload if isinstance(raw_job.raw_payload, dict) else {}
+        detected_ats = (
+            payload.get("jarvis_detected_ats")
+            or (raw_job.job_platform.slug if raw_job.job_platform else "")
+            or ""
+        )
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=raw_job.company,
+            detected_ats=detected_ats,
+            source_url=raw_job.original_url or payload.get("jarvis_source_url") or "",
+            job_platform=raw_job.job_platform,
+        )
+
+        if not label or not label.platform:
+            return JsonResponse(
+                {"ok": False, "error": "Could not resolve ATS platform for this company URL."},
+                status=400,
+            )
+        if not (label.tenant_id or "").strip():
+            return JsonResponse(
+                {"ok": False, "error": "Tenant could not be derived from this URL yet."},
+                status=400,
+            )
+        if get_harvester(label.platform.slug) is None:
+            return JsonResponse(
+                {"ok": False, "error": f"Fetch-all is not supported for platform '{label.platform.slug}' yet."},
+                status=400,
+            )
+
+        task = fetch_raw_jobs_for_company_task.delay(
+            label_pk=label.pk,
+            batch_id=None,
+            triggered_by="JARVIS",
+            fetch_all=True,
+        )
+
+        # Keep payload enriched for UI render
+        payload["jarvis_platform_label_id"] = label.pk
+        payload["jarvis_tenant_id"] = board_ctx.get("tenant_id") or label.tenant_id
+        payload["jarvis_company_jobs_url"] = (
+            board_ctx.get("company_jobs_url")
+            or label.career_page_url
+            or ""
+        )
+        payload["jarvis_fetch_all_supported"] = True
+        raw_job.raw_payload = payload
+        raw_job.platform_label = label
+        raw_job.save(update_fields=["raw_payload", "platform_label", "updated_at"])
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "task_id": task.id,
+                "label_pk": label.pk,
+                "platform_slug": label.platform.slug,
+                "tenant_id": payload.get("jarvis_tenant_id", ""),
+                "company_jobs_url": payload.get("jarvis_company_jobs_url", ""),
+                "company_id": raw_job.company_id,
+                "company_name": raw_job.company.name if raw_job.company else raw_job.company_name,
             }
         )
 
