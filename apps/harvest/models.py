@@ -627,6 +627,56 @@ class RawJob(models.Model):
             return "expired"
         return "no"
 
+    def pipeline_stage_label(self) -> str:
+        """
+        Coarse pipeline stage used by Raw Jobs workflow board.
+
+        Flow: Fetched -> Parsed -> Enriched -> Classified -> Ready -> Synced
+        """
+        if self.sync_status == self.SyncStatus.SYNCED:
+            return "SYNCED"
+        if self.sync_status == self.SyncStatus.FAILED:
+            return "FAILED"
+        if self.sync_status == self.SyncStatus.SKIPPED:
+            return "DUPLICATE"
+        if self.has_description and (self.classification_confidence or 0) >= 0.55 and self.is_active:
+            return "READY"
+        if (self.classification_confidence or 0) > 0:
+            return "CLASSIFIED"
+        if self.quality_score is not None or self.jd_quality_score is not None:
+            return "ENRICHED"
+        if self.has_description:
+            return "PARSED"
+        return "FETCHED"
+
+    def owner_pipeline_label(self) -> str:
+        slug = (self.platform_slug or "").lower()
+        if slug in {"jarvis"}:
+            return "Jarvis"
+        if slug in {"workday", "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "bamboohr", "dayforce"}:
+            return "API"
+        return "Scraper"
+
+    def retry_count_estimate(self) -> int:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        for key in ("retry_count", "retries", "attempts"):
+            val = payload.get(key)
+            if isinstance(val, int) and val >= 0:
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+        return 0
+
+    def last_error_text(self) -> str:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        for key in ("last_error", "error_message", "error", "sync_error"):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:220]
+        if self.sync_status == self.SyncStatus.FAILED:
+            return "Sync to pool failed"
+        return ""
+
     def __str__(self):
         return f"{self.title} @ {self.company_name}"
 

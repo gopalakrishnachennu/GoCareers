@@ -7,7 +7,7 @@ from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
 from django.db import transaction
-from django.db.models import Count, F, Q, Sum, Value
+from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
 from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
@@ -59,6 +59,8 @@ def _invalidate_rawjobs_dashboard_cache() -> None:
     try:
         cache.delete("rawjobs_dashboard_stats")
         cache.delete("rawjobs_expired_missing_jd")
+        for h in (3, 6, 12, 24):
+            cache.delete(f"rawjobs_workflow_insights_{h}")
     except Exception:
         pass
 
@@ -193,6 +195,160 @@ def raw_jobs_missing_jd_expired_count() -> int:
         )
         .count()
     )
+
+
+def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
+    """
+    Aggregate operational insights for the Raw Jobs workflow board.
+    """
+    cache_key = f"rawjobs_workflow_insights_{max(1, int(stale_pending_hours))}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    now = timezone.now()
+    stale_cutoff = now - timedelta(hours=max(1, int(stale_pending_hours)))
+    recent_cutoff = now - timedelta(hours=24)
+
+    base = RawJob.objects.all()
+    total = base.count()
+
+    parsed = base.filter(has_description=True).count()
+    enriched = base.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)).count()
+    classified = base.filter(classification_confidence__gte=0.01).count()
+    ready = base.filter(has_description=True, classification_confidence__gte=0.55, is_active=True).count()
+    synced = base.filter(sync_status=RawJob.SyncStatus.SYNCED).count()
+
+    pending_qs = base.filter(sync_status=RawJob.SyncStatus.PENDING)
+    pending_total = pending_qs.count()
+    pending_stale_qs = pending_qs.filter(fetched_at__lt=stale_cutoff)
+    pending_stale = pending_stale_qs.count()
+
+    pending_aging = {
+        "lt_1h": pending_qs.filter(fetched_at__gte=now - timedelta(hours=1)).count(),
+        "h_1_6": pending_qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6)).count(),
+        "h_6_24": pending_qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24)).count(),
+        "gt_24h": pending_qs.filter(fetched_at__lt=now - timedelta(hours=24)).count(),
+    }
+
+    completed_24h = base.filter(sync_status__in=[RawJob.SyncStatus.SYNCED, RawJob.SyncStatus.SKIPPED], updated_at__gte=recent_cutoff).count()
+    failed_24h = base.filter(sync_status=RawJob.SyncStatus.FAILED, updated_at__gte=recent_cutoff).count()
+    drain_per_hour = round(completed_24h / 24.0, 2) if completed_24h > 0 else 0.0
+    eta_hours = round(pending_total / drain_per_hour, 1) if drain_per_hour > 0 else None
+
+    missing_jd = base.filter(has_description=False).count()
+    html_heavy = base.filter(has_html_content=True).count()
+    low_confidence = base.filter(Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True)).count()
+    missing_salary = base.filter(salary_min__isnull=True, salary_max__isnull=True).count()
+    missing_location = base.filter(
+        Q(location_raw="") & Q(city="") & Q(state="") & Q(country="")
+    ).count()
+    missing_experience = base.filter(
+        Q(experience_level=RawJob.ExperienceLevel.UNKNOWN)
+        & Q(years_required__isnull=True)
+        & Q(years_required_max__isnull=True)
+    ).count()
+
+    # Duplicate = SKIPPED in current pipeline semantics (already in pool / URL hash match)
+    duplicate_total = base.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
+    duplicate_recent = base.filter(sync_status=RawJob.SyncStatus.SKIPPED, updated_at__gte=recent_cutoff).count()
+
+    blocked_companies = list(
+        pending_stale_qs.values("company_name")
+        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
+        .order_by("-count")[:10]
+    )
+    blocked_platforms = list(
+        pending_stale_qs.values("platform_slug")
+        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
+        .order_by("-count")[:10]
+    )
+
+    stuck_queue = list(
+        pending_stale_qs.values("platform_label_id", "company_name", "platform_slug")
+        .annotate(count=Count("id"), oldest=Min("fetched_at"))
+        .order_by("-count")[:100]
+    )
+
+    # Platform health from per-company fetch runs in last 24h
+    recent_runs = CompanyFetchRun.objects.filter(started_at__gte=recent_cutoff)
+    platform_health = []
+    for row in (
+        recent_runs.values("label__platform__slug")
+        .annotate(
+            runs=Count("id"),
+            success=Count("id", filter=Q(status=CompanyFetchRun.Status.SUCCESS)),
+            partial=Count("id", filter=Q(status=CompanyFetchRun.Status.PARTIAL)),
+            failed=Count("id", filter=Q(status=CompanyFetchRun.Status.FAILED)),
+            avg_jobs_found=Avg("jobs_found"),
+            avg_jobs_new=Avg("jobs_new"),
+            avg_jobs_failed=Avg("jobs_failed"),
+            last_run=Max("started_at"),
+        )
+        .order_by("-runs")
+    ):
+        slug = (row.get("label__platform__slug") or "unknown").strip() or "unknown"
+        runs = int(row.get("runs") or 0)
+        success = int(row.get("success") or 0)
+        partial = int(row.get("partial") or 0)
+        failed = int(row.get("failed") or 0)
+        success_rate = round(((success + (partial * 0.5)) / runs) * 100, 1) if runs else 0.0
+        platform_health.append(
+            {
+                "platform_slug": slug,
+                "runs": runs,
+                "success": success,
+                "partial": partial,
+                "failed": failed,
+                "success_rate": success_rate,
+                "avg_jobs_found": round(float(row.get("avg_jobs_found") or 0.0), 1),
+                "avg_jobs_new": round(float(row.get("avg_jobs_new") or 0.0), 1),
+                "avg_jobs_failed": round(float(row.get("avg_jobs_failed") or 0.0), 1),
+                "last_run": row.get("last_run").isoformat() if row.get("last_run") else "",
+            }
+        )
+
+    payload = {
+        "funnel": {
+            "fetched": total,
+            "parsed": parsed,
+            "enriched": enriched,
+            "classified": classified,
+            "ready": ready,
+            "synced": synced,
+        },
+        "queue": {
+            "pending_total": pending_total,
+            "pending_stale": pending_stale,
+            "stale_pending_hours": max(1, int(stale_pending_hours)),
+            "aging": pending_aging,
+            "drain_per_hour": drain_per_hour,
+            "eta_hours": eta_hours,
+            "completed_24h": completed_24h,
+            "failed_24h": failed_24h,
+        },
+        "quality_debt": {
+            "missing_jd": missing_jd,
+            "html_heavy": html_heavy,
+            "low_confidence": low_confidence,
+            "missing_salary": missing_salary,
+            "missing_location": missing_location,
+            "missing_experience": missing_experience,
+        },
+        "duplicates": {
+            "total": duplicate_total,
+            "recent_24h": duplicate_recent,
+        },
+        "top_blocked": {
+            "companies": blocked_companies,
+            "platforms": blocked_platforms,
+        },
+        "stuck_queue": stuck_queue,
+        "platform_health": platform_health,
+        "generated_at": now.isoformat(),
+    }
+    cache.set(cache_key, payload, 20)
+    return payload
 
 
 class SuperuserRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -528,6 +684,59 @@ class RunBulkSyncView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress("harvest-rawjobs", task.id, "Bulk sync (20k jobs)")
 
 
+class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
+    """POST — retry FAILED company fetch runs from the last 7 days."""
+
+    def post(self, request):
+        from .tasks import retry_failed_raw_jobs_task
+
+        task = retry_failed_raw_jobs_task.delay()
+        messages.success(
+            request,
+            f"Retry failed fetches queued (Task: {task.id[:8]}…). "
+            "This will re-run failed company fetches in the background.",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Retry failed fetches")
+
+
+class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
+    """POST — sync selected RawJob ids into pool."""
+
+    def post(self, request):
+        raw_ids = request.POST.get("raw_job_ids", "").strip()
+        if not raw_ids:
+            messages.error(request, "No rows selected for sync.")
+            return redirect("harvest-rawjobs")
+
+        parts = [p.strip() for p in raw_ids.split(",") if p.strip()]
+        ids: list[int] = []
+        for part in parts:
+            if part.isdigit():
+                ids.append(int(part))
+        ids = ids[:500]
+        if not ids:
+            messages.error(request, "Selected ids were invalid.")
+            return redirect("harvest-rawjobs")
+
+        qs = RawJob.objects.select_related("company", "job_platform").filter(pk__in=ids)
+        synced = skipped = failed = 0
+        for raw_job in qs:
+            try:
+                _sync_rawjob_to_pool(raw_job, posted_by=request.user)
+                synced += 1
+            except ValueError:
+                skipped += 1
+            except Exception:
+                failed += 1
+                logger.exception("Sync selected raw job failed: raw_job_id=%s", raw_job.pk)
+
+        messages.success(
+            request,
+            f"Selected sync complete — {synced} synced, {skipped} skipped, {failed} failed.",
+        )
+        return redirect("harvest-rawjobs")
+
+
 class RunCleanupNowView(SuperuserRequiredMixin, View):
     def post(self, request):
         from .tasks import cleanup_harvested_jobs_task
@@ -580,7 +789,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 "education_required", "languages_required", "certifications",
                 "licenses_required", "clearance_required", "clearance_level",
                 "schedule_type", "shift_schedule", "travel_pct_min", "travel_pct_max",
-                "resume_ready_score", "classification_confidence",
+                "resume_ready_score", "classification_confidence", "quality_score",
+                "jd_quality_score", "raw_payload",
                 "job_keywords", "title_keywords",
                 "company_industry", "company_size",
             )
@@ -608,6 +818,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "salary_raw": (job.salary_raw or "")[:20],
                     "posted_date": str(job.posted_date) if job.posted_date else "",
                     "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
+                    "fetched_at_iso": job.fetched_at.isoformat() if job.fetched_at else "",
                     "sync_status": job.sync_status or "",
                     "has_jd": job.has_description,
                     "jd_label": "yes" if job.has_description else ("expired" if not job.is_active else "no"),
@@ -625,10 +836,16 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "travel_pct_max": job.travel_pct_max,
                     "resume_ready_score": job.resume_ready_score,
                     "classification_confidence": job.classification_confidence,
+                    "quality_score": job.quality_score,
+                    "jd_quality_score": job.jd_quality_score,
                     "certifications": (job.certifications or [])[:3],
                     "keywords": (job.title_keywords or job.job_keywords or [])[:4],
                     "company_industry": (job.company_industry or "")[:64],
                     "company_size": (job.company_size or "")[:32],
+                    "stage": job.pipeline_stage_label(),
+                    "owner_pipeline": job.owner_pipeline_label(),
+                    "retry_count": job.retry_count_estimate(),
+                    "last_error": job.last_error_text(),
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
                 })
 
@@ -834,6 +1051,24 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if sync_f:
             qs = qs.filter(sync_status=sync_f)
 
+        stage_f = self.request.GET.get("stage", "").strip().upper()
+        if stage_f == "FETCHED":
+            qs = qs.filter(has_description=False, sync_status=RawJob.SyncStatus.PENDING)
+        elif stage_f == "PARSED":
+            qs = qs.filter(has_description=True, quality_score__isnull=True, jd_quality_score__isnull=True, sync_status=RawJob.SyncStatus.PENDING)
+        elif stage_f == "ENRICHED":
+            qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False), classification_confidence__isnull=True, sync_status=RawJob.SyncStatus.PENDING)
+        elif stage_f == "CLASSIFIED":
+            qs = qs.filter(classification_confidence__gte=0.01, classification_confidence__lt=0.55, sync_status=RawJob.SyncStatus.PENDING)
+        elif stage_f == "READY":
+            qs = qs.filter(has_description=True, classification_confidence__gte=0.55, is_active=True, sync_status=RawJob.SyncStatus.PENDING)
+        elif stage_f == "SYNCED":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
+        elif stage_f == "FAILED":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.FAILED)
+        elif stage_f == "DUPLICATE":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.SKIPPED)
+
         remote_f = self.request.GET.get("is_remote", "").strip()
         if remote_f == "1":
             qs = qs.filter(is_remote=True)
@@ -876,6 +1111,19 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if last_hours.isdigit():
             hours = max(1, min(720, int(last_hours)))
             qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=hours))
+
+        pending_age_bucket = self.request.GET.get("pending_age_bucket", "").strip()
+        if pending_age_bucket:
+            now = timezone.now()
+            qs = qs.filter(sync_status=RawJob.SyncStatus.PENDING)
+            if pending_age_bucket == "lt_1h":
+                qs = qs.filter(fetched_at__gte=now - timedelta(hours=1))
+            elif pending_age_bucket == "h_1_6":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6))
+            elif pending_age_bucket == "h_6_24":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24))
+            elif pending_age_bucket == "gt_24h":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=24))
 
         # Posted-date range (separate from fetched_at)
         date_from = self.request.GET.get("date_from", "").strip()
@@ -962,6 +1210,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_founded_from"] = self.request.GET.get("founded_from", "")
         ctx["selected_founded_to"] = self.request.GET.get("founded_to", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
+        ctx["selected_stage"] = self.request.GET.get("stage", "")
+        ctx["selected_pending_age_bucket"] = self.request.GET.get("pending_age_bucket", "")
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
         ctx["selected_is_active"] = self.request.GET.get("is_active", "")
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
@@ -974,6 +1224,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_label_pk"] = self.request.GET.get("label_pk", "")
         paginator = ctx.get("paginator")
         ctx["jobs_total_filtered"] = paginator.count if paginator else 0
+
+        # Workflow analytics for new control tabs.
+        ctx["raw_insights"] = _raw_jobs_workflow_insights(stale_pending_hours=6)
 
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
@@ -1609,11 +1862,28 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 .order_by("-count")
                 .values("platform_slug", "count")
             ),
+            "insights": _raw_jobs_workflow_insights(stale_pending_hours=6),
             "meta": {
                 "cache": "fresh" if (running_batch or running_company_fetch) else "short_ttl",
                 "new_today_basis": "last_24h_fetched",
             },
         })
+
+
+@method_decorator(never_cache, name="dispatch")
+class RawJobWorkflowInsightsView(SuperuserRequiredMixin, View):
+    """JSON endpoint — queue/quality/funnel/platform-health insights for control tabs."""
+
+    def get(self, request):
+        stale_hours_raw = (request.GET.get("stale_hours") or "6").strip()
+        stale_hours = int(stale_hours_raw) if stale_hours_raw.isdigit() else 6
+        stale_hours = max(1, min(72, stale_hours))
+        return JsonResponse(
+            {
+                "ok": True,
+                "insights": _raw_jobs_workflow_insights(stale_pending_hours=stale_hours),
+            }
+        )
 
 
 # ── Job Jarvis ─────────────────────────────────────────────────────────────────
