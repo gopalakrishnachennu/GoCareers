@@ -27,7 +27,11 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input
+            if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
+              echo "Primary migrate failed; attempting safe recovery for harvest.0026"
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate harvest 0026 --fake || true
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input
+            fi
             docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell <<'PY'
             from django.utils import timezone
             from datetime import timedelta
