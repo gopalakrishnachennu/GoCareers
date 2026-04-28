@@ -1,0 +1,377 @@
+{% extends "base.html" %}
+{% block title %}Operations Center{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl px-4 py-8">
+  <div class="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-blue-900 to-slate-800 p-6 text-white shadow-sm">
+    <div class="absolute -right-10 -top-10 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl"></div>
+    <div class="absolute -left-10 -bottom-10 h-36 w-36 rounded-full bg-indigo-300/20 blur-2xl"></div>
+    <div class="relative z-10 flex flex-wrap items-start justify-between gap-4">
+      <div>
+        <h1 class="text-3xl font-black tracking-tight">Operations Center</h1>
+        <p class="mt-2 max-w-2xl text-sm text-blue-100">Central control for live workers, scheduled jobs, completed runs, Harvest flow, and pipeline health.</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="liveBadge" class="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-200">
+          <span class="h-2 w-2 animate-pulse rounded-full bg-emerald-300"></span>
+          Live
+        </span>
+        <span class="rounded-full border border-white/20 px-3 py-1 text-xs text-blue-100">Refresh: 5s</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-6">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Running</p>
+      <p id="kpi-running" class="mt-2 text-3xl font-black text-slate-900">{{ ops_summary.running_now|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Queued</p>
+      <p id="kpi-queued" class="mt-2 text-3xl font-black text-amber-600">{{ ops_summary.queued_now|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Workers</p>
+      <p id="kpi-workers" class="mt-2 text-3xl font-black text-blue-700">{{ ops_summary.workers_online|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Scheduled Enabled</p>
+      <p id="kpi-scheduled" class="mt-2 text-3xl font-black text-indigo-700">{{ ops_summary.scheduled_enabled|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Completed 24h</p>
+      <p id="kpi-completed" class="mt-2 text-3xl font-black text-emerald-700">{{ ops_summary.completed_24h|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Failed 24h</p>
+      <p id="kpi-failed" class="mt-2 text-3xl font-black text-rose-700">{{ ops_summary.failed_24h|default:0 }}</p>
+    </div>
+  </div>
+
+  <div id="alertsBox" class="mt-4 space-y-2">
+    {% if ops_alerts %}
+      {% for a in ops_alerts %}
+      <div class="rounded-lg border px-4 py-2 text-sm {% if a.level == 'error' %}border-rose-200 bg-rose-50 text-rose-800{% else %}border-amber-200 bg-amber-50 text-amber-800{% endif %}">
+        {{ a.message }}
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">No active alerts.</div>
+    {% endif %}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
+    <div class="space-y-6 xl:col-span-2">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-wrap items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">In Progress</h2>
+          <p class="text-xs text-slate-500">Updated <span id="lastUpdated">{{ ops_generated_at|default:'-' }}</span></p>
+        </div>
+        <div id="liveTasks" class="space-y-3 p-4">
+          <p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading tasks…</p>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-wrap items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">Scheduled Tasks</h2>
+          <span id="scheduledCount" class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">0</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3">Task</th>
+                <th class="px-4 py-3">Schedule</th>
+                <th class="px-4 py-3">Next Run</th>
+                <th class="px-4 py-3">Last Run</th>
+                <th class="px-4 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody id="scheduledRows" class="divide-y divide-slate-100">
+              <tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="flex flex-wrap items-center justify-between border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">Completed Runs</h2>
+          <span id="completedCount" class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">0</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="min-w-full text-sm">
+            <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th class="px-4 py-3">Task</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Finished</th>
+                <th class="px-4 py-3">Runtime</th>
+              </tr>
+            </thead>
+            <tbody id="completedRows" class="divide-y divide-slate-100">
+              <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div class="space-y-6">
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">Subsystem KPIs</h2>
+        </div>
+        <div class="grid grid-cols-1 gap-3 p-4 text-sm">
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Jobs</p>
+            <p id="jobsKpi" class="mt-1 font-bold text-slate-900">0 total · 0 open · 0 pool</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Companies</p>
+            <p id="companiesKpi" class="mt-1 font-bold text-slate-900">0 total · 0 pending enrich</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Harvest Raw Jobs</p>
+            <p id="rawKpi" class="mt-1 font-bold text-slate-900">0 total · 0 pending sync · 0 missing JD</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Applications</p>
+            <p id="appsKpi" class="mt-1 font-bold text-slate-900">0 total · 0 in progress · 0 interviews</p>
+          </div>
+          <div class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <p class="text-xs uppercase tracking-wide text-slate-500">Harvest Activity</p>
+            <p id="harvestKpi" class="mt-1 font-bold text-slate-900">0 batches · 0 company runs</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">Workers</h2>
+        </div>
+        <div id="workersRows" class="space-y-2 p-4">
+          <p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading workers…</p>
+        </div>
+      </section>
+
+      <section class="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div class="border-b border-slate-100 px-5 py-4">
+          <h2 class="text-lg font-extrabold text-slate-900">Pipeline History</h2>
+        </div>
+        <div id="pipelineRows" class="space-y-2 p-4">
+          <p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">Loading pipelines…</p>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  const API = '{% url "ops-center-api" %}';
+
+  const stateStyle = {
+    RUNNING: 'background:#ecfdf5;color:#047857;border-color:#a7f3d0;',
+    QUEUED: 'background:#fffbeb;color:#b45309;border-color:#fde68a;',
+    SCHEDULED_QUEUE: 'background:#f0f9ff;color:#0369a1;border-color:#bae6fd;',
+    SUCCESS: 'background:#ecfdf5;color:#047857;border-color:#a7f3d0;',
+    FAILURE: 'background:#fff1f2;color:#be123c;border-color:#fecdd3;',
+    REVOKED: 'background:#f1f5f9;color:#475569;border-color:#cbd5e1;',
+    PENDING: 'background:#fffbeb;color:#b45309;border-color:#fde68a;',
+    STARTED: 'background:#f0f9ff;color:#0369a1;border-color:#bae6fd;',
+  };
+
+  function esc(v){
+    if (v === null || v === undefined) return '';
+    return String(v)
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  }
+
+  function fmt(n){
+    const num = Number(n || 0);
+    return Number.isFinite(num) ? num.toLocaleString() : '0';
+  }
+
+  function fmtDate(s){
+    if (!s) return '—';
+    const d = new Date(s);
+    if (Number.isNaN(d.getTime())) return s;
+    return d.toLocaleString();
+  }
+
+  function fmtRuntime(seconds){
+    const s = Number(seconds || 0);
+    if (!s || Number.isNaN(s)) return '—';
+    if (s < 60) return `${s}s`;
+    if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+    return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+  }
+
+  function badge(state){
+    const style = stateStyle[state] || 'background:#f1f5f9;color:#475569;border-color:#cbd5e1;';
+    return `<span class="rounded-full border px-2 py-0.5 text-xs font-semibold" style="${style}">${esc(state || 'UNKNOWN')}</span>`;
+  }
+
+  function renderSummary(summary){
+    document.getElementById('kpi-running').textContent = fmt(summary.running_now);
+    document.getElementById('kpi-queued').textContent = fmt(summary.queued_now);
+    document.getElementById('kpi-workers').textContent = fmt(summary.workers_online);
+    document.getElementById('kpi-scheduled').textContent = fmt(summary.scheduled_enabled);
+    document.getElementById('kpi-completed').textContent = fmt(summary.completed_24h);
+    document.getElementById('kpi-failed').textContent = fmt(summary.failed_24h);
+
+    document.getElementById('jobsKpi').textContent = `${fmt(summary.jobs_total)} total · ${fmt(summary.jobs_open)} open · ${fmt(summary.jobs_pool)} pool`;
+    document.getElementById('companiesKpi').textContent = `${fmt(summary.companies_total)} total · ${fmt(summary.companies_pending_enrichment)} pending enrich · ${fmt(summary.companies_failed_enrichment)} failed`;
+    document.getElementById('rawKpi').textContent = `${fmt(summary.raw_total)} total · ${fmt(summary.raw_pending_sync)} pending sync · ${fmt(summary.raw_missing_jd)} missing JD`;
+    document.getElementById('appsKpi').textContent = `${fmt(summary.submissions_total)} total · ${fmt(summary.submissions_in_progress)} in progress · ${fmt(summary.submissions_interviews)} interviews · ${fmt(summary.submissions_offers)} offers`;
+    document.getElementById('harvestKpi').textContent = `${fmt(summary.harvest_running_batches)} active batches · ${fmt(summary.harvest_running_company_runs)} active company runs`;
+  }
+
+  function renderAlerts(alerts){
+    const root = document.getElementById('alertsBox');
+    if (!alerts || !alerts.length){
+      root.innerHTML = '<div class="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-emerald-800">No active alerts.</div>';
+      return;
+    }
+    root.innerHTML = alerts.map(a => {
+      const isErr = a.level === 'error';
+      const cls = isErr
+        ? 'border-rose-200 bg-rose-50 text-rose-800'
+        : 'border-amber-200 bg-amber-50 text-amber-800';
+      return `<div class="rounded-lg border px-4 py-2 text-sm ${cls}">${esc(a.message)}</div>`;
+    }).join('');
+  }
+
+  function renderLiveTasks(tasks){
+    const root = document.getElementById('liveTasks');
+    if (!tasks || !tasks.length){
+      root.innerHTML = '<p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">No active queued/running tasks.</p>';
+      return;
+    }
+    root.innerHTML = tasks.map(t => {
+      const pct = Math.max(0, Math.min(100, Number(t.percent || 0)));
+      const progress = Number.isFinite(pct) ? pct : 0;
+      return `
+        <article class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="h-2.5 w-2.5 rounded-full" style="background:${esc(t.color || '#2563eb')}"></span>
+              <h3 class="text-sm font-bold text-slate-900">${esc(t.label || t.task_name || 'Task')}</h3>
+              ${badge(t.state)}
+            </div>
+            <div class="text-xs text-slate-500">Worker: ${esc(t.worker || 'n/a')}</div>
+          </div>
+          <p class="mb-3 text-xs text-slate-600">${esc(t.message || 'In progress')}</p>
+          <div class="h-2 w-full overflow-hidden rounded bg-slate-100">
+            <div class="h-2 rounded" style="width:${progress}%;background:${esc(t.color || '#2563eb')};transition:width .35s ease"></div>
+          </div>
+          <div class="mt-2 flex flex-wrap gap-4 text-xs text-slate-500">
+            <span>${progress}%</span>
+            <span>Age: ${t.age_seconds ? esc(fmtRuntime(t.age_seconds)) : '—'}</span>
+            <span>${esc(t.task_name || '')}</span>
+          </div>
+        </article>`;
+    }).join('');
+  }
+
+  function renderScheduled(rows){
+    const body = document.getElementById('scheduledRows');
+    document.getElementById('scheduledCount').textContent = fmt((rows || []).length);
+    if (!rows || !rows.length){
+      body.innerHTML = '<tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No scheduled tasks configured.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td class="px-4 py-3">
+          <div class="font-semibold text-slate-900">${esc(r.label || r.name || 'Task')}</div>
+          <div class="text-xs text-slate-500">${esc(r.name || '')}</div>
+        </td>
+        <td class="px-4 py-3 text-slate-700">${esc(r.schedule || '—')}</td>
+        <td class="px-4 py-3 text-slate-700">${esc(fmtDate(r.next_run_at) || '—')}</td>
+        <td class="px-4 py-3 text-slate-700">${esc(fmtDate(r.last_run_at) || '—')}</td>
+        <td class="px-4 py-3">${r.enabled ? '<span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Enabled</span>' : '<span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Paused</span>'}</td>
+      </tr>`).join('');
+  }
+
+  function renderCompleted(rows){
+    const body = document.getElementById('completedRows');
+    document.getElementById('completedCount').textContent = fmt((rows || []).length);
+    if (!rows || !rows.length){
+      body.innerHTML = '<tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">No completed tasks yet.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(r => `
+      <tr>
+        <td class="px-4 py-3">
+          <div class="font-semibold text-slate-900">${esc(r.label || r.task_name || 'Task')}</div>
+          <div class="text-xs text-slate-500">${esc(r.id || '')}</div>
+        </td>
+        <td class="px-4 py-3">${badge(r.status)}</td>
+        <td class="px-4 py-3 text-slate-700">${esc(fmtDate(r.completed_at) || '—')}</td>
+        <td class="px-4 py-3 text-slate-700">${esc(fmtRuntime(r.runtime_seconds))}</td>
+      </tr>`).join('');
+  }
+
+  function renderWorkers(workers){
+    const root = document.getElementById('workersRows');
+    if (!workers || !workers.length){
+      root.innerHTML = '<p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">No workers online.</p>';
+      return;
+    }
+    root.innerHTML = workers.map(w => `
+      <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <p class="text-sm font-bold text-slate-900">${esc(w.name || 'worker')}</p>
+        <p class="mt-1 text-xs text-slate-600">Concurrency ${fmt(w.concurrency)} · Processes ${fmt(w.processes)}</p>
+        <p class="mt-1 text-xs text-slate-500">Queues: ${esc((w.queues || []).join(', ') || 'default')}</p>
+      </article>`).join('');
+  }
+
+  function renderPipelines(rows){
+    const root = document.getElementById('pipelineRows');
+    if (!rows || !rows.length){
+      root.innerHTML = '<p class="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">No recent pipeline history.</p>';
+      return;
+    }
+    root.innerHTML = rows.slice(0, 8).map(p => `
+      <article class="rounded-lg border border-slate-200 bg-slate-50 p-3">
+        <p class="text-sm font-bold text-slate-900">${esc(p.label || p.task_name || 'Pipeline')}</p>
+        <p class="mt-1 text-xs text-slate-600">${esc(p.summary || 'No summary')}</p>
+        <p class="mt-1 text-xs text-slate-500">${esc(fmtDate(p.last_run_at))}</p>
+      </article>`).join('');
+  }
+
+  async function refresh(){
+    try {
+      const res = await fetch(API, {headers:{'X-Requested-With':'XMLHttpRequest'}});
+      if (!res.ok) return;
+      const data = await res.json();
+      renderSummary(data.summary || {});
+      renderAlerts(data.alerts || []);
+      renderLiveTasks(data.live_tasks || []);
+      renderScheduled(data.scheduled || []);
+      renderCompleted(data.completed || []);
+      renderWorkers(data.workers || []);
+      renderPipelines(data.pipelines || []);
+      document.getElementById('lastUpdated').textContent = fmtDate(data.generated_at);
+    } catch (err) {
+      console.warn('Ops center refresh failed', err);
+      const badge = document.getElementById('liveBadge');
+      badge.style.borderColor = 'rgba(253,164,175,.6)';
+      badge.style.backgroundColor = 'rgba(244,63,94,.08)';
+      badge.style.color = '#fecdd3';
+      badge.innerHTML = '<span class="h-2 w-2 rounded-full" style="background:#fda4af"></span>Offline';
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+{% endblock %}

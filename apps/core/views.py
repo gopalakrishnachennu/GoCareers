@@ -2,6 +2,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.views.generic import TemplateView, UpdateView, View, ListView, DetailView, CreateView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Count, Q, Sum
 from django.urls import reverse_lazy, reverse
 from django.utils import timezone
@@ -1096,6 +1097,334 @@ class MyFeaturesJsonView(LoginRequiredMixin, View):
         keys = FeatureFlag.objects.values_list('key', flat=True)
         data = {k: feature_enabled_for(request.user, k) for k in keys}
         return JsonResponse(data)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM OPERATIONS CENTER (GLOBAL MONITORING)
+# One place to see: IN-PROGRESS, SCHEDULED, COMPLETED + subsystem health.
+# ─────────────────────────────────────────────────────────────────────────────
+
+OPS_TASK_LABELS = {
+    "harvest.backfill_descriptions": "JD Backfill",
+    "harvest.backfill_descriptions_chunk": "JD Backfill Chunk",
+    "harvest.fetch_raw_jobs_batch": "Harvest Batch",
+    "harvest.fetch_raw_jobs_for_company": "Company Fetch",
+    "harvest.harvest_jobs": "Harvest Jobs",
+    "harvest.sync_harvested_to_pool": "Pool Sync",
+    "harvest.detect_company_platforms": "Platform Detection",
+    "harvest.verify_all_portals": "Portal Verify",
+    "harvest.enrich_existing_jobs": "Harvest Enrichment",
+    "harvest.backfill_resume_contract": "Resume Contract Backfill",
+    "harvest.backfill_platform_labels_from_jobs": "Label Backfill",
+    "harvest.cleanup_harvested_jobs": "Harvest Cleanup",
+    "harvest.jarvis_ingest": "Jarvis Ingest",
+    "companies.tasks.validate_company_links_task": "Company Link Validator",
+    "companies.tasks.re_enrich_stale_companies_task": "Company Re-Enrichment",
+    "jobs.tasks.validate_job_urls_task": "Job Link Validator",
+    "jobs.tasks.auto_close_jobs_task": "Auto Close Jobs",
+    "submissions.tasks.send_followup_reminders": "Followup Reminders",
+    "submissions.tasks.detect_stale_submissions": "Stale Submissions Detector",
+    "core.tasks.poll_email_ingest_task": "Email Ingest",
+    "core.tasks.send_weekly_executive_report_task": "Weekly Executive Report",
+}
+
+
+def _ops_pretty_task_label(task_name: str) -> str:
+    if not task_name:
+        return "Unknown Task"
+    if task_name in OPS_TASK_LABELS:
+        return OPS_TASK_LABELS[task_name]
+    leaf = task_name.split(".")[-1]
+    return leaf.replace("_", " ").strip().title()
+
+
+def _ops_task_color(task_name: str) -> str:
+    if task_name.startswith("harvest."):
+        return "#0ea5e9"
+    if task_name.startswith("companies."):
+        return "#14b8a6"
+    if task_name.startswith("jobs."):
+        return "#f59e0b"
+    if task_name.startswith("submissions."):
+        return "#8b5cf6"
+    if task_name.startswith("core."):
+        return "#64748b"
+    return "#334155"
+
+
+def _ops_schedule_label(task):
+    if getattr(task, "crontab", None):
+        c = task.crontab
+        m, h, dow = c.minute, c.hour, c.day_of_week
+        day_map = {"0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat"}
+        if m.startswith("*/"):
+            return f"Every {m[2:]} min"
+        if h.startswith("*/"):
+            return f"Every {h[2:]} hr"
+        if dow != "*":
+            return f"{day_map.get(dow, dow)} {str(h).zfill(2)}:{str(m).zfill(2)} UTC"
+        return f"Daily {str(h).zfill(2)}:{str(m).zfill(2)} UTC"
+    if getattr(task, "interval", None):
+        return f"Every {task.interval}"
+    return "—"
+
+
+def _ops_run_summary(result_payload) -> str:
+    if not isinstance(result_payload, dict):
+        return ""
+    keys = ("total", "processed", "created", "updated", "skipped", "failed", "synced")
+    parts = [f"{k}:{result_payload[k]}" for k in keys if k in result_payload and result_payload.get(k) not in (None, "")]
+    if parts:
+        return " · ".join(parts)[:220]
+    msg = result_payload.get("message") or ""
+    return str(msg)[:220]
+
+
+def _build_ops_snapshot() -> dict:
+    cache_key = "ops_center_snapshot_v1"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    from celery import current_app
+    from celery.result import AsyncResult
+    from django_celery_beat.models import PeriodicTask
+    from django_celery_results.models import TaskResult
+    from companies.models import Company
+    from harvest.models import CompanyFetchRun, FetchBatch, RawJob
+    from jobs.models import Job
+    from submissions.models import ApplicationSubmission
+    from resumes.models import ResumeDraft
+
+    now = timezone.now()
+    since_24h = now - timedelta(hours=24)
+
+    inspect = current_app.control.inspect(timeout=2)
+    active_map = inspect.active() or {}
+    reserved_map = inspect.reserved() or {}
+    eta_map = inspect.scheduled() or {}
+    stats_map = inspect.stats() or {}
+
+    live_tasks = []
+    for worker_name, entries in active_map.items():
+        for t in entries or []:
+            task_id = t.get("id", "")
+            task_name = t.get("name", "")
+            state = "RUNNING"
+            percent, message = 0, "Running..."
+            try:
+                res = AsyncResult(task_id)
+                if res.state == "PROGRESS" and isinstance(res.info, dict):
+                    percent = int(res.info.get("percent") or 0)
+                    message = (res.info.get("message") or "Running...")[:180]
+            except Exception:
+                pass
+            started = t.get("time_start")
+            age_seconds = int((timezone.now().timestamp() - float(started))) if started else None
+            live_tasks.append({
+                "id": task_id,
+                "task_name": task_name,
+                "label": _ops_pretty_task_label(task_name),
+                "color": _ops_task_color(task_name),
+                "state": state,
+                "worker": worker_name,
+                "percent": max(0, min(100, percent)),
+                "message": message,
+                "age_seconds": age_seconds,
+            })
+
+    for worker_name, entries in reserved_map.items():
+        for t in entries or []:
+            task_name = t.get("name", "")
+            live_tasks.append({
+                "id": t.get("id", ""),
+                "task_name": task_name,
+                "label": _ops_pretty_task_label(task_name),
+                "color": _ops_task_color(task_name),
+                "state": "QUEUED",
+                "worker": worker_name,
+                "percent": 0,
+                "message": "Queued on worker; waiting for execution slot.",
+                "age_seconds": None,
+            })
+
+    for worker_name, entries in eta_map.items():
+        for item in entries or []:
+            req = item.get("request") if isinstance(item, dict) else {}
+            req = req if isinstance(req, dict) else {}
+            task_name = req.get("name", "")
+            eta = item.get("eta") if isinstance(item, dict) else ""
+            live_tasks.append({
+                "id": req.get("id", ""),
+                "task_name": task_name,
+                "label": _ops_pretty_task_label(task_name),
+                "color": _ops_task_color(task_name),
+                "state": "SCHEDULED_QUEUE",
+                "worker": worker_name,
+                "percent": 0,
+                "message": f"ETA: {eta}" if eta else "Scheduled by worker ETA queue.",
+                "age_seconds": None,
+            })
+
+    workers = []
+    for wname, info in stats_map.items():
+        pool = info.get("pool", {}) if isinstance(info, dict) else {}
+        queues = [q.get("name", "") for q in (info.get("consumer", {}) or {}).get("queues", []) if isinstance(q, dict)]
+        workers.append({
+            "name": wname,
+            "concurrency": pool.get("max-concurrency") or 0,
+            "processes": len(pool.get("processes", []) or []),
+            "queues": [q for q in queues if q],
+        })
+
+    schedule_rows = []
+    for pt in PeriodicTask.objects.select_related("crontab", "interval").order_by("-enabled", "name")[:120]:
+        schedule_rows.append({
+            "id": pt.pk,
+            "name": pt.name,
+            "task": pt.task,
+            "label": _ops_pretty_task_label(pt.task or pt.name),
+            "enabled": bool(pt.enabled),
+            "one_off": bool(pt.one_off),
+            "last_run_at": pt.last_run_at.isoformat() if pt.last_run_at else "",
+            "next_run_at": getattr(pt, "next_run_at", None).isoformat() if getattr(pt, "next_run_at", None) else "",
+            "total_run_count": int(pt.total_run_count or 0),
+            "schedule": _ops_schedule_label(pt),
+        })
+
+    recent_results_qs = TaskResult.objects.order_by("-date_done")[:120]
+    recent_results = []
+    for tr in recent_results_qs:
+        runtime = None
+        if tr.date_done and tr.date_created:
+            runtime = int((tr.date_done - tr.date_created).total_seconds())
+        task_name = tr.task_name or ""
+        recent_results.append({
+            "id": (tr.task_id or "")[:8],
+            "task_name": task_name,
+            "label": _ops_pretty_task_label(task_name),
+            "color": _ops_task_color(task_name),
+            "status": tr.status or "UNKNOWN",
+            "completed_at": tr.date_done.isoformat() if tr.date_done else "",
+            "runtime_seconds": runtime,
+        })
+
+    result_stats = TaskResult.objects.filter(date_done__gte=since_24h).values("status").annotate(c=Count("id"))
+    result_stats_map = {row["status"]: row["c"] for row in result_stats}
+    success_24h = int(result_stats_map.get("SUCCESS", 0))
+    failed_24h = int(result_stats_map.get("FAILURE", 0))
+    revoked_24h = int(result_stats_map.get("REVOKED", 0))
+
+    job_stats = Job.objects.filter(is_archived=False).aggregate(
+        total=Count("id"),
+        open=Count("id", filter=Q(status=Job.Status.OPEN)),
+        pool=Count("id", filter=Q(status=Job.Status.POOL)),
+        closed=Count("id", filter=Q(status=Job.Status.CLOSED)),
+    )
+    company_stats = Company.objects.aggregate(
+        total=Count("id"),
+        pending=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.PENDING)),
+        failed=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.FAILED)),
+    )
+    raw_stats = RawJob.objects.aggregate(
+        total=Count("id"),
+        pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
+        failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
+        missing_jd=Count("id", filter=Q(has_description=False)),
+    )
+    submission_stats = ApplicationSubmission.objects.filter(is_archived=False).aggregate(
+        total=Count("id"),
+        in_progress=Count("id", filter=Q(status=ApplicationSubmission.Status.IN_PROGRESS)),
+        interviews=Count("id", filter=Q(status=ApplicationSubmission.Status.INTERVIEW)),
+        offers=Count("id", filter=Q(status=ApplicationSubmission.Status.OFFER)),
+    )
+
+    harvest_running_batches = FetchBatch.objects.filter(status=FetchBatch.Status.RUNNING).count()
+    harvest_running_company_runs = CompanyFetchRun.objects.filter(status=CompanyFetchRun.Status.RUNNING).count()
+    harvest_failed_24h = CompanyFetchRun.objects.filter(
+        started_at__gte=since_24h,
+        status__in=[CompanyFetchRun.Status.FAILED, CompanyFetchRun.Status.PARTIAL],
+    ).count()
+
+    pipeline_logs = []
+    for log in PipelineRunLog.objects.order_by("-last_run_at")[:40]:
+        payload = log.last_run_result if isinstance(log.last_run_result, dict) else {}
+        pipeline_logs.append({
+            "task_name": log.task_name,
+            "label": _ops_pretty_task_label(log.task_name),
+            "last_run_at": log.last_run_at.isoformat() if log.last_run_at else "",
+            "summary": _ops_run_summary(payload),
+        })
+
+    alerts = []
+    if failed_24h > 0:
+        alerts.append({"level": "error", "message": f"{failed_24h} background tasks failed in the last 24 hours."})
+    if harvest_failed_24h > 0:
+        alerts.append({"level": "warning", "message": f"{harvest_failed_24h} Harvest company runs were partial/failed in the last 24 hours."})
+    if int(raw_stats.get("missing_jd") or 0) > 2000:
+        alerts.append({"level": "warning", "message": f"JD backlog is high: {raw_stats['missing_jd']} raw jobs are missing descriptions."})
+    if int(raw_stats.get("pending_sync") or 0) > 5000:
+        alerts.append({"level": "warning", "message": f"Pool sync backlog is high: {raw_stats['pending_sync']} pending raw jobs."})
+
+    summary = {
+        "running_now": len([t for t in live_tasks if t["state"] == "RUNNING"]),
+        "queued_now": len([t for t in live_tasks if t["state"] in ("QUEUED", "SCHEDULED_QUEUE")]),
+        "workers_online": len(workers),
+        "scheduled_enabled": len([s for s in schedule_rows if s["enabled"]]),
+        "scheduled_total": len(schedule_rows),
+        "completed_24h": success_24h + failed_24h + revoked_24h,
+        "success_24h": success_24h,
+        "failed_24h": failed_24h,
+        "jobs_total": int(job_stats.get("total") or 0),
+        "jobs_open": int(job_stats.get("open") or 0),
+        "jobs_pool": int(job_stats.get("pool") or 0),
+        "companies_total": int(company_stats.get("total") or 0),
+        "companies_pending_enrichment": int(company_stats.get("pending") or 0),
+        "companies_failed_enrichment": int(company_stats.get("failed") or 0),
+        "raw_total": int(raw_stats.get("total") or 0),
+        "raw_pending_sync": int(raw_stats.get("pending_sync") or 0),
+        "raw_failed_sync": int(raw_stats.get("failed_sync") or 0),
+        "raw_missing_jd": int(raw_stats.get("missing_jd") or 0),
+        "submissions_total": int(submission_stats.get("total") or 0),
+        "submissions_in_progress": int(submission_stats.get("in_progress") or 0),
+        "submissions_interviews": int(submission_stats.get("interviews") or 0),
+        "submissions_offers": int(submission_stats.get("offers") or 0),
+        "resume_drafts": ResumeDraft.objects.count(),
+        "harvest_running_batches": int(harvest_running_batches),
+        "harvest_running_company_runs": int(harvest_running_company_runs),
+    }
+
+    payload = {
+        "generated_at": now.isoformat(),
+        "summary": summary,
+        "alerts": alerts,
+        "live_tasks": live_tasks[:120],
+        "workers": workers[:40],
+        "scheduled": schedule_rows,
+        "completed": recent_results,
+        "pipelines": pipeline_logs,
+    }
+    cache.set(cache_key, payload, timeout=5)
+    return payload
+
+
+class SystemOpsCenterView(AdminRequiredMixin, TemplateView):
+    template_name = "settings/ops_center.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        snapshot = _build_ops_snapshot()
+        ctx["ops_summary"] = snapshot.get("summary", {})
+        ctx["ops_alerts"] = snapshot.get("alerts", [])
+        ctx["ops_generated_at"] = snapshot.get("generated_at", "")
+        return ctx
+
+
+class SystemOpsCenterApiView(AdminRequiredMixin, View):
+    """JSON snapshot for the system operations center."""
+
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(_build_ops_snapshot(), encoder=DjangoJSONEncoder)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from .push_api import ExportLabelsView, PushJobsView, PushStatusView
 from .views import (
@@ -58,7 +59,7 @@ urlpatterns = [
     path("schedule/", ScheduleConfigView.as_view(), name="harvest-schedule"),
     # Monitor
     path("monitor/", RunMonitorView.as_view(), name="harvest-monitor"),
-    path("tasks/", TaskMonitorView.as_view(), name="harvest-tasks"),
+    path("tasks/", RedirectView.as_view(pattern_name="ops-center", permanent=False), name="harvest-tasks"),
     path("tasks/api/", TaskMonitorAPIView.as_view(), name="harvest-tasks-api"),
     # Labels
     path("labels/", CompanyLabelListView.as_view(), name="harvest-labels"),
