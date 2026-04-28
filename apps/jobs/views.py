@@ -834,10 +834,21 @@ class JobApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     employee_feature_key = 'employee_job_pool'
     """Move a POOL job to OPEN (approve it)."""
     def post(self, request, pk):
+        from .gating import apply_gate_result_to_job, evaluate_job_gate
+
         job = get_object_or_404(Job, pk=pk)
         if job.status != Job.Status.POOL:
             messages.warning(request, f"\"{job.title}\" is not in the pool (status: {job.get_status_display()}).")
             return redirect('job-pool')
+        if job.gate_checked_at is None:
+            gate = evaluate_job_gate(job)
+            apply_gate_result_to_job(job, gate)
+            job.gate_checked_at = timezone.now()
+            job.save(update_fields=[
+                'hard_gate_passed', 'gate_status', 'vet_lane', 'pipeline_reason_code', 'pipeline_reason_detail',
+                'hard_gate_failures', 'hard_gate_checks', 'data_quality_score', 'trust_score',
+                'candidate_fit_score', 'vet_priority_score', 'gate_checked_at', 'updated_at'
+            ])
         if not job.hard_gate_passed or job.vet_lane == Job.VetLane.BLOCKED:
             messages.error(
                 request,
@@ -908,6 +919,8 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     employee_feature_key = 'employee_bulk_ops'
     """Bulk-approve multiple POOL jobs at once."""
     def post(self, request):
+        from .gating import apply_gate_result_to_job, evaluate_job_gate
+
         job_ids = request.POST.getlist('job_ids')
         if not job_ids:
             messages.warning(request, "No jobs selected.")
@@ -922,6 +935,15 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 if job.company_obj and getattr(job.company_obj, 'is_blacklisted', False):
                     skipped += 1
                     continue
+                if job.gate_checked_at is None:
+                    gate = evaluate_job_gate(job)
+                    apply_gate_result_to_job(job, gate)
+                    job.gate_checked_at = now
+                    job.save(update_fields=[
+                        'hard_gate_passed', 'gate_status', 'vet_lane', 'pipeline_reason_code', 'pipeline_reason_detail',
+                        'hard_gate_failures', 'hard_gate_checks', 'data_quality_score', 'trust_score',
+                        'candidate_fit_score', 'vet_priority_score', 'gate_checked_at', 'updated_at'
+                    ])
                 if not job.hard_gate_passed or job.vet_lane == Job.VetLane.BLOCKED:
                     skipped += 1
                     continue
