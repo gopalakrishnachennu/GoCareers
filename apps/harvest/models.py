@@ -627,6 +627,21 @@ class RawJob(models.Model):
             return "expired"
         return "no"
 
+    def resume_jd_gate(self) -> dict:
+        """Resume-generation JD gate with reason and thresholds."""
+        from .jd_gate import evaluate_raw_job_resume_gate
+
+        cache_attr = "_resume_jd_gate_cache"
+        cached = getattr(self, cache_attr, None)
+        if cached is not None:
+            return cached
+        gate = evaluate_raw_job_resume_gate(self).asdict()
+        setattr(self, cache_attr, gate)
+        return gate
+
+    def is_resume_jd_usable(self) -> bool:
+        return bool(self.resume_jd_gate().get("usable"))
+
     def pipeline_stage_label(self) -> str:
         """
         Coarse pipeline stage used by Raw Jobs workflow board.
@@ -639,7 +654,12 @@ class RawJob(models.Model):
             return "FAILED"
         if self.sync_status == self.SyncStatus.SKIPPED:
             return "DUPLICATE"
-        if self.has_description and (self.classification_confidence or 0) >= 0.55 and self.is_active:
+        if (
+            self.has_description
+            and self.is_resume_jd_usable()
+            and (self.classification_confidence or 0) >= 0.55
+            and self.is_active
+        ):
             return "READY"
         if (self.classification_confidence or 0) > 0:
             return "CLASSIFIED"

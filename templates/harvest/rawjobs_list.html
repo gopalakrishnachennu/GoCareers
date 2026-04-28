@@ -718,6 +718,8 @@
           {% if selected_company_funding %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Funding: {{ selected_company_funding }}</span>{% endif %}
           {% if selected_company_size %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Size: {{ selected_company_size }}</span>{% endif %}
           {% if selected_resume_ready_min %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Resume score ≥ {{ selected_resume_ready_min }}</span>{% endif %}
+          {% if selected_resume_jd == 'ready' %}<span style="padding:2px 10px;background:#dcfce7;color:#166534;border-radius:20px;font-size:11px;font-weight:600;">Resume JD: Ready</span>{% endif %}
+          {% if selected_resume_jd == 'blocked' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Resume JD: Blocked</span>{% endif %}
           {% if selected_classification_min_conf %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Classify conf ≥ {{ selected_classification_min_conf }}</span>{% endif %}
           {% if selected_founded_from or selected_founded_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Founded: {{ selected_founded_from|default:"…" }} → {{ selected_founded_to|default:"…" }}</span>{% endif %}
           {% if selected_company_id %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Company ID: {{ selected_company_id }}</span>{% endif %}
@@ -765,6 +767,11 @@
             <option value="">JD status</option>
             <option value="1" {% if selected_has_jd == '1' %}selected{% endif %}>Has JD</option>
             <option value="0" {% if selected_has_jd == '0' %}selected{% endif %}>Missing JD</option>
+          </select>
+          <select name="resume_jd" id="jf-resume-jd" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Resume JD gate</option>
+            <option value="ready" {% if selected_resume_jd == 'ready' %}selected{% endif %}>Ready for resume</option>
+            <option value="blocked" {% if selected_resume_jd == 'blocked' %}selected{% endif %}>Blocked for resume</option>
           </select>
           <select name="is_active" id="jf-is-active" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">Active status</option>
@@ -897,6 +904,7 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Last Error</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">JD</th>
+                <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Resume JD</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Sync</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Action</th>
               </tr>
@@ -989,6 +997,15 @@
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">✗ No</span>
                   {% endif %}
                 </td>
+                {% with rg=job.resume_jd_gate %}
+                <td style="padding:9px 14px;text-align:center;white-space:nowrap;" title="{{ rg.reason_text }}">
+                  {% if rg.usable %}
+                  <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;">READY • {{ rg.word_count }}w</span>
+                  {% else %}
+                  <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">BLOCK • {{ rg.word_count }}w</span>
+                  {% endif %}
+                </td>
+                {% endwith %}
                 <td style="padding:9px 14px;text-align:center;">
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;
                     {% if job.sync_status == 'SYNCED' %}background:#d1fae5;color:#065f46;
@@ -1004,7 +1021,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="28" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="29" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -1820,6 +1837,9 @@ function showToast(msg, type='success') {
     const retryCount = Number(j.retry_count || 0);
     const lastError = (j.last_error || '').trim() || '—';
     const ownerPipeline = j.owner_pipeline || '—';
+    const resumeJdUsable = !!j.resume_jd_usable;
+    const resumeJdWords = Number(j.word_count || 0);
+    const resumeJdTitle = escHtml(j.resume_jd_reason_text || '');
     const age = (() => {
       if (!j.fetched_at_iso) return '—';
       const ts = new Date(j.fetched_at_iso).getTime();
@@ -1864,6 +1884,7 @@ function showToast(msg, type='success') {
       <td style="padding:9px 14px;color:#64748b;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(lastError)}">${escHtml(lastError).substring(0,42)}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${escHtml(ownerPipeline)}</td>
       <td style="padding:9px 14px;text-align:center;">${(() => { const lb = j.jd_label || (j.has_jd ? 'yes' : 'no'); if (lb === 'yes') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;">✓ Yes</span>'; if (lb === 'expired') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;" title="Listing appears closed / expired">expireddd</span>'; return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">✗ No</span>'; })()}</td>
+      <td style="padding:9px 14px;text-align:center;white-space:nowrap;" title="${resumeJdTitle}">${resumeJdUsable ? `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;">READY • ${resumeJdWords}w</span>` : `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">BLOCK • ${resumeJdWords}w</span>`}</td>
       <td style="padding:9px 14px;text-align:center;"><span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;${sync}">${j.sync_status}</span></td>
       <td style="padding:9px 14px;text-align:center;">${extLink}</td>`;
     return tr;

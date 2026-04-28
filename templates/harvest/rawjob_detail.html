@@ -193,6 +193,27 @@
         </div>
         {% endif %}
 
+        <!-- Resume JD Gate -->
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Resume JD Gate</h3>
+          {% if resume_jd_gate.usable %}
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;margin-bottom:8px;">READY FOR RESUME</div>
+          {% else %}
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;margin-bottom:8px;">BLOCKED FOR RESUME</div>
+          {% endif %}
+          <p style="margin:4px 0 8px;font-size:12px;color:#334155;">{{ resume_jd_gate.reason_text }}</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+              <p style="margin:0 0 2px;font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Words</p>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#0f172a;">{{ resume_jd_gate.word_count }}</p>
+            </div>
+            <div style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+              <p style="margin:0 0 2px;font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Minimum</p>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#0f172a;">{{ resume_jd_gate.min_words }} words</p>
+            </div>
+          </div>
+        </div>
+
         <!-- Job Category + Experience -->
         <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
           <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Job Profile</h3>

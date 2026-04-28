@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 from django.db.models import Q
 
+from harvest.jd_gate import evaluate_raw_job_resume_gate
+
 from .models import Job
 
 
@@ -56,15 +58,7 @@ def _is_title_meaningful(title: str) -> bool:
 
 
 def _has_clean_jd(raw_job) -> bool:
-    text = (raw_job.description_clean or raw_job.description or "").strip()
-    if len(text) < 120:
-        return False
-    words = len(text.split())
-    if words < 40:
-        return False
-    if raw_job.has_html_content and words < 70:
-        return False
-    return True
+    return bool(evaluate_raw_job_resume_gate(raw_job).usable)
 
 
 def _platform_tenant_match(raw_job) -> bool:
@@ -213,7 +207,9 @@ def evaluate_job_gate(job: Job) -> GateResult:
     title_ok = _is_title_meaningful(job.title)
     desc = (job.description or "").strip()
     words = len(desc.split())
-    has_clean_jd = words >= 50 and len(desc) >= 120
+    min_words = 80
+    min_chars = 400
+    has_clean_jd = words >= min_words and len(desc) >= min_chars
     has_url = bool((job.original_link or "").strip())
     company_ok = bool(job.company_obj_id) and not (
         job.company_obj and getattr(job.company_obj, "is_blacklisted", False)

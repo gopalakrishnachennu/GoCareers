@@ -32,6 +32,7 @@ from .models import (
     RawJob,
 )
 from .resume_profile import build_resume_job_profile
+from .jd_gate import evaluate_raw_job_resume_gate
 
 logger = logging.getLogger(__name__)
 
@@ -839,6 +840,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 "jd_quality_score", "raw_payload",
                 "job_keywords", "title_keywords",
                 "company_industry", "company_size",
+                "word_count",
             )
             paginator = Paginator(qs, self.paginate_by)
             try:
@@ -849,6 +851,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
 
             jobs_data = []
             for job in page_obj.object_list:
+                jd_gate = evaluate_raw_job_resume_gate(job)
                 jobs_data.append({
                     "id": job.pk,
                     "company_name": (job.company_name or "")[:30],
@@ -893,6 +896,10 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "retry_count": job.retry_count_estimate(),
                     "last_error": job.last_error_text(),
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
+                    "resume_jd_usable": jd_gate.usable,
+                    "resume_jd_reason_code": jd_gate.reason_code,
+                    "resume_jd_reason_text": jd_gate.reason_text,
+                    "word_count": jd_gate.word_count,
                 })
 
             return JsonResponse({
@@ -1133,6 +1140,27 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         elif jd_f == "0":
             qs = qs.filter(has_description=False)
 
+        resume_jd_f = self.request.GET.get("resume_jd", "").strip()
+        if resume_jd_f == "ready":
+            qs = qs.filter(
+                has_description=True,
+                is_active=True,
+                word_count__gte=max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80))),
+                classification_confidence__gte=float(
+                    getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35)
+                ),
+            )
+        elif resume_jd_f == "blocked":
+            min_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
+            min_conf = float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
+            qs = qs.filter(
+                Q(has_description=False)
+                | Q(is_active=False)
+                | Q(word_count__lt=min_words)
+                | Q(classification_confidence__lt=min_conf)
+                | Q(classification_confidence__isnull=True)
+            )
+
         # Fetched-date range — uses the indexed fetched_at column so these are
         # fast range scans instead of function-based date extractions.
         from datetime import datetime as _dt, timedelta as _td
@@ -1261,6 +1289,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
         ctx["selected_is_active"] = self.request.GET.get("is_active", "")
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
+        ctx["selected_resume_jd"] = self.request.GET.get("resume_jd", "")
         ctx["selected_fetched_from"] = self.request.GET.get("fetched_from", "")
         ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
         ctx["selected_last_hours"] = self.request.GET.get("last_hours", "")
@@ -1304,6 +1333,11 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
     def get_queryset(self):
         return RawJob.objects.select_related("company", "job_platform", "platform_label")
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["resume_jd_gate"] = evaluate_raw_job_resume_gate(self.object)
+        return ctx
+
 
 @method_decorator(never_cache, name="dispatch")
 class RawJobResumeProfileView(SuperuserRequiredMixin, View):
@@ -1314,11 +1348,26 @@ class RawJobResumeProfileView(SuperuserRequiredMixin, View):
             RawJob.objects.select_related("company", "job_platform", "platform_label"),
             pk=pk,
         )
+        jd_gate = evaluate_raw_job_resume_gate(raw_job)
+        if not jd_gate.usable:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "raw_job_id": raw_job.pk,
+                    "error": "JD is not usable for resume generation.",
+                    "reason_code": jd_gate.reason_code,
+                    "reason_text": jd_gate.reason_text,
+                    "word_count": jd_gate.word_count,
+                    "min_words": jd_gate.min_words,
+                },
+                status=422,
+            )
         return JsonResponse(
             {
                 "ok": True,
                 "raw_job_id": raw_job.pk,
                 "profile": build_resume_job_profile(raw_job),
+                "resume_jd_gate": jd_gate.asdict(),
             }
         )
 

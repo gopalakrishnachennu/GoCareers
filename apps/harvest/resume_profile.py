@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 
+from .jd_gate import evaluate_raw_job_resume_gate
+
 
 @dataclass
 class ResumeJobProfile:
@@ -49,6 +51,10 @@ class ResumeJobProfile:
     company_size: str
     company_employee_count_band: str
     company_founding_year: int | None
+    description_word_count: int
+    resume_jd_usable: bool
+    resume_jd_reason_code: str
+    resume_jd_reason_text: str
 
 
 def _safe_float(value):
@@ -62,6 +68,7 @@ def _safe_float(value):
 
 def build_resume_job_profile(raw_job) -> dict:
     """Canonical contract used by resume generation pipelines."""
+    jd_gate = evaluate_raw_job_resume_gate(raw_job)
     profile = ResumeJobProfile(
         job_id=raw_job.pk,
         title=raw_job.title or "",
@@ -107,5 +114,9 @@ def build_resume_job_profile(raw_job) -> dict:
         company_size=raw_job.company_size or "",
         company_employee_count_band=raw_job.company_employee_count_band or "",
         company_founding_year=raw_job.company_founding_year,
+        description_word_count=jd_gate.word_count,
+        resume_jd_usable=jd_gate.usable,
+        resume_jd_reason_code=jd_gate.reason_code,
+        resume_jd_reason_text=jd_gate.reason_text,
     )
     return asdict(profile)
