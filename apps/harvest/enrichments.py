@@ -24,6 +24,19 @@ def _strip_html(text: str) -> str:
     return text
 
 
+def clean_job_text(text: str, *, max_len: int | None = None) -> str:
+    """
+    Normalize scraped content into clean plain text:
+    - strip HTML
+    - collapse whitespace/newlines
+    - optionally clamp length
+    """
+    cleaned = re.sub(r"\s+", " ", _strip_html(text or "")).strip()
+    if max_len and max_len > 0:
+        return cleaned[:max_len]
+    return cleaned
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # 1. TECH SKILLS vocabulary
 # ─────────────────────────────────────────────────────────────────────────────
@@ -246,6 +259,88 @@ _TRAVEL_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 9.5 SHIFTS / SCHEDULES
+# ─────────────────────────────────────────────────────────────────────────────
+
+_SHIFT_PATTERNS: list[tuple[str, str]] = [
+    ("Day shift", r"\b(day\s*shift|daytime|monday\s*to\s*friday|m-f)\b"),
+    ("Night shift", r"\b(night\s*shift|overnight|graveyard)\b"),
+    ("Weekend", r"\b(weekend|weekends)\b"),
+    ("Rotational", r"\b(rotating|rotation|rotational)\b"),
+    ("On-call", r"\b(on[\s-]*call|pager\s*duty|after[\s-]*hours)\b"),
+    ("Flexible", r"\b(flexible\s*schedule|flexible\s*hours|flex\s*time)\b"),
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9.6 ENCOURAGED TO APPLY
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ENCOURAGED_PATTERNS: list[tuple[str, str]] = [
+    ("Veterans", r"\b(veterans?\s*(are\s*)?(encouraged|welcome)|military\s*transition)\b"),
+    ("Women", r"\b(women\s*(are\s*)?(encouraged|welcome))\b"),
+    ("People with disabilities", r"\b(disabilit(y|ies)|reasonable\s*accommodation|pwd)\b"),
+    ("Career changers", r"\b(career\s*changer|non[\s-]*traditional\s*background)\b"),
+    ("Recent graduates", r"\b(new\s*grad|recent\s*graduate|entry\s*level\s*candidates?)\b"),
+    ("Underrepresented groups", r"\b(underrepresented|diverse\s*backgrounds?|dei|equal\s*opportunity)\b"),
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9.7 DEPARTMENT NORMALIZATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+_DEPARTMENT_PATTERNS: list[tuple[str, str]] = [
+    ("Engineering", r"\b(engineering|software|developer|platform|infrastructure|sre|devops)\b"),
+    ("Data", r"\b(data|analytics|bi\b|machine\s*learning|ai)\b"),
+    ("Product", r"\b(product|program\s*management|technical\s*program)\b"),
+    ("Design", r"\b(design|ux|ui|visual)\b"),
+    ("Sales", r"\b(sales|account\s*executive|business\s*development|sdr|bdr)\b"),
+    ("Marketing", r"\b(marketing|growth|seo|sem|brand|content)\b"),
+    ("Customer Success", r"\b(customer\s*success|customer\s*support|customer\s*experience|cx\b)\b"),
+    ("Finance", r"\b(finance|accounting|fp&a|controller|treasury)\b"),
+    ("HR", r"\b(human\s*resources|people\s*ops|talent\s*acquisition|recruit)\b"),
+    ("Legal", r"\b(legal|counsel|attorney|compliance|privacy)\b"),
+    ("Operations", r"\b(operations|supply\s*chain|logistics|procurement)\b"),
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 9.8 KEYWORD NORMALIZATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TITLE_STOPWORDS = {
+    "the", "and", "for", "with", "from", "into", "your", "our", "you",
+    "job", "role", "team", "manager", "engineer", "developer", "specialist",
+    "senior", "junior", "lead", "principal", "staff", "ii", "iii", "iv",
+}
+
+
+def _extract_title_keywords(title: str, skill_hits: list[str]) -> list[str]:
+    title_words = []
+    for token in re.findall(r"[a-zA-Z][a-zA-Z0-9.+#-]{2,}", title.lower()):
+        if token in _TITLE_STOPWORDS:
+            continue
+        title_words.append(token)
+    merged = title_words[:8] + [s.lower() for s in skill_hits[:8]]
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in merged:
+        key = item.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+    return out[:12]
+
+
+def _normalize_department(raw_department: str, title: str, category: str) -> str:
+    src = f"{raw_department or ''} {title or ''} {category or ''}".lower()
+    for name, pattern in _DEPARTMENT_PATTERNS:
+        if re.search(pattern, src):
+            return name
+    return (raw_department or "").strip()[:128]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 10. CERTIFICATIONS
@@ -375,16 +470,16 @@ def extract_enrichments(job: dict) -> dict:
 
     Returns a dict with ~20 enrichment fields ready to .update() onto a RawJob.
     """
-    title       = (job.get("title") or "")
-    description = (job.get("description") or "")
-    requirements = (job.get("requirements") or "")
-    benefits    = (job.get("benefits") or "")
+    title = clean_job_text(job.get("title") or "", max_len=512)
+    description = clean_job_text(job.get("description") or "", max_len=50000)
+    requirements = clean_job_text(job.get("requirements") or "", max_len=20000)
+    benefits = clean_job_text(job.get("benefits") or "", max_len=10000)
 
     # Build clean plain-text versions of each section
-    title_c  = _strip_html(title).lower()
-    desc_c   = _strip_html(description).lower()
-    req_c    = _strip_html(requirements).lower()
-    ben_c    = _strip_html(benefits).lower()
+    title_c = title.lower()
+    desc_c = description.lower()
+    req_c = requirements.lower()
+    ben_c = benefits.lower()
 
     # Full combined text for most checks
     full_c   = f"{title_c} {desc_c} {req_c} {ben_c}"
@@ -478,6 +573,13 @@ def extract_enrichments(job: dict) -> dict:
         elif m.group(3):
             travel = m.group(3).lower()
 
+    # ── 11.5 Shift schedule ──────────────────────────────────────────────────
+    shift_schedule = ""
+    for label, pattern in _SHIFT_PATTERNS:
+        if re.search(pattern, full_c):
+            shift_schedule = label
+            break
+
     # ── 12. Certifications ────────────────────────────────────────────────────
     certs: list[str] = []
     for name, pattern in _CERT_PATTERNS.items():
@@ -518,8 +620,20 @@ def extract_enrichments(job: dict) -> dict:
             if _LANG_REQUIRED_CTX.search(ctx):
                 langs.append(lang)
 
+    # ── 15.5 Encouraged to apply ─────────────────────────────────────────────
+    encouraged: list[str] = []
+    for label, pattern in _ENCOURAGED_PATTERNS:
+        if re.search(pattern, full_c):
+            encouraged.append(label)
+
+    # ── 15.6 Title keywords ──────────────────────────────────────────────────
+    title_keywords = _extract_title_keywords(title, all_skills)
+
+    # ── 15.7 Department normalization ────────────────────────────────────────
+    department_normalized = _normalize_department(job.get("department") or "", title, category)
+
     # ── 16. Word count ────────────────────────────────────────────────────────
-    word_count = len(_strip_html(description).split())
+    word_count = len(description.split())
 
     # ── 17. Quality score ─────────────────────────────────────────────────────
     quality = _quality_score(job)
@@ -543,10 +657,14 @@ def extract_enrichments(job: dict) -> dict:
         "relocation_assistance": relocation,
         # Work conditions
         "travel_required":      travel,
+        "shift_schedule":       shift_schedule,
         # Structured lists
         "certifications":       certs,
         "benefits_list":        benefits_found,
         "languages_required":   langs,
+        "encouraged_to_apply":  encouraged,
+        "job_keywords":         title_keywords,
+        "department_normalized": department_normalized,
         # Quality
         "word_count":           word_count,
         "quality_score":        quality,

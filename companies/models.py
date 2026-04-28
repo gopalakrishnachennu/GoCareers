@@ -35,6 +35,17 @@ class Company(models.Model):
     )
 
     industry = models.CharField(max_length=255, blank=True)
+    funding_stage = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="e.g. Bootstrapped, Seed, Series A, Public.",
+    )
+    funding_amount = models.CharField(
+        max_length=128,
+        blank=True,
+        help_text="Free-text funding signal (e.g. '$120M total raised').",
+    )
+    founding_year = models.PositiveSmallIntegerField(null=True, blank=True)
     size_band = models.CharField(
         max_length=50,
         blank=True,

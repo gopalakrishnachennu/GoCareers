@@ -38,6 +38,28 @@ def _invalidate_rawjobs_dashboard_cache() -> None:
         cache.delete("rawjobs_expired_missing_jd")
     except Exception:
         pass
+
+
+def _company_snapshot_fields(company) -> dict:
+    """Denormalized company fields copied onto RawJob for fast filtering."""
+    if not company:
+        return {
+            "company_industry": "",
+            "company_stage": "",
+            "company_funding": "",
+            "company_size": "",
+            "company_founding_year": None,
+        }
+    return {
+        "company_industry": (getattr(company, "industry", "") or "")[:255],
+        "company_stage": (getattr(company, "funding_stage", "") or "")[:64],
+        "company_funding": (getattr(company, "funding_amount", "") or "")[:128],
+        "company_size": (
+            (getattr(company, "size_band", "") or "")
+            or (getattr(company, "headcount_range", "") or "")
+        )[:64],
+        "company_founding_year": getattr(company, "founding_year", None),
+    }
 def _backfill_inter_job_delay_sec() -> float:
     """Pause between JD fetches in a chunk; Jarvis per-host/global limits handle burst control."""
     from django.conf import settings
@@ -348,6 +370,7 @@ def harvest_jobs_task(
     from .harvesters import get_harvester
     from .normalizer import normalize_job_data
     from .rate_limiter import throttle as _throttle
+    from .enrichments import clean_job_text, extract_enrichments
 
     tb = triggered_by if triggered_by in ("SCHEDULED", "MANUAL") else "SCHEDULED"
 
@@ -402,6 +425,22 @@ def harvest_jobs_task(
                         url_hash = normalized.get("url_hash", "")
                         if not original_url or not url_hash:
                             continue
+                        description = clean_job_text(normalized.get("description_text", ""), max_len=50000)
+                        requirements = clean_job_text(normalized.get("requirements_text", ""), max_len=20000)
+                        benefits = clean_job_text(normalized.get("benefits_text", ""), max_len=10000)
+                        enriched = extract_enrichments({
+                            "title": normalized.get("title", ""),
+                            "description": description,
+                            "requirements": requirements,
+                            "benefits": benefits,
+                            "department": normalized.get("department", ""),
+                            "location_raw": normalized.get("location", ""),
+                            "employment_type": normalized.get("job_type", "UNKNOWN"),
+                            "experience_level": "UNKNOWN",
+                            "salary_raw": normalized.get("salary_raw", ""),
+                            "company_name": normalized.get("company_name", company.name),
+                            "posted_date": normalized.get("posted_date"),
+                        })
 
                         # Map HarvestedJob-shaped dict → RawJob fields
                         rj_defaults = {
@@ -420,13 +459,15 @@ def harvest_jobs_task(
                             "salary_max": normalized.get("salary_max"),
                             "salary_currency": normalized.get("salary_currency", "USD")[:8],
                             "salary_raw": normalized.get("salary_raw", "")[:256],
-                            "description": normalized.get("description_text", "")[:50000],
-                            "requirements": normalized.get("requirements_text", ""),
-                            "benefits": normalized.get("benefits_text", ""),
+                            "description": description,
+                            "requirements": requirements,
+                            "benefits": benefits,
                             "posted_date": normalized.get("posted_date"),
                             "raw_payload": normalized.get("raw_payload", {}),
                             "sync_status": "PENDING",
                             "is_active": True,
+                            **_company_snapshot_fields(company),
+                            **enriched,
                         }
                         _, created = RawJob.objects.update_or_create(
                             url_hash=url_hash,
@@ -787,6 +828,7 @@ def fetch_raw_jobs_for_company_task(
         raw_jobs = raw_jobs[:max_jobs]
 
     total_jobs = len(raw_jobs)
+    from .enrichments import clean_job_text
     for idx, job_dict in enumerate(raw_jobs, start=1):
         try:
             original_url = (job_dict.get("original_url") or "").strip()
@@ -821,6 +863,10 @@ def fetch_raw_jobs_for_company_task(
                 except Exception:
                     pass
 
+            description = clean_job_text(job_dict.get("description") or "", max_len=50000)
+            requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
+            benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
+
             defaults = {
                 "company": label.company,
                 "platform_label": label,
@@ -845,14 +891,15 @@ def fetch_raw_jobs_for_company_task(
                 "salary_currency": (job_dict.get("salary_currency") or "USD")[:8],
                 "salary_period": (job_dict.get("salary_period") or "")[:16],
                 "salary_raw": (job_dict.get("salary_raw") or "")[:256],
-                "description": job_dict.get("description") or "",
-                "requirements": job_dict.get("requirements") or "",
-                "benefits": job_dict.get("benefits") or "",
+                "description": description,
+                "requirements": requirements,
+                "benefits": benefits,
                 "posted_date": posted_date,
                 "closing_date": closing_date,
                 "platform_slug": (label.platform.slug if label.platform else "")[:64],
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
+                **_company_snapshot_fields(label.company),
             }
 
             # ── Dedup guard (ATS external_id): same label+external_id = same job ──
@@ -1102,7 +1149,9 @@ def fetch_raw_jobs_for_company_task(
                     "visa_sponsorship", "work_authorization", "clearance_required",
                     "salary_equity", "signing_bonus", "relocation_assistance",
                     "travel_required", "certifications", "benefits_list",
-                    "languages_required", "word_count", "quality_score",
+                    "languages_required", "shift_schedule", "encouraged_to_apply",
+                    "job_keywords", "department_normalized",
+                    "word_count", "quality_score",
                 ]
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:
@@ -1656,10 +1705,12 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     posted_date = _jarvis_parse_date(data.get("posted_date_raw", ""))
     closing_date = _jarvis_parse_date(data.get("closing_date_raw", ""))
 
-    # Truncate description to avoid DB limits (TEXT is fine but be safe)
-    description = (data.get("description") or "")[:20000]
-    requirements = (data.get("requirements") or "")[:5000]
-    benefits = (data.get("benefits") or "")[:5000]
+    from .enrichments import clean_job_text
+
+    # Normalize HTML-heavy scraped content into cleaner plain text.
+    description = clean_job_text(data.get("description") or "", max_len=50000)
+    requirements = clean_job_text(data.get("requirements") or "", max_len=20000)
+    benefits = clean_job_text(data.get("benefits") or "", max_len=10000)
 
     # Enrich raw_payload with Jarvis metadata
     raw_payload = data.get("raw_payload") or {}
@@ -1722,6 +1773,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "sync_status": "PENDING",
         "is_active": True,
         "expires_at": timezone.now() + timedelta(days=30),
+        **_company_snapshot_fields(company),
         # ── enrichment fields ─────────────────────────────────────────
         **enriched,
     }
@@ -2414,11 +2466,11 @@ def _backfill_process_one_job(job, jarvis):
         "description": update_fields.get("description") or job.description,
         "requirements": update_fields.get("requirements") or job.requirements,
         "benefits": update_fields.get("benefits") or job.benefits,
-        "department": job.department,
-        "location_raw": job.location_raw,
-        "employment_type": job.employment_type,
-        "experience_level": job.experience_level,
-        "salary_raw": job.salary_raw,
+        "department": update_fields.get("department") or job.department,
+        "location_raw": update_fields.get("location_raw") or job.location_raw,
+        "employment_type": update_fields.get("employment_type") or job.employment_type,
+        "experience_level": update_fields.get("experience_level") or job.experience_level,
+        "salary_raw": update_fields.get("salary_raw") or job.salary_raw,
         "company_name": job.company_name,
         "posted_date": str(job.posted_date) if job.posted_date else "",
     }))
@@ -2855,7 +2907,9 @@ def enrich_existing_jobs_task(
         "visa_sponsorship", "work_authorization", "clearance_required",
         "salary_equity", "signing_bonus", "relocation_assistance",
         "travel_required", "certifications", "benefits_list",
-        "languages_required", "word_count", "quality_score",
+        "languages_required", "shift_schedule", "encouraged_to_apply",
+        "job_keywords", "department_normalized",
+        "word_count", "quality_score",
     ]
 
     for idx, job in enumerate(jobs, start=1):

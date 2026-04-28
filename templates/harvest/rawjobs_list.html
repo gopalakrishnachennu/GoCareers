@@ -510,7 +510,7 @@
     <div id="panel-jobs" style="display:none;">
 
       <!-- Active filter banner -->
-      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk %}
+      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk or selected_department or selected_country or selected_state or selected_education_required or selected_clearance_required or selected_language or selected_shift_schedule or selected_company_industry or selected_company_size or selected_founded_from or selected_founded_to %}
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
@@ -524,6 +524,17 @@
           {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Posted: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
           {% if q %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Search: "{{ q }}"</span>{% endif %}
           {% if selected_platform %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Platform: {{ selected_platform }}</span>{% endif %}
+          {% if selected_department %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Dept: {{ selected_department }}</span>{% endif %}
+          {% if selected_country %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Country: {{ selected_country }}</span>{% endif %}
+          {% if selected_state %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">State: {{ selected_state }}</span>{% endif %}
+          {% if selected_education_required %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Education: {{ selected_education_required }}</span>{% endif %}
+          {% if selected_clearance_required == '1' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Clearance required</span>{% endif %}
+          {% if selected_clearance_required == '0' %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">No clearance</span>{% endif %}
+          {% if selected_language %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Language: {{ selected_language }}</span>{% endif %}
+          {% if selected_shift_schedule %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Shift: {{ selected_shift_schedule }}</span>{% endif %}
+          {% if selected_company_industry %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Industry: {{ selected_company_industry }}</span>{% endif %}
+          {% if selected_company_size %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Size: {{ selected_company_size }}</span>{% endif %}
+          {% if selected_founded_from or selected_founded_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Founded: {{ selected_founded_from|default:"…" }} → {{ selected_founded_to|default:"…" }}</span>{% endif %}
           {% if selected_company_id %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Company ID: {{ selected_company_id }}</span>{% endif %}
           {% if selected_label_pk %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Label: {{ selected_label_pk }}</span>{% endif %}
         </div>
@@ -577,6 +588,29 @@
             <option value="">All levels</option>
             {% for val, label in experience_level_choices %}<option value="{{ val }}" {% if selected_experience_level == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
+          <input type="text" name="department" id="jf-department" value="{{ selected_department }}" placeholder="Department…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="country" id="jf-country" value="{{ selected_country }}" placeholder="Country…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="state" id="jf-state" value="{{ selected_state }}" placeholder="State…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+        </div>
+        <!-- Row 3: classification filters -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+          <select name="education_required" id="jf-education" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Education</option>
+            {% for val, label in education_required_choices %}<option value="{{ val }}" {% if selected_education_required == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <select name="clearance_required" id="jf-clearance" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Clearance?</option>
+            <option value="1" {% if selected_clearance_required == '1' %}selected{% endif %}>Required</option>
+            <option value="0" {% if selected_clearance_required == '0' %}selected{% endif %}>Not required</option>
+          </select>
+          <input type="text" name="language" id="jf-language" value="{{ selected_language }}" placeholder="Language…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="shift_schedule" id="jf-shift" value="{{ selected_shift_schedule }}" placeholder="Shift / schedule…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="company_industry" id="jf-company-industry" value="{{ selected_company_industry }}" placeholder="Industry…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="company_size" id="jf-company-size" value="{{ selected_company_size }}" placeholder="Company size…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Founded:</span>
+          <input type="number" min="1800" max="2100" name="founded_from" id="jf-founded-from" value="{{ selected_founded_from }}" placeholder="From" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="1800" max="2100" name="founded_to" id="jf-founded-to" value="{{ selected_founded_to }}" placeholder="To" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
           <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
           <input type="date" name="fetched_from" id="jf-fetched-from" value="{{ selected_fetched_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
           <span style="font-size:11px;color:#94a3b8;">→</span>
@@ -598,6 +632,11 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Location</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Type</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Level</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Dept</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Geo</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Education</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Keywords</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Company Profile</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Salary</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Posted</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Fetched</th>
@@ -637,6 +676,25 @@
                   <span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">{{ job.experience_level }}</span>
                   {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.department_normalized|default:job.department }}">{{ job.department_normalized|default:job.department|truncatechars:20|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
+                  {% if job.state or job.country %}
+                    {{ job.state|default:"" }}{% if job.state and job.country %}, {% endif %}{{ job.country|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{{ job.education_required|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.job_keywords|join:', ' }}">
+                  {% if job.job_keywords %}{{ job.job_keywords|slice:":4"|join:", " }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.company_industry }} {{ job.company_size }}">
+                  {% if job.company_industry or job.company_size %}
+                    {{ job.company_industry|default:"" }}{% if job.company_industry and job.company_size %} · {% endif %}{{ job.company_size|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
                   {% if job.salary_min %}
                   ${{ job.salary_min|floatformat:0 }}{% if job.salary_max and job.salary_max != job.salary_min %}–${{ job.salary_max|floatformat:0 }}{% endif %}
@@ -669,7 +727,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="12" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="17" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -683,7 +741,7 @@
       <!-- Counter bar: shows how many rows are loaded vs total -->
       <div id="scroll-status" style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;">
         <span style="font-size:12px;color:#64748b;" id="scroll-count">
-          Showing <strong id="loaded-count">{{ jobs|length }}</strong> of <strong>{{ total_jobs }}</strong> jobs
+          Showing <strong id="loaded-count">{{ jobs|length }}</strong> of <strong>{{ jobs_total_filtered }}</strong> jobs
         </span>
         <span id="scroll-spinner" style="display:none;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:6px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="animation:spin .8s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
@@ -1331,6 +1389,11 @@ function showToast(msg, type='success') {
     const extLink = j.original_url
       ? `<a href="${j.original_url}" target="_blank" rel="noopener" style="color:#3b82f6;font-size:11px;text-decoration:none;" title="Open original">↗</a>`
       : '';
+    const geo = [j.state || '', j.country || ''].filter(Boolean).join(', ');
+    const edu = j.education_required || '—';
+    const dept = j.department || '—';
+    const keywords = (j.keywords || []).join(', ') || '—';
+    const companyProfile = [j.company_industry || '', j.company_size || ''].filter(Boolean).join(' · ') || '—';
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid #f1f5f9;transition:background .1s;';
     tr.onmouseover = () => { tr.style.background = '#f8fafc'; };
@@ -1344,8 +1407,14 @@ function showToast(msg, type='success') {
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${j.location_raw}">${j.location_raw.substring(0,20) || '—'}</td>
       <td style="padding:9px 14px;white-space:nowrap;">${j.employment_type && j.employment_type !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;${emp}">${j.employment_type}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;white-space:nowrap;">${j.experience_level && j.experience_level !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">${j.experience_level}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${dept}">${dept.substring(0,20)}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${geo || '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${edu}</td>
+      <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${keywords}">${keywords}</td>
+      <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${companyProfile}">${companyProfile}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${salary}</td>
       <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.posted_date || '—'}</td>
+      <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.fetched_at || '—'}</td>
       <td style="padding:9px 14px;text-align:center;">${(() => { const lb = j.jd_label || (j.has_jd ? 'yes' : 'no'); if (lb === 'yes') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;">✓ Yes</span>'; if (lb === 'expired') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;" title="Listing appears closed / expired">expireddd</span>'; return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">✗ No</span>'; })()}</td>
       <td style="padding:9px 14px;text-align:center;"><span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;${sync}">${j.sync_status}</span></td>
       <td style="padding:9px 14px;text-align:center;">${extLink}</td>`;

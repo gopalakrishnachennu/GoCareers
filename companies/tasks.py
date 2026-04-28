@@ -133,6 +133,55 @@ def _headcount_to_size_band(headcount: str) -> str:
     return ""
 
 
+def _infer_funding_stage(text: str) -> str:
+    low = (text or "").lower()
+    if not low:
+        return ""
+    rules = [
+        ("Public", [r"\b(nyse|nasdaq|publicly\s*traded|listed\s*company)\b"]),
+        ("Series D+", [r"\bseries\s*[d-z]\b"]),
+        ("Series C", [r"\bseries\s*c\b"]),
+        ("Series B", [r"\bseries\s*b\b"]),
+        ("Series A", [r"\bseries\s*a\b"]),
+        ("Seed", [r"\b(pre[-\s]*seed|seed\s*funding)\b"]),
+        ("Bootstrapped", [r"\b(bootstrapped|self[-\s]*funded)\b"]),
+    ]
+    for label, patterns in rules:
+        for pattern in patterns:
+            if re.search(pattern, low):
+                return label
+    return ""
+
+
+def _extract_founding_year(text: str) -> int | None:
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", text or "")
+    if not m:
+        return None
+    try:
+        year = int(m.group(1))
+    except Exception:
+        return None
+    if 1900 <= year <= timezone.now().year:
+        return year
+    return None
+
+
+def _extract_funding_amount(text: str) -> str:
+    """
+    Pull short funding signal from free text.
+    Example: "$120M", "€45 million", "raised $2.3B".
+    """
+    low = (text or "")
+    m = re.search(
+        r"\b(?:raised|funding|valuation)?\s*([$€£]\s?\d+(?:\.\d+)?\s?(?:[mbk]|million|billion|thousand)?)\b",
+        low,
+        re.IGNORECASE,
+    )
+    if not m:
+        return ""
+    return m.group(1).replace("  ", " ").strip()[:128]
+
+
 # ─── Free DuckDuckGo Instant Answer discovery ────────────────────────────────
 
 def _fetch_ddg_instant(query: str) -> dict:
@@ -810,6 +859,8 @@ def _compute_data_quality_score(company: Company) -> int:
         bool(company.logo_url),
         bool(company.description),
         bool(company.industry),
+        bool(company.funding_stage),
+        bool(company.founding_year),
         bool(company.size_band or company.headcount_range),
         bool(company.hq_location),
         bool(company.linkedin_url),
@@ -898,6 +949,18 @@ def enrich_company_task(self, company_id: int) -> dict:
                 detected_industry = _classify_industry(classify_text)
                 if detected_industry:
                     updates["industry"] = detected_industry
+            if not (updates.get("funding_stage") or company.funding_stage):
+                stage = _infer_funding_stage(classify_text)
+                if stage:
+                    updates["funding_stage"] = stage
+            if not (updates.get("founding_year") or company.founding_year):
+                year = _extract_founding_year(classify_text)
+                if year:
+                    updates["founding_year"] = year
+            if not (updates.get("funding_amount") or company.funding_amount):
+                amt = _extract_funding_amount(classify_text)
+                if amt:
+                    updates["funding_amount"] = amt
         hc = updates.get("headcount_range") or company.headcount_range
         if hc and not company.size_band:
             sb = _headcount_to_size_band(hc)
@@ -965,4 +1028,3 @@ def full_re_enrich_companies_task() -> dict:
     result = {"queued": len(ids)}
     _log_pipeline_run("full_re_enrich", result)
     return result
-

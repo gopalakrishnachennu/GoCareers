@@ -26,6 +26,18 @@ def _normalize_url(url: str) -> str:
     return url
 
 
+def _extract_year(text: str) -> int | None:
+    if not text:
+        return None
+    m = re.search(r"\b(19\d{2}|20\d{2})\b", str(text))
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except Exception:
+        return None
+
+
 def _title_from_wikipedia_url(url: str) -> str:
     if not url:
         return ""
@@ -252,6 +264,11 @@ def apply_free_enrichment(company: Company) -> tuple[list[str], list[str]]:
         if ddg.get("hq_location") and not company.hq_location:
             company.hq_location = ddg["hq_location"]
             filled.append(f"HQ ({ddg['hq_location']})")
+        if ddg.get("founded") and not company.founding_year:
+            year = _extract_year(ddg["founded"])
+            if year:
+                company.founding_year = year
+                filled.append(f"founded ({year})")
 
         # 3) Wikipedia REST — longer extract + optional thumb
         wiki_src = ddg.get("abstract_url") or ""

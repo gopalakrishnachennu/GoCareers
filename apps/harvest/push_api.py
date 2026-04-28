@@ -14,6 +14,7 @@ from datetime import date, datetime
 import hashlib
 
 from django.conf import settings
+from django.core.cache import cache
 from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.http import JsonResponse
@@ -139,6 +140,14 @@ def _trigger_pipeline():
         logger.warning("push_api: could not queue sync_harvested_to_pool_task", exc_info=True)
 
 
+def _invalidate_rawjobs_dashboard_cache() -> None:
+    try:
+        cache.delete("rawjobs_dashboard_stats")
+        cache.delete("rawjobs_expired_missing_jd")
+    except Exception:
+        pass
+
+
 # ── View 1: Export labels ─────────────────────────────────────────────────────
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -247,6 +256,7 @@ class PushJobsView(View):
             return _platform_cache[slug]
 
         from harvest.models import RawJob
+        from .enrichments import clean_job_text, extract_enrichments
 
         for job_data in jobs:
             try:
@@ -283,6 +293,22 @@ class PushJobsView(View):
                 platform_slug = job_data.get("platform_slug", "").strip()
                 platform = get_platform(platform_slug)
                 external_id = str(job_data.get("external_id", "")).strip()[:512]
+                description = clean_job_text(job_data.get("description", ""), max_len=50000)
+                requirements = clean_job_text(job_data.get("requirements", ""), max_len=20000)
+                benefits = clean_job_text(job_data.get("benefits", ""), max_len=10000)
+                enriched = extract_enrichments({
+                    "title": job_data.get("title") or "",
+                    "description": description,
+                    "requirements": requirements,
+                    "benefits": benefits,
+                    "department": job_data.get("department") or "",
+                    "location_raw": job_data.get("location_raw") or "",
+                    "employment_type": job_data.get("employment_type") or "",
+                    "experience_level": job_data.get("experience_level") or "",
+                    "salary_raw": job_data.get("salary_raw") or "",
+                    "company_name": job_data.get("company_name") or "",
+                    "posted_date": _parse_date(job_data.get("posted_date")),
+                })
 
                 # Secondary dedupe guard: same company+platform+external_id.
                 if external_id and RawJob.objects.filter(
@@ -318,32 +344,41 @@ class PushJobsView(View):
                     salary_currency=str(job_data.get("salary_currency", "USD"))[:8],
                     salary_period=str(job_data.get("salary_period", ""))[:16],
                     salary_raw=str(job_data.get("salary_raw", ""))[:256],
-                    description=job_data.get("description", ""),
-                    requirements=job_data.get("requirements", ""),
-                    benefits=job_data.get("benefits", ""),
+                    description=description,
+                    requirements=requirements,
+                    benefits=benefits,
                     posted_date=_parse_date(job_data.get("posted_date")),
                     closing_date=_parse_date(job_data.get("closing_date")),
                     platform_slug=platform_slug[:64],
                     raw_payload=job_data.get("raw_payload") or {},
                     # Enrichment (pre-computed on local machine)
-                    skills=job_data.get("skills") or [],
-                    tech_stack=job_data.get("tech_stack") or [],
-                    job_category=str(job_data.get("job_category", ""))[:64],
-                    years_required=job_data.get("years_required"),
-                    years_required_max=job_data.get("years_required_max"),
-                    education_required=str(job_data.get("education_required", ""))[:12],
-                    visa_sponsorship=job_data.get("visa_sponsorship"),
-                    work_authorization=str(job_data.get("work_authorization", ""))[:64],
-                    clearance_required=bool(job_data.get("clearance_required", False)),
-                    salary_equity=bool(job_data.get("salary_equity", False)),
-                    signing_bonus=bool(job_data.get("signing_bonus", False)),
-                    relocation_assistance=bool(job_data.get("relocation_assistance", False)),
-                    travel_required=str(job_data.get("travel_required", ""))[:64],
-                    certifications=job_data.get("certifications") or [],
-                    benefits_list=job_data.get("benefits_list") or [],
-                    languages_required=job_data.get("languages_required") or [],
-                    word_count=int(job_data.get("word_count", 0) or 0),
-                    quality_score=_safe_float(job_data.get("quality_score")),
+                    skills=job_data.get("skills") or enriched.get("skills") or [],
+                    tech_stack=job_data.get("tech_stack") or enriched.get("tech_stack") or [],
+                    job_category=str(job_data.get("job_category", "") or enriched.get("job_category", ""))[:64],
+                    years_required=job_data.get("years_required", enriched.get("years_required")),
+                    years_required_max=job_data.get("years_required_max", enriched.get("years_required_max")),
+                    education_required=str(job_data.get("education_required", "") or enriched.get("education_required", ""))[:12],
+                    visa_sponsorship=job_data.get("visa_sponsorship", enriched.get("visa_sponsorship")),
+                    work_authorization=str(job_data.get("work_authorization", "") or enriched.get("work_authorization", ""))[:64],
+                    clearance_required=bool(job_data.get("clearance_required", enriched.get("clearance_required", False))),
+                    salary_equity=bool(job_data.get("salary_equity", enriched.get("salary_equity", False))),
+                    signing_bonus=bool(job_data.get("signing_bonus", enriched.get("signing_bonus", False))),
+                    relocation_assistance=bool(job_data.get("relocation_assistance", enriched.get("relocation_assistance", False))),
+                    travel_required=str(job_data.get("travel_required", "") or enriched.get("travel_required", ""))[:64],
+                    shift_schedule=str(job_data.get("shift_schedule", "") or enriched.get("shift_schedule", ""))[:128],
+                    certifications=job_data.get("certifications") or enriched.get("certifications") or [],
+                    benefits_list=job_data.get("benefits_list") or enriched.get("benefits_list") or [],
+                    languages_required=job_data.get("languages_required") or enriched.get("languages_required") or [],
+                    encouraged_to_apply=job_data.get("encouraged_to_apply") or enriched.get("encouraged_to_apply") or [],
+                    job_keywords=job_data.get("job_keywords") or enriched.get("job_keywords") or [],
+                    department_normalized=str(job_data.get("department_normalized", "") or enriched.get("department_normalized", ""))[:128],
+                    word_count=int(job_data.get("word_count", enriched.get("word_count", 0)) or 0),
+                    quality_score=_safe_float(job_data.get("quality_score", enriched.get("quality_score"))),
+                    company_industry=(job_data.get("company_industry") or (company.industry if company else "") or "")[:255],
+                    company_stage=(job_data.get("company_stage") or (company.funding_stage if company else "") or "")[:64],
+                    company_funding=(job_data.get("company_funding") or (company.funding_amount if company else "") or "")[:128],
+                    company_size=(job_data.get("company_size") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64],
+                    company_founding_year=(job_data.get("company_founding_year") or (company.founding_year if company else None)),
                     sync_status=RawJob.SyncStatus.PENDING,
                     is_active=True,
                 )
@@ -359,6 +394,8 @@ class PushJobsView(View):
                 )
                 errors += 1
 
+        if created > 0:
+            _invalidate_rawjobs_dashboard_cache()
         if trigger_pipeline and created > 0:
             _trigger_pipeline()
 

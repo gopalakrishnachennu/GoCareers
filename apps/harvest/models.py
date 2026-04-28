@@ -397,6 +397,7 @@ class RawJob(models.Model):
     title = models.CharField(max_length=512)
     company_name = models.CharField(max_length=256, blank=True)
     department = models.CharField(max_length=256, blank=True)
+    department_normalized = models.CharField(max_length=128, blank=True)
     team = models.CharField(max_length=256, blank=True)
 
     # ── Location ──────────────────────────────────────────────────────────────
@@ -474,11 +475,21 @@ class RawJob(models.Model):
     # ── Enriched: work conditions ─────────────────────────────────────────────
     # e.g. "up to 25%", "occasional", "extensive"
     travel_required = models.CharField(max_length=64, blank=True)
+    shift_schedule = models.CharField(max_length=128, blank=True)
 
     # ── Enriched: structured lists ────────────────────────────────────────────
     certifications = models.JSONField(default=list, blank=True)
     benefits_list = models.JSONField(default=list, blank=True)
     languages_required = models.JSONField(default=list, blank=True)
+    encouraged_to_apply = models.JSONField(default=list, blank=True)
+    job_keywords = models.JSONField(default=list, blank=True)
+
+    # ── Denormalized company context (for fast Raw Jobs filtering) ───────────
+    company_industry = models.CharField(max_length=255, blank=True)
+    company_stage = models.CharField(max_length=64, blank=True)
+    company_funding = models.CharField(max_length=128, blank=True)
+    company_size = models.CharField(max_length=64, blank=True)
+    company_founding_year = models.PositiveSmallIntegerField(null=True, blank=True)
 
     # ── Enriched: quality signals ─────────────────────────────────────────────
     word_count = models.PositiveIntegerField(default=0)
@@ -515,9 +526,17 @@ class RawJob(models.Model):
             models.Index(fields=["location_type"]),
             models.Index(fields=["is_active"]),
             models.Index(fields=["job_category"]),
+            models.Index(fields=["department_normalized"]),
+            models.Index(fields=["country"]),
+            models.Index(fields=["state"]),
+            models.Index(fields=["years_required"]),
             models.Index(fields=["education_required"]),
             models.Index(fields=["visa_sponsorship"]),
             models.Index(fields=["clearance_required"]),
+            models.Index(fields=["shift_schedule"]),
+            models.Index(fields=["company_industry"]),
+            models.Index(fields=["company_size"]),
+            models.Index(fields=["company_founding_year"]),
             models.Index(fields=["quality_score"]),
             # Composite — filter + default ORDER BY fetched_at DESC
             models.Index(fields=["sync_status",    "-fetched_at"], name="harvest_raw_sync_fetched_idx"),

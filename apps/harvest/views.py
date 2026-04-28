@@ -573,8 +573,11 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             qs = self.get_queryset().only(
                 "id", "company_name", "platform_slug", "title", "original_url",
                 "location_raw", "is_remote", "employment_type", "experience_level",
-                "salary_min", "salary_max", "salary_raw", "posted_date",
+                "salary_min", "salary_max", "salary_raw", "posted_date", "fetched_at",
                 "sync_status", "has_description", "is_active",
+                "department", "department_normalized", "state", "country",
+                "education_required", "languages_required", "certifications",
+                "job_keywords", "company_industry", "company_size",
             )
             paginator = Paginator(qs, self.paginate_by)
             try:
@@ -599,9 +602,19 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "salary_max": float(job.salary_max) if job.salary_max else None,
                     "salary_raw": (job.salary_raw or "")[:20],
                     "posted_date": str(job.posted_date) if job.posted_date else "",
+                    "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
                     "sync_status": job.sync_status or "",
                     "has_jd": job.has_description,
                     "jd_label": "yes" if job.has_description else ("expired" if not job.is_active else "no"),
+                    "department": (job.department_normalized or job.department or "")[:40],
+                    "state": (job.state or "")[:48],
+                    "country": (job.country or "")[:48],
+                    "education_required": job.education_required or "",
+                    "languages_required": (job.languages_required or [])[:3],
+                    "certifications": (job.certifications or [])[:3],
+                    "keywords": (job.job_keywords or [])[:4],
+                    "company_industry": (job.company_industry or "")[:64],
+                    "company_size": (job.company_size or "")[:32],
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
                 })
 
@@ -622,7 +635,10 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         q = self.request.GET.get("q", "").strip()
         if q:
             qs = qs.filter(
-                Q(title__icontains=q) | Q(company_name__icontains=q)
+                Q(title__icontains=q)
+                | Q(company_name__icontains=q)
+                | Q(skills__icontains=q)
+                | Q(job_keywords__icontains=q)
             )
 
         company_id_f = self.request.GET.get("company_id", "").strip()
@@ -648,6 +664,58 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         exp_f = self.request.GET.get("experience_level", "").strip()
         if exp_f:
             qs = qs.filter(experience_level=exp_f)
+
+        dept_f = self.request.GET.get("department", "").strip()
+        if dept_f:
+            qs = qs.filter(
+                Q(department_normalized__icontains=dept_f)
+                | Q(department__icontains=dept_f)
+            )
+
+        country_f = self.request.GET.get("country", "").strip()
+        if country_f:
+            qs = qs.filter(country__icontains=country_f)
+
+        state_f = self.request.GET.get("state", "").strip()
+        if state_f:
+            qs = qs.filter(state__icontains=state_f)
+
+        edu_f = self.request.GET.get("education_required", "").strip()
+        if edu_f:
+            qs = qs.filter(education_required=edu_f)
+
+        clear_f = self.request.GET.get("clearance_required", "").strip()
+        if clear_f == "1":
+            qs = qs.filter(clearance_required=True)
+        elif clear_f == "0":
+            qs = qs.filter(clearance_required=False)
+
+        lang_f = self.request.GET.get("language", "").strip()
+        if lang_f:
+            try:
+                qs = qs.filter(languages_required__contains=[lang_f])
+            except Exception:
+                qs = qs.filter(languages_required__icontains=lang_f)
+
+        shift_f = self.request.GET.get("shift_schedule", "").strip()
+        if shift_f:
+            qs = qs.filter(shift_schedule__icontains=shift_f)
+
+        industry_f = self.request.GET.get("company_industry", "").strip()
+        if industry_f:
+            qs = qs.filter(company_industry__icontains=industry_f)
+
+        size_f = self.request.GET.get("company_size", "").strip()
+        if size_f:
+            qs = qs.filter(company_size__icontains=size_f)
+
+        founded_from = self.request.GET.get("founded_from", "").strip()
+        if founded_from.isdigit():
+            qs = qs.filter(company_founding_year__gte=int(founded_from))
+
+        founded_to = self.request.GET.get("founded_to", "").strip()
+        if founded_to.isdigit():
+            qs = qs.filter(company_founding_year__lte=int(founded_to))
 
         sync_f = self.request.GET.get("sync_status", "").strip()
         if sync_f:
@@ -737,6 +805,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["employment_type_choices"] = RawJob.EmploymentType.choices
         ctx["experience_level_choices"] = RawJob.ExperienceLevel.choices
         ctx["sync_status_choices"] = RawJob.SyncStatus.choices
+        ctx["education_required_choices"] = [
+            (val, label) for val, label in RawJob._meta.get_field("education_required").choices if val
+        ]
 
         # Filter state
         ctx["q"] = self.request.GET.get("q", "")
@@ -744,6 +815,17 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_location_type"] = self.request.GET.get("location_type", "")
         ctx["selected_employment_type"] = self.request.GET.get("employment_type", "")
         ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
+        ctx["selected_department"] = self.request.GET.get("department", "")
+        ctx["selected_country"] = self.request.GET.get("country", "")
+        ctx["selected_state"] = self.request.GET.get("state", "")
+        ctx["selected_education_required"] = self.request.GET.get("education_required", "")
+        ctx["selected_clearance_required"] = self.request.GET.get("clearance_required", "")
+        ctx["selected_language"] = self.request.GET.get("language", "")
+        ctx["selected_shift_schedule"] = self.request.GET.get("shift_schedule", "")
+        ctx["selected_company_industry"] = self.request.GET.get("company_industry", "")
+        ctx["selected_company_size"] = self.request.GET.get("company_size", "")
+        ctx["selected_founded_from"] = self.request.GET.get("founded_from", "")
+        ctx["selected_founded_to"] = self.request.GET.get("founded_to", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
         ctx["selected_is_active"] = self.request.GET.get("is_active", "")
@@ -754,6 +836,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
         ctx["selected_company_id"] = self.request.GET.get("company_id", "")
         ctx["selected_label_pk"] = self.request.GET.get("label_pk", "")
+        paginator = ctx.get("paginator")
+        ctx["jobs_total_filtered"] = paginator.count if paginator else 0
 
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
