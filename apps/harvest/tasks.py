@@ -1954,7 +1954,26 @@ def _jarvis_ensure_company_platform_label(*, company, detected_ats: str, source_
             },
         )
 
-    label = CompanyPlatformLabel.objects.filter(company=company).first()
+    # Prefer an existing label that matches the detected platform/tenant instead
+    # of taking an arbitrary first label for the company.
+    label = None
+    company_labels = CompanyPlatformLabel.objects.filter(company=company)
+    if platform:
+        label = (
+            company_labels
+            .filter(platform=platform)
+            .order_by("-is_verified", "pk")
+            .first()
+        )
+    if not label and tenant_id:
+        label = (
+            company_labels
+            .filter(tenant_id=tenant_id)
+            .order_by("-is_verified", "pk")
+            .first()
+        )
+    if not label:
+        label = company_labels.order_by("-is_verified", "pk").first()
     if not label and not platform_slug:
         return None, board_ctx
     if not label:

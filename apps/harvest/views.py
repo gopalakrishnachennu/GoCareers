@@ -79,7 +79,7 @@ def _load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
     if stats is not None:
         return stats
 
-    today = _now().date()
+    last_24h_cutoff = _now() - timedelta(hours=24)
     agg = RawJob.objects.aggregate(
         total=Count("id"),
         active=Count("id", filter=Q(is_active=True)),
@@ -87,8 +87,8 @@ def _load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
         synced=Count("id", filter=Q(sync_status="SYNCED")),
         pending=Count("id", filter=Q(sync_status="PENDING")),
         failed=Count("id", filter=Q(sync_status="FAILED")),
-        # "Today" tracks activity (new + refreshed rows), not only first-seen inserts.
-        new_today=Count("id", filter=Q(updated_at__date=today)),
+        # Rolling 24h avoids timezone-midnight confusion for global users.
+        new_today=Count("id", filter=Q(fetched_at__gte=last_24h_cutoff)),
         missing_jd=Count("id", filter=Q(has_description=False)),
     )
     expired_missing = None if force_refresh else cache.get(expired_key)
@@ -759,6 +759,11 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             except ValueError:
                 pass
 
+        last_hours = self.request.GET.get("last_hours", "").strip()
+        if last_hours.isdigit():
+            hours = max(1, min(720, int(last_hours)))
+            qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=hours))
+
         # Posted-date range (separate from fetched_at)
         date_from = self.request.GET.get("date_from", "").strip()
         if date_from:
@@ -832,6 +837,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
         ctx["selected_fetched_from"] = self.request.GET.get("fetched_from", "")
         ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
+        ctx["selected_last_hours"] = self.request.GET.get("last_hours", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
         ctx["selected_company_id"] = self.request.GET.get("company_id", "")
@@ -1399,6 +1405,9 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
     def get(self, request):
         # Running batch info
         running_batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
+        running_company_fetch = CompanyFetchRun.objects.filter(
+            status=CompanyFetchRun.Status.RUNNING
+        ).exists()
         batch_data = None
         if running_batch:
             batch_data = {
@@ -1412,8 +1421,8 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 "total_jobs_new": running_batch.total_jobs_new,
             }
 
-        # Force refresh while a batch is running; otherwise use short-lived cache.
-        stats = _load_rawjobs_dashboard_stats(force_refresh=bool(running_batch))
+        # Force refresh while a batch or Jarvis company fetch is running.
+        stats = _load_rawjobs_dashboard_stats(force_refresh=bool(running_batch or running_company_fetch))
 
         return JsonResponse({
             "total_jobs": stats["total"],
@@ -1432,7 +1441,10 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 .order_by("-count")
                 .values("platform_slug", "count")
             ),
-            "meta": {"cache": "fresh" if running_batch else "short_ttl"},
+            "meta": {
+                "cache": "fresh" if (running_batch or running_company_fetch) else "short_ttl",
+                "new_today_basis": "last_24h_fetched",
+            },
         })
 
 

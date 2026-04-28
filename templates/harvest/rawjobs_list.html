@@ -38,10 +38,10 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-total">{{ total_jobs }}</p>
         </div>
 
-        <div onclick="applyStatFilter({date_range:'today'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs fetched today" onmouseover="this.style.borderColor='#f59e0b'" onmouseout="this.style.borderColor='#334155'">
+        <div onclick="applyStatFilter({last_hours:'24'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs fetched in the last 24 hours" onmouseover="this.style.borderColor='#f59e0b'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">🆕</span>
-            <span style="color:#fcd34d;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Today</span>
+            <span style="color:#fcd34d;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Last 24h</span>
           </div>
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-today">{{ new_today }}</p>
         </div>

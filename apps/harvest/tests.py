@@ -771,6 +771,28 @@ class JarvisPlatformLabelRepairTests(TestCase):
             "https://boards.greenhouse.io/appliedsystems",
         )
 
+    def test_prefers_existing_label_for_detected_platform_when_multiple_labels_exist(self):
+        from harvest.models import CompanyPlatformLabel
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        icims_label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.icims,
+            tenant_id="careers-appliedsystems",
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+        )
+
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url="https://careers-appliedsystems.icims.com/jobs/search",
+            job_platform=self.icims,
+        )
+        self.assertEqual(label.pk, icims_label.pk)
+        self.assertEqual(label.platform.slug, "icims")
+        self.assertEqual(board_ctx.get("platform_slug"), "icims")
+
 
 class JarvisCompanyAndRawJobDedupeTests(TestCase):
     def test_company_resolution_reuses_normalized_existing_company(self):
