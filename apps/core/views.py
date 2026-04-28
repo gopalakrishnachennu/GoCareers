@@ -4,6 +4,8 @@ from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.conf import settings
 from django.core.cache import cache
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncHour
+from django.db.utils import OperationalError, ProgrammingError
 from django.urls import reverse_lazy, reverse
 from django.utils import timezone
 from datetime import timedelta
@@ -1104,52 +1106,58 @@ class MyFeaturesJsonView(LoginRequiredMixin, View):
 # One place to see: IN-PROGRESS, SCHEDULED, COMPLETED + subsystem health.
 # ─────────────────────────────────────────────────────────────────────────────
 
-OPS_TASK_LABELS = {
-    "harvest.backfill_descriptions": "JD Backfill",
-    "harvest.backfill_descriptions_chunk": "JD Backfill Chunk",
-    "harvest.fetch_raw_jobs_batch": "Harvest Batch",
-    "harvest.fetch_raw_jobs_for_company": "Company Fetch",
-    "harvest.harvest_jobs": "Harvest Jobs",
-    "harvest.sync_harvested_to_pool": "Pool Sync",
-    "harvest.detect_company_platforms": "Platform Detection",
-    "harvest.verify_all_portals": "Portal Verify",
-    "harvest.enrich_existing_jobs": "Harvest Enrichment",
-    "harvest.backfill_resume_contract": "Resume Contract Backfill",
-    "harvest.backfill_platform_labels_from_jobs": "Label Backfill",
-    "harvest.cleanup_harvested_jobs": "Harvest Cleanup",
-    "harvest.jarvis_ingest": "Jarvis Ingest",
-    "companies.tasks.validate_company_links_task": "Company Link Validator",
-    "companies.tasks.re_enrich_stale_companies_task": "Company Re-Enrichment",
-    "jobs.tasks.validate_job_urls_task": "Job Link Validator",
-    "jobs.tasks.auto_close_jobs_task": "Auto Close Jobs",
-    "submissions.tasks.send_followup_reminders": "Followup Reminders",
-    "submissions.tasks.detect_stale_submissions": "Stale Submissions Detector",
-    "core.tasks.poll_email_ingest_task": "Email Ingest",
-    "core.tasks.send_weekly_executive_report_task": "Weekly Executive Report",
+OPS_DEFAULT_TASK_META = {
+    "label": None,
+    "color": "#334155",
+    "owner": "Platform Ops",
+    "priority": "P2",
+    "sla_minutes": 60,
+}
+
+OPS_TASK_META = {
+    "harvest.backfill_descriptions": {"label": "JD Backfill", "color": "#f97316", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.backfill_descriptions_chunk": {"label": "JD Backfill Chunk", "color": "#f97316", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 60},
+    "harvest.fetch_raw_jobs_batch": {"label": "Harvest Batch", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 30},
+    "harvest.fetch_raw_jobs_for_company": {"label": "Company Fetch", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 60},
+    "harvest.harvest_jobs": {"label": "Harvest Jobs", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 30},
+    "harvest.sync_harvested_to_pool": {"label": "Pool Sync", "color": "#10b981", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 45},
+    "harvest.detect_company_platforms": {"label": "Platform Detection", "color": "#38bdf8", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 120},
+    "harvest.verify_all_portals": {"label": "Portal Verify", "color": "#8b5cf6", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.enrich_existing_jobs": {"label": "Harvest Enrichment", "color": "#22c55e", "owner": "Data Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.backfill_resume_contract": {"label": "Resume Contract Backfill", "color": "#6366f1", "owner": "Data Team", "priority": "P2", "sla_minutes": 240},
+    "harvest.backfill_platform_labels_from_jobs": {"label": "Label Backfill", "color": "#64748b", "owner": "Harvest Team", "priority": "P3", "sla_minutes": 240},
+    "harvest.cleanup_harvested_jobs": {"label": "Harvest Cleanup", "color": "#94a3b8", "owner": "Harvest Team", "priority": "P3", "sla_minutes": 300},
+    "harvest.jarvis_ingest": {"label": "Jarvis Ingest", "color": "#ec4899", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 15},
+    "companies.tasks.validate_company_links_task": {"label": "Company Link Validator", "color": "#14b8a6", "owner": "Data Team", "priority": "P2", "sla_minutes": 120},
+    "companies.tasks.re_enrich_stale_companies_task": {"label": "Company Re-Enrichment", "color": "#06b6d4", "owner": "Data Team", "priority": "P2", "sla_minutes": 240},
+    "jobs.tasks.validate_job_urls_task": {"label": "Job Link Validator", "color": "#f59e0b", "owner": "Jobs Team", "priority": "P2", "sla_minutes": 180},
+    "jobs.tasks.auto_close_jobs_task": {"label": "Auto Close Jobs", "color": "#f59e0b", "owner": "Jobs Team", "priority": "P3", "sla_minutes": 360},
+    "submissions.tasks.send_followup_reminders": {"label": "Followup Reminders", "color": "#8b5cf6", "owner": "Submissions Team", "priority": "P2", "sla_minutes": 120},
+    "submissions.tasks.detect_stale_submissions": {"label": "Stale Submissions Detector", "color": "#7c3aed", "owner": "Submissions Team", "priority": "P2", "sla_minutes": 120},
+    "core.tasks.poll_email_ingest_task": {"label": "Email Ingest", "color": "#64748b", "owner": "Platform Ops", "priority": "P1", "sla_minutes": 15},
+    "core.tasks.send_weekly_executive_report_task": {"label": "Weekly Executive Report", "color": "#334155", "owner": "Platform Ops", "priority": "P3", "sla_minutes": 1440},
 }
 
 
-def _ops_pretty_task_label(task_name: str) -> str:
+def _ops_task_meta(task_name: str) -> dict:
     if not task_name:
-        return "Unknown Task"
-    if task_name in OPS_TASK_LABELS:
-        return OPS_TASK_LABELS[task_name]
-    leaf = task_name.split(".")[-1]
-    return leaf.replace("_", " ").strip().title()
+        leaf_label = "Unknown Task"
+    else:
+        leaf = task_name.split(".")[-1]
+        leaf_label = leaf.replace("_", " ").strip().title()
+    base = dict(OPS_DEFAULT_TASK_META)
+    specific = OPS_TASK_META.get(task_name, {})
+    base.update({k: v for k, v in specific.items() if v is not None})
+    base["label"] = base.get("label") or leaf_label
+    return base
+
+
+def _ops_pretty_task_label(task_name: str) -> str:
+    return _ops_task_meta(task_name).get("label", "Unknown Task")
 
 
 def _ops_task_color(task_name: str) -> str:
-    if task_name.startswith("harvest."):
-        return "#0ea5e9"
-    if task_name.startswith("companies."):
-        return "#14b8a6"
-    if task_name.startswith("jobs."):
-        return "#f59e0b"
-    if task_name.startswith("submissions."):
-        return "#8b5cf6"
-    if task_name.startswith("core."):
-        return "#64748b"
-    return "#334155"
+    return _ops_task_meta(task_name).get("color", "#334155")
 
 
 def _ops_schedule_label(task):
@@ -1199,17 +1207,44 @@ def _build_ops_snapshot() -> dict:
     now = timezone.now()
     since_24h = now - timedelta(hours=24)
 
-    inspect = current_app.control.inspect(timeout=2)
-    active_map = inspect.active() or {}
-    reserved_map = inspect.reserved() or {}
-    eta_map = inspect.scheduled() or {}
-    stats_map = inspect.stats() or {}
+    inspect_errors = []
+    try:
+        inspect = current_app.control.inspect(timeout=2)
+    except Exception as exc:
+        inspect = None
+        inspect_errors.append(f"Failed to initialize Celery inspect: {exc}")
+
+    def _safe_inspect(callable_name):
+        if inspect is None:
+            return {}
+        try:
+            fn = getattr(inspect, callable_name, None)
+            return fn() or {}
+        except Exception as exc:
+            inspect_errors.append(f"Celery inspect.{callable_name} failed: {exc}")
+            return {}
+
+    active_map = _safe_inspect("active")
+    reserved_map = _safe_inspect("reserved")
+    eta_map = _safe_inspect("scheduled")
+    stats_map = _safe_inspect("stats")
 
     live_tasks = []
+    seen_live_keys = set()
+
+    def _append_live_task(payload):
+        task_id = payload.get("id") or ""
+        key = task_id or f"{payload.get('state','')}:{payload.get('task_name','')}:{payload.get('worker','')}"
+        if key in seen_live_keys:
+            return
+        seen_live_keys.add(key)
+        live_tasks.append(payload)
+
     for worker_name, entries in active_map.items():
         for t in entries or []:
             task_id = t.get("id", "")
             task_name = t.get("name", "")
+            meta = _ops_task_meta(task_name)
             state = "RUNNING"
             percent, message = 0, "Running..."
             try:
@@ -1217,15 +1252,20 @@ def _build_ops_snapshot() -> dict:
                 if res.state == "PROGRESS" and isinstance(res.info, dict):
                     percent = int(res.info.get("percent") or 0)
                     message = (res.info.get("message") or "Running...")[:180]
+                elif res.state == "STARTED":
+                    percent = 5
             except Exception:
                 pass
             started = t.get("time_start")
             age_seconds = int((timezone.now().timestamp() - float(started))) if started else None
-            live_tasks.append({
+            _append_live_task({
                 "id": task_id,
                 "task_name": task_name,
-                "label": _ops_pretty_task_label(task_name),
-                "color": _ops_task_color(task_name),
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
                 "state": state,
                 "worker": worker_name,
                 "percent": max(0, min(100, percent)),
@@ -1236,11 +1276,15 @@ def _build_ops_snapshot() -> dict:
     for worker_name, entries in reserved_map.items():
         for t in entries or []:
             task_name = t.get("name", "")
-            live_tasks.append({
+            meta = _ops_task_meta(task_name)
+            _append_live_task({
                 "id": t.get("id", ""),
                 "task_name": task_name,
-                "label": _ops_pretty_task_label(task_name),
-                "color": _ops_task_color(task_name),
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
                 "state": "QUEUED",
                 "worker": worker_name,
                 "percent": 0,
@@ -1254,11 +1298,15 @@ def _build_ops_snapshot() -> dict:
             req = req if isinstance(req, dict) else {}
             task_name = req.get("name", "")
             eta = item.get("eta") if isinstance(item, dict) else ""
-            live_tasks.append({
+            meta = _ops_task_meta(task_name)
+            _append_live_task({
                 "id": req.get("id", ""),
                 "task_name": task_name,
-                "label": _ops_pretty_task_label(task_name),
-                "color": _ops_task_color(task_name),
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
                 "state": "SCHEDULED_QUEUE",
                 "worker": worker_name,
                 "percent": 0,
@@ -1279,11 +1327,16 @@ def _build_ops_snapshot() -> dict:
 
     schedule_rows = []
     for pt in PeriodicTask.objects.select_related("crontab", "interval").order_by("-enabled", "name")[:120]:
+        meta = _ops_task_meta(pt.task or pt.name)
         schedule_rows.append({
             "id": pt.pk,
             "name": pt.name,
             "task": pt.task,
-            "label": _ops_pretty_task_label(pt.task or pt.name),
+            "label": meta["label"],
+            "color": meta["color"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
+            "sla_minutes": meta["sla_minutes"],
             "enabled": bool(pt.enabled),
             "one_off": bool(pt.one_off),
             "last_run_at": pt.last_run_at.isoformat() if pt.last_run_at else "",
@@ -1299,11 +1352,15 @@ def _build_ops_snapshot() -> dict:
         if tr.date_done and tr.date_created:
             runtime = int((tr.date_done - tr.date_created).total_seconds())
         task_name = tr.task_name or ""
+        meta = _ops_task_meta(task_name)
         recent_results.append({
             "id": (tr.task_id or "")[:8],
             "task_name": task_name,
-            "label": _ops_pretty_task_label(task_name),
-            "color": _ops_task_color(task_name),
+            "label": meta["label"],
+            "color": meta["color"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
+            "sla_minutes": meta["sla_minutes"],
             "status": tr.status or "UNKNOWN",
             "completed_at": tr.date_done.isoformat() if tr.date_done else "",
             "runtime_seconds": runtime,
@@ -1326,12 +1383,20 @@ def _build_ops_snapshot() -> dict:
         pending=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.PENDING)),
         failed=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.FAILED)),
     )
-    raw_stats = RawJob.objects.aggregate(
-        total=Count("id"),
-        pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
-        failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
-        missing_jd=Count("id", filter=Q(has_description=False)),
-    )
+    try:
+        raw_stats = RawJob.objects.aggregate(
+            total=Count("id"),
+            pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
+            failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
+            missing_jd=Count("id", filter=Q(has_description=False)),
+        )
+    except (OperationalError, ProgrammingError):
+        raw_stats = RawJob.objects.aggregate(
+            total=Count("id"),
+            pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
+            failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
+            missing_jd=Count("id", filter=Q(description__isnull=True) | Q(description="")),
+        )
     submission_stats = ApplicationSubmission.objects.filter(is_archived=False).aggregate(
         total=Count("id"),
         in_progress=Count("id", filter=Q(status=ApplicationSubmission.Status.IN_PROGRESS)),
@@ -1349,22 +1414,83 @@ def _build_ops_snapshot() -> dict:
     pipeline_logs = []
     for log in PipelineRunLog.objects.order_by("-last_run_at")[:40]:
         payload = log.last_run_result if isinstance(log.last_run_result, dict) else {}
+        meta = _ops_task_meta(log.task_name)
         pipeline_logs.append({
             "task_name": log.task_name,
-            "label": _ops_pretty_task_label(log.task_name),
+            "label": meta["label"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
             "last_run_at": log.last_run_at.isoformat() if log.last_run_at else "",
             "summary": _ops_run_summary(payload),
         })
 
+    missing_jd_threshold = int(getattr(settings, "OPS_ALERT_MISSING_JD_THRESHOLD", 2000))
+    pending_sync_threshold = int(getattr(settings, "OPS_ALERT_PENDING_SYNC_THRESHOLD", 5000))
+
     alerts = []
+    for inspect_error in inspect_errors:
+        alerts.append({"level": "error", "message": inspect_error[:220]})
     if failed_24h > 0:
         alerts.append({"level": "error", "message": f"{failed_24h} background tasks failed in the last 24 hours."})
     if harvest_failed_24h > 0:
         alerts.append({"level": "warning", "message": f"{harvest_failed_24h} Harvest company runs were partial/failed in the last 24 hours."})
-    if int(raw_stats.get("missing_jd") or 0) > 2000:
+    if int(raw_stats.get("missing_jd") or 0) > missing_jd_threshold:
         alerts.append({"level": "warning", "message": f"JD backlog is high: {raw_stats['missing_jd']} raw jobs are missing descriptions."})
-    if int(raw_stats.get("pending_sync") or 0) > 5000:
+    if int(raw_stats.get("pending_sync") or 0) > pending_sync_threshold:
         alerts.append({"level": "warning", "message": f"Pool sync backlog is high: {raw_stats['pending_sync']} pending raw jobs."})
+
+    # 24h trend timeline (hourly)
+    timeline_hours = []
+    slot0 = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+    for i in range(24):
+        timeline_hours.append(slot0 + timedelta(hours=i))
+
+    task_trend_map = {h: {"SUCCESS": 0, "FAILURE": 0, "REVOKED": 0, "TOTAL": 0} for h in timeline_hours}
+    qs_task = (
+        TaskResult.objects
+        .filter(date_done__gte=slot0)
+        .annotate(hour=TruncHour("date_done"))
+        .values("hour", "status")
+        .annotate(c=Count("id"))
+    )
+    for row in qs_task:
+        hour = row.get("hour")
+        status = row.get("status") or "UNKNOWN"
+        c = int(row.get("c") or 0)
+        if hour not in task_trend_map:
+            continue
+        task_trend_map[hour]["TOTAL"] += c
+        if status in ("SUCCESS", "FAILURE", "REVOKED"):
+            task_trend_map[hour][status] += c
+
+    harvest_trend_map = {h: {"SUCCESS": 0, "PARTIAL": 0, "FAILED": 0, "RUNNING": 0, "TOTAL": 0} for h in timeline_hours}
+    qs_harvest = (
+        CompanyFetchRun.objects
+        .filter(started_at__gte=slot0)
+        .annotate(hour=TruncHour("started_at"))
+        .values("hour", "status")
+        .annotate(c=Count("id"))
+    )
+    for row in qs_harvest:
+        hour = row.get("hour")
+        status = row.get("status") or "UNKNOWN"
+        c = int(row.get("c") or 0)
+        if hour not in harvest_trend_map:
+            continue
+        harvest_trend_map[hour]["TOTAL"] += c
+        if status in harvest_trend_map[hour]:
+            harvest_trend_map[hour][status] += c
+
+    trend = {
+        "labels": [h.strftime("%H:%M") for h in timeline_hours],
+        "task_total": [task_trend_map[h]["TOTAL"] for h in timeline_hours],
+        "task_failed": [task_trend_map[h]["FAILURE"] for h in timeline_hours],
+        "task_success": [task_trend_map[h]["SUCCESS"] for h in timeline_hours],
+        "harvest_total": [harvest_trend_map[h]["TOTAL"] for h in timeline_hours],
+        "harvest_failed": [harvest_trend_map[h]["FAILED"] for h in timeline_hours],
+        "harvest_partial": [harvest_trend_map[h]["PARTIAL"] for h in timeline_hours],
+        "harvest_success": [harvest_trend_map[h]["SUCCESS"] for h in timeline_hours],
+    }
 
     summary = {
         "running_now": len([t for t in live_tasks if t["state"] == "RUNNING"]),
@@ -1392,17 +1518,22 @@ def _build_ops_snapshot() -> dict:
         "resume_drafts": ResumeDraft.objects.count(),
         "harvest_running_batches": int(harvest_running_batches),
         "harvest_running_company_runs": int(harvest_running_company_runs),
+        "ops_alert_missing_jd_threshold": missing_jd_threshold,
+        "ops_alert_pending_sync_threshold": pending_sync_threshold,
     }
 
     payload = {
         "generated_at": now.isoformat(),
         "summary": summary,
         "alerts": alerts,
+        "inspect_ok": len(inspect_errors) == 0,
+        "inspect_errors": inspect_errors,
         "live_tasks": live_tasks[:120],
         "workers": workers[:40],
         "scheduled": schedule_rows,
         "completed": recent_results,
         "pipelines": pipeline_logs,
+        "trend": trend,
     }
     cache.set(cache_key, payload, timeout=5)
     return payload
