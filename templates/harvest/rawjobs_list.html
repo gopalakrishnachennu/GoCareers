@@ -1245,7 +1245,7 @@ function stopPolling() {
 }
 
 function pollStats() {
-  const statsUrl = `{% url "harvest-rawjobs-stats" %}?_ts=${Date.now()}`;
+  const statsUrl = `{% url "harvest-rawjobs-stats" %}?format=json&_ts=${Date.now()}`;
   fetch(statsUrl, { cache: 'no-store' })
     .then(r => r.json())
     .then(data => {

@@ -10,7 +10,7 @@ from django.db import transaction
 from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
 from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from datetime import timedelta
 
@@ -1822,7 +1822,7 @@ class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
 
 @method_decorator(never_cache, name="dispatch")
 class RawJobStatsView(SuperuserRequiredMixin, View):
-    """JSON endpoint — live stats for dashboard polling."""
+    """Raw Jobs stats page + JSON endpoint for dashboard polling."""
     def get(self, request):
         # Running batch info
         running_batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
@@ -1845,7 +1845,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
         # Force refresh while a batch or Jarvis company fetch is running.
         stats = _load_rawjobs_dashboard_stats(force_refresh=bool(running_batch or running_company_fetch))
 
-        return JsonResponse({
+        payload = {
             "total_jobs": stats["total"],
             "active_jobs": stats["active"],
             "remote_jobs": stats["remote"],
@@ -1867,7 +1867,25 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 "cache": "fresh" if (running_batch or running_company_fetch) else "short_ttl",
                 "new_today_basis": "last_24h_fetched",
             },
-        })
+        }
+
+        fmt = (request.GET.get("format") or "").strip().lower()
+        accept = (request.headers.get("Accept") or "").lower()
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        wants_json = (fmt == "json") or is_xhr or ("application/json" in accept)
+
+        if wants_json:
+            return JsonResponse(payload)
+
+        context = {
+            "active_tab": "rawjobs",
+            "stats_payload": payload,
+            "running_batch": payload.get("running_batch"),
+            "platform_stats": payload.get("platform_stats", []),
+            "insights": payload.get("insights", {}),
+            "stats_pretty_json": json.dumps(payload, indent=2),
+        }
+        return render(request, "harvest/rawjobs_stats.html", context)
 
 
 @method_decorator(never_cache, name="dispatch")

@@ -1,0 +1,105 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<div class="max-w-7xl mx-auto px-4 py-6">
+  <div class="flex items-center justify-between gap-3 mb-5">
+    <div>
+      <h1 class="text-2xl font-bold text-slate-900">Raw Jobs Stats</h1>
+      <p class="text-sm text-slate-600 mt-1">Operational snapshot for queue health, sync, and quality debt.</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="{% url 'harvest-rawjobs' %}" class="px-3 py-2 rounded-lg border border-slate-200 bg-white text-slate-700 text-sm font-medium hover:border-slate-300">Back to Raw Jobs</a>
+      <a href="{% url 'harvest-rawjobs-stats' %}?format=json" target="_blank" class="px-3 py-2 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 text-sm font-semibold">Open JSON API</a>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-5">
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Total</div><div class="text-2xl font-extrabold text-slate-900">{{ stats_payload.total_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Active</div><div class="text-2xl font-extrabold text-blue-700">{{ stats_payload.active_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Remote</div><div class="text-2xl font-extrabold text-cyan-700">{{ stats_payload.remote_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Pending</div><div class="text-2xl font-extrabold text-indigo-700">{{ stats_payload.pending_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Synced</div><div class="text-2xl font-extrabold text-emerald-700">{{ stats_payload.synced_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Failed</div><div class="text-2xl font-extrabold text-rose-700">{{ stats_payload.failed_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">Missing JD</div><div class="text-2xl font-extrabold text-orange-600">{{ stats_payload.missing_description_jobs }}</div></div>
+    <div class="rounded-xl border border-slate-200 bg-white p-3"><div class="text-[11px] uppercase font-semibold text-slate-500">New 24h</div><div class="text-2xl font-extrabold text-slate-900">{{ stats_payload.new_today }}</div></div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5">
+    <div class="lg:col-span-2 rounded-xl border border-slate-200 bg-white p-4">
+      <h2 class="text-sm font-bold text-slate-900 mb-3">Pipeline Funnel</h2>
+      {% with f=insights.funnel %}
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Fetched</div><div class="text-xl font-bold text-slate-900">{{ f.fetched|default:0 }}</div></div>
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Parsed</div><div class="text-xl font-bold text-sky-700">{{ f.parsed|default:0 }}</div></div>
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Enriched</div><div class="text-xl font-bold text-violet-700">{{ f.enriched|default:0 }}</div></div>
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Classified</div><div class="text-xl font-bold text-amber-700">{{ f.classified|default:0 }}</div></div>
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Ready</div><div class="text-xl font-bold text-emerald-700">{{ f.ready|default:0 }}</div></div>
+        <div class="rounded-lg border border-slate-200 p-3"><div class="text-slate-500 text-xs uppercase">Synced</div><div class="text-xl font-bold text-teal-700">{{ f.synced|default:0 }}</div></div>
+      </div>
+      {% endwith %}
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4">
+      <h2 class="text-sm font-bold text-slate-900 mb-3">Queue Health</h2>
+      {% with q=insights.queue %}
+      <div class="space-y-1 text-sm">
+        <div class="flex justify-between"><span class="text-slate-600">Pending total</span><strong class="text-slate-900">{{ q.pending_total|default:0 }}</strong></div>
+        <div class="flex justify-between"><span class="text-slate-600">Stale pending</span><strong class="text-amber-700">{{ q.pending_stale|default:0 }}</strong></div>
+        <div class="flex justify-between"><span class="text-slate-600">Drain/hr</span><strong class="text-slate-900">{{ q.drain_per_hour|default:0 }}</strong></div>
+        <div class="flex justify-between"><span class="text-slate-600">ETA hours</span><strong class="text-slate-900">{{ q.eta_hours|default:"-" }}</strong></div>
+      </div>
+      {% endwith %}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-5">
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200">
+        <h2 class="text-sm font-bold text-slate-900">Platform Breakdown</h2>
+      </div>
+      <div class="max-h-72 overflow-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr><th class="text-left px-4 py-2">Platform</th><th class="text-right px-4 py-2">Count</th></tr>
+          </thead>
+          <tbody>
+            {% for row in platform_stats %}
+            <tr class="border-t border-slate-100">
+              <td class="px-4 py-2 text-slate-800">{{ row.platform_slug|default:"unknown" }}</td>
+              <td class="px-4 py-2 text-right font-semibold text-slate-900">{{ row.count }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="2" class="px-4 py-3 text-slate-500">No platform stats available.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="rounded-xl border border-slate-200 bg-white overflow-hidden">
+      <div class="px-4 py-3 border-b border-slate-200">
+        <h2 class="text-sm font-bold text-slate-900">Running Batch</h2>
+      </div>
+      <div class="p-4 text-sm">
+        {% if running_batch %}
+        <div class="space-y-1">
+          <div class="flex justify-between"><span class="text-slate-600">Name</span><strong class="text-slate-900">{{ running_batch.name }}</strong></div>
+          <div class="flex justify-between"><span class="text-slate-600">Progress</span><strong class="text-blue-700">{{ running_batch.progress_pct }}%</strong></div>
+          <div class="flex justify-between"><span class="text-slate-600">Completed</span><strong class="text-slate-900">{{ running_batch.completed }}/{{ running_batch.total }}</strong></div>
+          <div class="flex justify-between"><span class="text-slate-600">Failed companies</span><strong class="text-rose-700">{{ running_batch.failed }}</strong></div>
+          <div class="flex justify-between"><span class="text-slate-600">Jobs found</span><strong class="text-slate-900">{{ running_batch.total_jobs_found }}</strong></div>
+          <div class="flex justify-between"><span class="text-slate-600">Jobs new</span><strong class="text-emerald-700">{{ running_batch.total_jobs_new }}</strong></div>
+        </div>
+        {% else %}
+        <p class="text-slate-500">No batch currently running.</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <details class="rounded-xl border border-slate-200 bg-white">
+    <summary class="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-800">Debug payload (JSON)</summary>
+    <pre class="text-xs bg-slate-950 text-slate-100 rounded-b-xl p-4 overflow-auto">{{ stats_pretty_json }}</pre>
+  </details>
+</div>
+{% endblock %}
