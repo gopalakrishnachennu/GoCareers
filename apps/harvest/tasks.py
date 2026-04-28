@@ -1599,6 +1599,7 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
     from jobs.models import Job
     from jobs.dedup import find_existing_job_by_url
     from jobs.quality import compute_quality_score
+    from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
     from django.contrib.auth import get_user_model
     from django.utils import timezone as _tz
 
@@ -1608,15 +1609,11 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
         logger.error("No superuser found for sync task.")
         return {"synced": 0}
 
-    # Quality gate: only sync RawJobs that have a real description (>50 chars).
-    # This filters out stale/empty rows from the 100K backlog and keeps the pool clean.
     pending = list(
         RawJob.objects.filter(sync_status="PENDING", is_active=True, company__isnull=False)
         .exclude(original_url="")
-        .exclude(description="")
-        .filter(description__length__gt=50)
         .order_by("-fetched_at")
-        .select_related("company", "job_platform")[:max_jobs]
+        .select_related("company", "job_platform", "platform_label", "platform_label__platform")[:max_jobs]
     )
 
     synced = skipped = failed = 0
@@ -1625,14 +1622,46 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
         update_task_progress(self, current=0, total=total_n, message="Sync RawJobs to pool…")
 
     for idx, rj in enumerate(pending, start=1):
+        gate = evaluate_raw_job_gate(rj)
+
         existing = (
             (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
             or find_existing_job_by_url(rj.original_url)
             or Job.objects.filter(original_link=rj.original_url).first()
         )
         if existing:
-            RawJob.objects.filter(pk=rj.pk).update(sync_status="SKIPPED")
+            payload = dict(rj.raw_payload or {})
+            payload["vet_gate"] = {
+                "status": "duplicate",
+                "reason_code": "DUPLICATE_EXISTING",
+                "existing_job_id": existing.pk,
+                "checked_at": _tz.now().isoformat(),
+            }
+            rj.sync_status = "SKIPPED"
+            rj.raw_payload = payload
+            rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
             skipped += 1
+            continue
+
+        if not gate.passed:
+            payload = dict(rj.raw_payload or {})
+            payload["vet_gate"] = {
+                "status": "blocked",
+                "reason_code": gate.reason_code,
+                "reasons": gate.reasons,
+                "checks": gate.checks,
+                "scores": {
+                    "data_quality": gate.data_quality_score,
+                    "trust": gate.trust_score,
+                    "candidate_fit": gate.candidate_fit_score,
+                    "vet_priority": gate.vet_priority_score,
+                },
+                "checked_at": _tz.now().isoformat(),
+            }
+            rj.sync_status = "FAILED"
+            rj.raw_payload = payload
+            rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+            failed += 1
             continue
 
         try:
@@ -1653,13 +1682,68 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
                     url_hash=rj.url_hash or "",
                     job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
                     posted_by=system_user,
+                    source_raw_job=rj,
+                    queue_entered_at=_tz.now(),
                 )
+                apply_gate_result_to_job(job, gate)
                 job.quality_score = compute_quality_score(job)
-                Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
-                RawJob.objects.filter(pk=rj.pk).update(sync_status="SYNCED")
+                job.validation_score = int(round(gate.vet_priority_score * 100))
+                job.validation_result = {
+                    "score": job.validation_score,
+                    "lane": gate.lane,
+                    "gate_status": gate.status,
+                    "reason_code": gate.reason_code,
+                    "reasons": gate.reasons,
+                    "checks": gate.checks,
+                    "multi_score": {
+                        "data_quality": gate.data_quality_score,
+                        "trust": gate.trust_score,
+                        "candidate_fit": gate.candidate_fit_score,
+                        "vet_priority": gate.vet_priority_score,
+                    },
+                }
+                job.validation_run_at = _tz.now()
+                job.gate_checked_at = _tz.now()
+                job.save(
+                    update_fields=[
+                        "hard_gate_passed", "gate_status", "vet_lane",
+                        "pipeline_reason_code", "pipeline_reason_detail",
+                        "hard_gate_failures", "hard_gate_checks",
+                        "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
+                        "quality_score", "validation_score", "validation_result", "validation_run_at",
+                        "gate_checked_at",
+                    ]
+                )
+                payload = dict(rj.raw_payload or {})
+                payload["vet_gate"] = {
+                    "status": "eligible",
+                    "lane": gate.lane,
+                    "reason_code": gate.reason_code,
+                    "checks": gate.checks,
+                    "scores": {
+                        "data_quality": gate.data_quality_score,
+                        "trust": gate.trust_score,
+                        "candidate_fit": gate.candidate_fit_score,
+                        "vet_priority": gate.vet_priority_score,
+                    },
+                    "job_id": job.pk,
+                    "checked_at": _tz.now().isoformat(),
+                }
+                rj.sync_status = "SYNCED"
+                rj.raw_payload = payload
+                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
                 synced += 1
         except Exception as e:
-            RawJob.objects.filter(pk=rj.pk).update(sync_status="FAILED")
+            payload = dict(rj.raw_payload or {})
+            payload["vet_gate"] = {
+                "status": "failed",
+                "reason_code": "POOL_SYNC_ERROR",
+                "error": str(e)[:240],
+                "checked_at": _tz.now().isoformat(),
+            }
+            rj.sync_status = "FAILED"
+            rj.raw_payload = payload
+            rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
             logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
             failed += 1
 

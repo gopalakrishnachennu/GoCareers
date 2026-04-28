@@ -113,6 +113,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
     from django.utils import timezone as _tz
     from jobs.models import Job
     from jobs.quality import compute_quality_score
+    from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
 
     existing = _find_existing_live_job_for_rawjob(raw_job)
     if existing:
@@ -122,13 +123,12 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             _invalidate_rawjobs_dashboard_cache()
         return existing, False
 
-    desc = (raw_job.description or "").strip()
-    if not desc or len(desc) <= 50:
-        raise ValueError("Cannot approve: job description is too short or missing.")
-    if not raw_job.company_id:
-        raise ValueError("Cannot approve: no company mapped to this import.")
-    if not raw_job.original_url:
-        raise ValueError("Cannot approve: original job URL is missing.")
+    gate = evaluate_raw_job_gate(raw_job)
+    if not gate.passed:
+        raise ValueError(
+            f"Cannot promote to vet queue: blocked by gate ({gate.reason_code}). "
+            f"Reasons: {', '.join(gate.reasons[:3])}"
+        )
 
     platform_slug = raw_job.platform_slug or (raw_job.job_platform.slug if raw_job.job_platform else "")
     with transaction.atomic():
@@ -147,11 +147,56 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             url_hash=raw_job.url_hash or "",
             job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
             posted_by=posted_by,
+            source_raw_job=raw_job,
+            queue_entered_at=_tz.now(),
         )
+        apply_gate_result_to_job(job, gate)
         job.quality_score = compute_quality_score(job)
-        Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
+        job.validation_score = int(round(gate.vet_priority_score * 100))
+        job.validation_result = {
+            "score": job.validation_score,
+            "lane": gate.lane,
+            "gate_status": gate.status,
+            "reason_code": gate.reason_code,
+            "reasons": gate.reasons,
+            "checks": gate.checks,
+            "multi_score": {
+                "data_quality": gate.data_quality_score,
+                "trust": gate.trust_score,
+                "candidate_fit": gate.candidate_fit_score,
+                "vet_priority": gate.vet_priority_score,
+            },
+        }
+        job.validation_run_at = _tz.now()
+        job.gate_checked_at = _tz.now()
+        job.save(
+            update_fields=[
+                "hard_gate_passed", "gate_status", "vet_lane",
+                "pipeline_reason_code", "pipeline_reason_detail",
+                "hard_gate_failures", "hard_gate_checks",
+                "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
+                "quality_score", "validation_score", "validation_result",
+                "validation_run_at", "gate_checked_at",
+            ]
+        )
+        payload = dict(raw_job.raw_payload or {})
+        payload["vet_gate"] = {
+            "status": "eligible",
+            "lane": gate.lane,
+            "reason_code": gate.reason_code,
+            "checks": gate.checks,
+            "scores": {
+                "data_quality": gate.data_quality_score,
+                "trust": gate.trust_score,
+                "candidate_fit": gate.candidate_fit_score,
+                "vet_priority": gate.vet_priority_score,
+            },
+            "job_id": job.pk,
+            "checked_at": _tz.now().isoformat(),
+        }
         raw_job.sync_status = "SYNCED"
-        raw_job.save(update_fields=["sync_status", "updated_at"])
+        raw_job.raw_payload = payload
+        raw_job.save(update_fields=["sync_status", "raw_payload", "updated_at"])
     _invalidate_rawjobs_dashboard_cache()
     return job, True
 

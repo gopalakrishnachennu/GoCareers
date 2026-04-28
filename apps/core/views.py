@@ -1386,6 +1386,16 @@ def _build_ops_snapshot() -> dict:
         pool=Count("id", filter=Q(status=Job.Status.POOL)),
         closed=Count("id", filter=Q(status=Job.Status.CLOSED)),
     )
+    pool_jobs = Job.objects.filter(is_archived=False, status=Job.Status.POOL)
+    gate_stats = pool_jobs.aggregate(
+        eligible=Count("id", filter=Q(gate_status=Job.GateStatus.ELIGIBLE)),
+        review=Count("id", filter=Q(gate_status=Job.GateStatus.REVIEW)),
+        blocked=Count("id", filter=Q(gate_status=Job.GateStatus.BLOCKED)),
+        lane_auto=Count("id", filter=Q(vet_lane=Job.VetLane.AUTO)),
+        lane_human=Count("id", filter=Q(vet_lane=Job.VetLane.HUMAN)),
+        lane_blocked=Count("id", filter=Q(vet_lane=Job.VetLane.BLOCKED)),
+        age_gt_24h=Count("id", filter=Q(queue_entered_at__lt=since_24h)),
+    )
     company_stats = Company.objects.aggregate(
         total=Count("id"),
         pending=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.PENDING)),
@@ -1512,6 +1522,13 @@ def _build_ops_snapshot() -> dict:
         "jobs_total": int(job_stats.get("total") or 0),
         "jobs_open": int(job_stats.get("open") or 0),
         "jobs_pool": int(job_stats.get("pool") or 0),
+        "jobs_pool_eligible": int(gate_stats.get("eligible") or 0),
+        "jobs_pool_review": int(gate_stats.get("review") or 0),
+        "jobs_pool_blocked": int(gate_stats.get("blocked") or 0),
+        "jobs_lane_auto": int(gate_stats.get("lane_auto") or 0),
+        "jobs_lane_human": int(gate_stats.get("lane_human") or 0),
+        "jobs_lane_blocked": int(gate_stats.get("lane_blocked") or 0),
+        "jobs_pool_age_gt_24h": int(gate_stats.get("age_gt_24h") or 0),
         "companies_total": int(company_stats.get("total") or 0),
         "companies_pending_enrichment": int(company_stats.get("pending") or 0),
         "companies_failed_enrichment": int(company_stats.get("failed") or 0),

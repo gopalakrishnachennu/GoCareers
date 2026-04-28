@@ -117,6 +117,7 @@ def run_job_validation(job_id: int):
     Called async when a job enters POOL status.
     """
     from .services import validate_job_quality, ensure_parsed_jd
+    from .gating import apply_gate_result_to_job, evaluate_job_gate
 
     try:
         job = Job.objects.get(pk=job_id)
@@ -131,12 +132,26 @@ def run_job_validation(job_id: int):
     job.validation_score = result["score"]
     job.validation_result = result
     job.validation_run_at = timezone.now()
-    job.save(update_fields=["validation_score", "validation_result", "validation_run_at"])
+    gate = evaluate_job_gate(job)
+    apply_gate_result_to_job(job, gate)
+    job.gate_checked_at = timezone.now()
+    job.save(
+        update_fields=[
+            "validation_score", "validation_result", "validation_run_at",
+            "hard_gate_passed", "gate_status", "vet_lane",
+            "pipeline_reason_code", "pipeline_reason_detail",
+            "hard_gate_failures", "hard_gate_checks",
+            "data_quality_score", "trust_score", "candidate_fit_score",
+            "vet_priority_score", "gate_checked_at",
+        ]
+    )
 
     # Auto-approve if threshold met
-    if result.get("auto_approved") and job.status == Job.Status.POOL:
+    if result.get("auto_approved") and job.status == Job.Status.POOL and gate.passed:
         job.status = Job.Status.OPEN
-        job.save(update_fields=["status"])
+        job.stage = Job.Stage.LIVE
+        job.vet_approved_at = timezone.now()
+        job.save(update_fields=["status", "stage", "vet_approved_at", "updated_at"])
         try:
             from .notify import notify_new_open_job_to_consultants, notify_job_pool_status
             notify_new_open_job_to_consultants(job)
@@ -320,4 +335,3 @@ def auto_close_jobs_task():
     except Exception:
         pass
     return result
-
