@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, asdict
 
 from django.conf import settings
+from django.core.cache import cache
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9'/+.#-]*")
@@ -31,6 +32,35 @@ def _normalized_text(value: str) -> str:
     return re.sub(r"[^a-z0-9 ]+", "", txt)
 
 
+def _runtime_thresholds() -> tuple[int, int, float]:
+    default_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
+    default_chars = max(1, int(getattr(settings, "RESUME_JD_MIN_CHARS", 400)))
+    default_conf = float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
+    default_conf = max(0.0, min(1.0, default_conf))
+
+    cache_key = "harvest:resume_jd_gate:thresholds:v1"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    try:
+        from .models import HarvestEngineConfig
+
+        cfg = HarvestEngineConfig.get()
+        min_words = max(1, int(getattr(cfg, "resume_jd_min_words", default_words)))
+        min_chars = max(1, int(getattr(cfg, "resume_jd_min_chars", default_chars)))
+        min_conf = float(
+            getattr(cfg, "resume_jd_min_classification_confidence", default_conf)
+        )
+        min_conf = max(0.0, min(1.0, min_conf))
+        values = (min_words, min_chars, min_conf)
+    except Exception:
+        values = (default_words, default_chars, default_conf)
+
+    cache.set(cache_key, values, timeout=30)
+    return values
+
+
 @dataclass
 class ResumeJDGate:
     usable: bool
@@ -46,9 +76,7 @@ class ResumeJDGate:
 
 
 def evaluate_raw_job_resume_gate(raw_job) -> ResumeJDGate:
-    min_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
-    min_chars = max(1, int(getattr(settings, "RESUME_JD_MIN_CHARS", 400)))
-    min_class_conf = float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
+    min_words, min_chars, min_class_conf = _runtime_thresholds()
 
     deferred = set(getattr(raw_job, "get_deferred_fields", lambda: set())() or set())
     desc_clean = "" if "description_clean" in deferred else (getattr(raw_job, "description_clean", "") or "")

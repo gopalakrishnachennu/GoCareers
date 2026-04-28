@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 from django.db.models import Q
 
-from harvest.jd_gate import evaluate_raw_job_resume_gate
+from harvest.jd_gate import REASON_LOW_CLASSIFICATION, evaluate_raw_job_resume_gate
 
 from .models import Job
 
@@ -58,7 +58,12 @@ def _is_title_meaningful(title: str) -> bool:
 
 
 def _has_clean_jd(raw_job) -> bool:
-    return bool(evaluate_raw_job_resume_gate(raw_job).usable)
+    gate = evaluate_raw_job_resume_gate(raw_job)
+    if gate.usable:
+        return True
+    # Vet Queue gate is intentionally looser than Resume gate:
+    # if JD text is substantive but classifier confidence is low, allow HUMAN lane review.
+    return gate.reason_code == REASON_LOW_CLASSIFICATION
 
 
 def _platform_tenant_match(raw_job) -> bool:

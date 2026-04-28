@@ -767,20 +767,24 @@ class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
 
         qs = RawJob.objects.select_related("company", "job_platform").filter(pk__in=ids)
         synced = skipped = failed = 0
+        skipped_reasons: list[str] = []
         for raw_job in qs:
             try:
                 _sync_rawjob_to_pool(raw_job, posted_by=request.user)
                 synced += 1
-            except ValueError:
+            except ValueError as exc:
                 skipped += 1
+                reason = str(exc).strip()
+                if reason and len(skipped_reasons) < 3:
+                    skipped_reasons.append(reason)
             except Exception:
                 failed += 1
                 logger.exception("Sync selected raw job failed: raw_job_id=%s", raw_job.pk)
 
-        messages.success(
-            request,
-            f"Selected sync complete — {synced} synced, {skipped} skipped, {failed} failed.",
-        )
+        msg = f"Selected sync complete — {synced} synced, {skipped} skipped, {failed} failed."
+        if skipped_reasons:
+            msg += " Sample blocked reasons: " + " | ".join(skipped_reasons)
+        messages.success(request, msg)
         return redirect("harvest-rawjobs")
 
 
@@ -2789,6 +2793,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "worker_concurrency", "task_rate_limit",
             "api_stagger_ms", "scraper_stagger_ms",
             "min_hours_since_fetch", "task_soft_time_limit_secs",
+            "resume_jd_min_words", "resume_jd_min_chars",
         ]
         errors = []
         for field in int_fields:
@@ -2798,6 +2803,19 @@ class EngineConfigView(SuperuserRequiredMixin, View):
                     setattr(cfg, field, int(val))
                 except (ValueError, TypeError):
                     errors.append(f"{field}: must be a whole number")
+
+        # Float fields
+        float_fields = ["resume_jd_min_classification_confidence"]
+        for field in float_fields:
+            val = request.POST.get(field, "").strip()
+            if val:
+                try:
+                    fval = float(val)
+                    if field == "resume_jd_min_classification_confidence" and not (0.0 <= fval <= 1.0):
+                        raise ValueError
+                    setattr(cfg, field, fval)
+                except (ValueError, TypeError):
+                    errors.append(f"{field}: must be a number (0 to 1)")
 
         # Boolean (checkbox) fields — unchecked checkboxes send no value, so
         # we must explicitly set False when the key is absent from POST.
@@ -2813,6 +2831,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             messages.success(
                 request,
                 "Engine config saved. Rate limit applied to running workers immediately. "
+                "Resume JD gate thresholds apply immediately. "
                 "Pipeline funnel toggles and stagger changes apply on the next batch run.",
             )
 

@@ -847,6 +847,31 @@ class HarvestEngineConfig(models.Model):
         ),
     )
 
+    # ── Resume-JD gate thresholds (live, no restart) ─────────────────────────
+    resume_jd_min_words = models.PositiveSmallIntegerField(
+        default=80,
+        verbose_name="Resume JD minimum words",
+        help_text=(
+            "Minimum cleaned JD word count required before a raw job is considered "
+            "resume-usable."
+        ),
+    )
+    resume_jd_min_chars = models.PositiveSmallIntegerField(
+        default=400,
+        verbose_name="Resume JD minimum characters",
+        help_text=(
+            "Minimum cleaned JD character length required before a raw job is considered "
+            "resume-usable."
+        ),
+    )
+    resume_jd_min_classification_confidence = models.FloatField(
+        default=0.35,
+        verbose_name="Resume JD minimum classification confidence",
+        help_text=(
+            "Minimum classification confidence (0-1) required for resume-ready gating."
+        ),
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
