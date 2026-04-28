@@ -1328,6 +1328,7 @@ def _build_ops_snapshot() -> dict:
     schedule_rows = []
     for pt in PeriodicTask.objects.select_related("crontab", "interval").order_by("-enabled", "name")[:120]:
         meta = _ops_task_meta(pt.task or pt.name)
+        crontab_obj = getattr(pt, "crontab", None)
         schedule_rows.append({
             "id": pt.pk,
             "name": pt.name,
@@ -1342,6 +1343,13 @@ def _build_ops_snapshot() -> dict:
             "last_run_at": pt.last_run_at.isoformat() if pt.last_run_at else "",
             "next_run_at": getattr(pt, "next_run_at", None).isoformat() if getattr(pt, "next_run_at", None) else "",
             "total_run_count": int(pt.total_run_count or 0),
+            "uses_crontab": bool(crontab_obj),
+            "minute": getattr(crontab_obj, "minute", "0"),
+            "hour": getattr(crontab_obj, "hour", "*"),
+            "day_of_week": getattr(crontab_obj, "day_of_week", "*"),
+            "day_of_month": getattr(crontab_obj, "day_of_month", "*"),
+            "month_of_year": getattr(crontab_obj, "month_of_year", "*"),
+            "interval_label": str(pt.interval) if getattr(pt, "interval", None) else "",
             "schedule": _ops_schedule_label(pt),
         })
 
@@ -1609,6 +1617,27 @@ def _get_schedule_label(task):
     return "—"
 
 
+def _ops_next_url(request, fallback_name="ops-center"):
+    """Safe post-action redirect target."""
+    candidate = (
+        request.POST.get("next")
+        or request.GET.get("next")
+        or request.META.get("HTTP_REFERER")
+        or ""
+    ).strip()
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return reverse(fallback_name)
+
+
+def _is_ajax_request(request):
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
+
+
 class TaskSchedulerView(AdminRequiredMixin, TemplateView):
     template_name = "settings/task_scheduler.html"
 
@@ -1667,8 +1696,11 @@ class TaskToggleView(AdminRequiredMixin, View):
         task.enabled = not task.enabled
         task.save(update_fields=["enabled"])
         status = "enabled" if task.enabled else "paused"
-        messages.success(request, f"\u2705 Task '{task.name}' is now {status}.")
-        return redirect("task-scheduler")
+        msg = f"Task '{task.name}' is now {status}."
+        if _is_ajax_request(request):
+            return JsonResponse({"ok": True, "message": msg, "enabled": bool(task.enabled), "task_id": task.pk})
+        messages.success(request, f"\u2705 {msg}")
+        return redirect(_ops_next_url(request))
 
 
 class TaskEditScheduleView(AdminRequiredMixin, View):
@@ -1694,8 +1726,11 @@ class TaskEditScheduleView(AdminRequiredMixin, View):
         task.crontab = crontab
         task.interval = None
         task.save(update_fields=["crontab", "interval"])
-        messages.success(request, f"\u2705 Schedule updated for '{task.name}'.")
-        return redirect("task-scheduler")
+        msg = f"Schedule updated for '{task.name}'."
+        if _is_ajax_request(request):
+            return JsonResponse({"ok": True, "message": msg, "task_id": task.pk})
+        messages.success(request, f"\u2705 {msg}")
+        return redirect(_ops_next_url(request))
 
 
 class TaskRunNowView(AdminRequiredMixin, View):
@@ -1725,8 +1760,11 @@ class TaskRunNowView(AdminRequiredMixin, View):
 
         mapping = self.TASK_MAP.get(task.task)
         if not mapping:
-            messages.error(request, f"⚠️ No run-now mapping for task: {task.task}")
-            return redirect("task-scheduler")
+            msg = f"No run-now mapping for task: {task.task}"
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": False, "message": msg}, status=400)
+            messages.error(request, f"⚠️ {msg}")
+            return redirect(_ops_next_url(request))
 
         module_path, func_name = mapping
         try:
@@ -1734,12 +1772,19 @@ class TaskRunNowView(AdminRequiredMixin, View):
             celery_task = getattr(module, func_name)
             kwargs_dict = json.loads(task.kwargs) if task.kwargs and task.kwargs != "{}" else {}
             result = celery_task.delay(**kwargs_dict)
-            messages.success(request, f"\U0001f680 Task '{task.name}' triggered! ID: {result.id[:8]}...")
+            msg = f"Task '{task.name}' triggered. ID: {result.id[:8]}..."
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": True, "message": msg, "task_id": task.pk, "run_id": result.id})
+            messages.success(request, f"\U0001f680 {msg}")
             from urllib.parse import urlencode
-
+            target = _ops_next_url(request)
             q = urlencode({"tp": result.id, "tpl": (task.name or "Scheduled task")[:120]})
-            return redirect(f"{reverse('task-scheduler')}?{q}")
+            separator = "&" if "?" in target else "?"
+            return redirect(f"{target}{separator}{q}")
         except Exception as e:
-            messages.error(request, f"❌ Failed to trigger task: {e}")
+            msg = f"Failed to trigger task: {e}"
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": False, "message": msg}, status=500)
+            messages.error(request, f"❌ {msg}")
 
-        return redirect("task-scheduler")
+        return redirect(_ops_next_url(request))

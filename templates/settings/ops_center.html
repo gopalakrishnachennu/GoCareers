@@ -3,6 +3,16 @@
 
 {% block content %}
 <div class="mx-auto max-w-7xl px-4 py-8">
+  {% if messages %}
+    <div class="mb-4 space-y-2">
+      {% for message in messages %}
+        <div class="rounded-lg border px-4 py-2 text-sm {% if message.tags == 'error' %}border-rose-200 bg-rose-50 text-rose-800{% else %}border-emerald-200 bg-emerald-50 text-emerald-800{% endif %}">
+          {{ message }}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <div class="relative overflow-hidden rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-900 via-blue-900 to-slate-800 p-6 text-white shadow-sm">
     <div class="absolute -right-10 -top-10 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl"></div>
     <div class="absolute -left-10 -bottom-10 h-36 w-36 rounded-full bg-indigo-300/20 blur-2xl"></div>
@@ -54,7 +64,7 @@
       <span class="text-xs text-slate-500">Single-click operational controls</span>
     </div>
     <div class="grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-      <a href="{% url 'task-scheduler' %}" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">Task Scheduler</a>
+      <a href="{% url 'ops-center' %}" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">Task Controls</a>
       <a href="{% url 'harvest-rawjobs' %}" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">Raw Jobs</a>
       <a href="{% url 'harvest-jarvis' %}" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">Jarvis</a>
       <a href="{% url 'harvest-monitor' %}" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-center text-xs font-semibold text-slate-700 hover:bg-slate-100">Batch Monitor</a>
@@ -224,7 +234,10 @@
 <script>
 (function(){
   const API = '{% url "ops-center-api" %}';
-  const SCHEDULER_URL = '{% url "task-scheduler" %}';
+  const TOGGLE_PATTERN = '{% url "task-toggle" 0 %}';
+  const RUN_PATTERN = '{% url "task-run-now" 0 %}';
+  const EDIT_PATTERN = '{% url "task-edit-schedule" 0 %}';
+  const NEXT_URL = '{% url "ops-center" %}';
 
   const stateStyle = {
     RUNNING: 'background:#ecfdf5;color:#047857;border-color:#a7f3d0;',
@@ -296,6 +309,87 @@
     }
     el.classList.remove('hidden');
     el.textContent = message;
+  }
+
+  function setFlash(level, message){
+    if (!message) return;
+    const cls = level === 'error'
+      ? 'mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800'
+      : 'mt-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800';
+    const box = document.getElementById('transportError');
+    box.className = cls;
+    box.textContent = message;
+    box.classList.remove('hidden');
+  }
+
+  function getCsrfToken(){
+    const cookie = document.cookie.split(';').map(v => v.trim()).find(v => v.startsWith('csrftoken='));
+    return cookie ? decodeURIComponent(cookie.split('=')[1]) : '';
+  }
+
+  function endpointFor(pattern, id){
+    return pattern.replace('/0/', `/${id}/`);
+  }
+
+  async function postTaskAction(url, payload){
+    const body = new URLSearchParams(payload || {});
+    body.set('next', NEXT_URL);
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'X-Requested-With': 'XMLHttpRequest',
+        'X-CSRFToken': getCsrfToken(),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: body.toString(),
+      credentials: 'same-origin',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.ok === false) {
+      throw new Error(data.message || `Action failed (HTTP ${res.status})`);
+    }
+    return data;
+  }
+
+  window.toggleScheduledTask = async function(taskId){
+    try {
+      const data = await postTaskAction(endpointFor(TOGGLE_PATTERN, taskId), {});
+      setFlash('success', data.message || 'Task toggled.');
+      refresh();
+    } catch (err) {
+      setFlash('error', err.message || 'Failed to toggle task.');
+    }
+  }
+
+  window.runScheduledTaskNow = async function(taskId){
+    try {
+      const data = await postTaskAction(endpointFor(RUN_PATTERN, taskId), {});
+      setFlash('success', data.message || 'Task triggered.');
+      refresh();
+    } catch (err) {
+      setFlash('error', err.message || 'Failed to run task.');
+    }
+  }
+
+  window.saveScheduledCron = async function(taskId){
+    const minute = document.getElementById(`cron-minute-${taskId}`)?.value || '0';
+    const hour = document.getElementById(`cron-hour-${taskId}`)?.value || '*';
+    const dow = document.getElementById(`cron-dow-${taskId}`)?.value || '*';
+    const dom = document.getElementById(`cron-dom-${taskId}`)?.value || '*';
+    const moy = document.getElementById(`cron-moy-${taskId}`)?.value || '*';
+    try {
+      const data = await postTaskAction(endpointFor(EDIT_PATTERN, taskId), {
+        minute: minute.trim(),
+        hour: hour.trim(),
+        day_of_week: dow.trim(),
+        day_of_month: dom.trim(),
+        month_of_year: moy.trim(),
+      });
+      setFlash('success', data.message || 'Schedule updated.');
+      refresh();
+    } catch (err) {
+      setFlash('error', err.message || 'Failed to update schedule.');
+    }
   }
 
   function renderSummary(summary){
@@ -385,7 +479,24 @@
         <td class="px-4 py-3 text-slate-700">${esc(fmtDate(r.last_run_at) || '—')}</td>
         <td class="px-4 py-3">${r.enabled ? '<span class="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">Enabled</span>' : '<span class="rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">Paused</span>'}</td>
         <td class="px-4 py-3">
-          <a href="${SCHEDULER_URL}" class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100">Manage</a>
+          <div class="flex flex-wrap gap-1">
+            <button type="button" class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100" onclick="toggleScheduledTask(${r.id})">${r.enabled ? 'Pause' : 'Enable'}</button>
+            <button type="button" class="rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100" onclick="runScheduledTaskNow(${r.id})">Run</button>
+            <details class="relative">
+              <summary class="cursor-pointer rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-100">Edit</summary>
+              <div class="absolute right-0 z-20 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-3 shadow-xl">
+                <div class="grid grid-cols-5 gap-1 text-[11px]">
+                  <div><label class="text-slate-500">Min</label><input id="cron-minute-${r.id}" value="${esc(r.minute || '0')}" class="mt-0.5 w-full rounded border border-slate-300 px-1 py-1 font-mono text-xs"></div>
+                  <div><label class="text-slate-500">Hour</label><input id="cron-hour-${r.id}" value="${esc(r.hour || '*')}" class="mt-0.5 w-full rounded border border-slate-300 px-1 py-1 font-mono text-xs"></div>
+                  <div><label class="text-slate-500">DoW</label><input id="cron-dow-${r.id}" value="${esc(r.day_of_week || '*')}" class="mt-0.5 w-full rounded border border-slate-300 px-1 py-1 font-mono text-xs"></div>
+                  <div><label class="text-slate-500">DoM</label><input id="cron-dom-${r.id}" value="${esc(r.day_of_month || '*')}" class="mt-0.5 w-full rounded border border-slate-300 px-1 py-1 font-mono text-xs"></div>
+                  <div><label class="text-slate-500">MoY</label><input id="cron-moy-${r.id}" value="${esc(r.month_of_year || '*')}" class="mt-0.5 w-full rounded border border-slate-300 px-1 py-1 font-mono text-xs"></div>
+                </div>
+                <p class="mt-2 text-[11px] text-slate-500">Use * or */5 format.${r.uses_crontab ? '' : ' This task will be converted from interval to cron.'}</p>
+                <button type="button" class="mt-2 w-full rounded bg-slate-800 px-2 py-1 text-xs font-semibold text-white hover:bg-slate-900" onclick="saveScheduledCron(${r.id})">Save</button>
+              </div>
+            </details>
+          </div>
         </td>
       </tr>`).join('');
   }
@@ -498,7 +609,11 @@
       document.getElementById('lastUpdated').textContent = fmtDate(data.generated_at);
 
       setTransportError('');
+      const degraded = data.inspect_ok === false;
       setLiveStatus(true, data.inspect_ok === false ? 'Live (Degraded)' : 'Live');
+      if (degraded && Array.isArray(data.inspect_errors) && data.inspect_errors.length) {
+        setFlash('error', data.inspect_errors[0]);
+      }
     } catch (err) {
       console.warn('Ops center refresh failed', err);
       setLiveStatus(false, 'Offline');

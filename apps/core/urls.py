@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 from .views import (
     home,
     GlobalSearchView,
@@ -71,7 +72,7 @@ urlpatterns = [
     path('ops-center/api/', SystemOpsCenterApiView.as_view(), name='ops-center-api'),
 
     # Task Scheduler
-    path('task-scheduler/', TaskSchedulerView.as_view(), name='task-scheduler'),
+    path('task-scheduler/', RedirectView.as_view(pattern_name='ops-center', permanent=False), name='task-scheduler'),
     path('task-scheduler/<int:pk>/toggle/', TaskToggleView.as_view(), name='task-toggle'),
     path('task-scheduler/<int:pk>/edit/', TaskEditScheduleView.as_view(), name='task-edit-schedule'),
     path('task-scheduler/<int:pk>/run/', TaskRunNowView.as_view(), name='task-run-now'),
