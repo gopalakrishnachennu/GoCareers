@@ -12,7 +12,7 @@ jobs:
     env:
       DJANGO_SETTINGS_MODULE: config.settings
       SECRET_KEY: ci-not-for-production-use-only-testing
-      DATABASE_URL: sqlite://:memory:
+      DATABASE_URL: "sqlite://:memory:"
       CELERY_TASK_ALWAYS_EAGER: "1"
     steps:
       - uses: actions/checkout@v4
