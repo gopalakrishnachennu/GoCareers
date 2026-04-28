@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
 from django.db.models.functions import Coalesce, Length, Trim
@@ -1883,7 +1884,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
             "running_batch": payload.get("running_batch"),
             "platform_stats": payload.get("platform_stats", []),
             "insights": payload.get("insights", {}),
-            "stats_pretty_json": json.dumps(payload, indent=2),
+            "stats_pretty_json": json.dumps(payload, indent=2, cls=DjangoJSONEncoder),
         }
         return render(request, "harvest/rawjobs_stats.html", context)
 
