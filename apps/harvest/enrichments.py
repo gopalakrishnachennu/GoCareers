@@ -11,17 +11,68 @@ Usage:
 """
 from __future__ import annotations
 
+import html as _html
 import re
 from typing import Optional
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HTML_SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_BROKEN_UNICODE_RE = re.compile(r"[\u0000-\u0008\u000b-\u001f\u007f]")
+
+
 def _strip_html(text: str) -> str:
-    """Remove HTML tags and decode common entities."""
-    text = re.sub(r"<[^>]+>", " ", text)
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
-    text = text.replace("&nbsp;", " ").replace("&#39;", "'").replace("&quot;", '"')
-    return text
+    """Remove heavy HTML noise while preserving section breaks and bullets."""
+    src = str(text or "")
+    src = _HTML_SCRIPT_STYLE_RE.sub(" ", src)
+    src = _HTML_COMMENT_RE.sub(" ", src)
+    src = re.sub(r"</(p|div|li|h[1-6]|tr|br|section|article|ul|ol)>", "\n", src, flags=re.I)
+    src = re.sub(r"<li[^>]*>", "\n• ", src, flags=re.I)
+    src = _HTML_TAG_RE.sub(" ", src)
+    src = _html.unescape(src)
+    src = _BROKEN_UNICODE_RE.sub(" ", src)
+    return src
+
+
+def normalize_job_title(title: str) -> str:
+    """Normalize noisy titles into a stable canonical title string."""
+    txt = clean_job_text(title or "", max_len=255)
+    if not txt:
+        return ""
+    txt = re.sub(r"\s*[|/\\-]\s*(remote|hybrid|onsite|on-site)\b", "", txt, flags=re.I)
+    txt = re.sub(r"\b(req(uisition)?\s*#?\s*\d+|job\s*id[:\s#-]*\w+)\b", "", txt, flags=re.I)
+    txt = re.sub(r"\s+", " ", txt).strip(" -|,/")
+    return txt[:255]
+
+
+def clean_job_content(text: str, *, max_len: int | None = None) -> dict:
+    """
+    Return cleaned text + metadata used for JD quality and audit columns.
+    """
+    raw = str(text or "")
+    has_html = bool(re.search(r"<[^>]+>", raw))
+    stripped = _strip_html(raw)
+    cleaned = re.sub(r"[ \t]+", " ", stripped)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = cleaned.strip()
+    if max_len and max_len > 0:
+        cleaned = cleaned[:max_len]
+    raw_len = len(raw.strip())
+    clean_len = len(cleaned)
+    jd_quality = 0.0
+    if clean_len > 0:
+        length_signal = min(clean_len / 1200.0, 1.0) * 0.6
+        structure_signal = (0.25 if "\n" in cleaned else 0.0) + (0.15 if has_html else 0.05)
+        jd_quality = round(min(1.0, length_signal + structure_signal), 3)
+    return {
+        "clean_text": cleaned,
+        "raw_html": raw if has_html else "",
+        "has_html_content": has_html,
+        "cleaning_version": "v2",
+        "jd_quality_score": jd_quality,
+    }
 
 
 def clean_job_text(text: str, *, max_len: int | None = None) -> str:
@@ -31,10 +82,7 @@ def clean_job_text(text: str, *, max_len: int | None = None) -> str:
     - collapse whitespace/newlines
     - optionally clamp length
     """
-    cleaned = re.sub(r"\s+", " ", _strip_html(text or "")).strip()
-    if max_len and max_len > 0:
-        return cleaned[:max_len]
-    return cleaned
+    return clean_job_content(text, max_len=max_len)["clean_text"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -245,6 +293,14 @@ _CLEARANCE_RE = re.compile(
     re.IGNORECASE,
 )
 
+_CLEARANCE_LEVEL_PATTERNS: list[tuple[str, str]] = [
+    ("TS/SCI", r"\b(ts\/sci|top\s*secret\s*/\s*sci|top\s*secret\s*sci)\b"),
+    ("Top Secret", r"\btop\s*secret\b"),
+    ("Secret", r"\bsecret\s*clearance\b"),
+    ("Public Trust", r"\bpublic\s*trust\b"),
+    ("Confidential", r"\bconfidential\s*clearance\b"),
+]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 9. TRAVEL
@@ -270,6 +326,14 @@ _SHIFT_PATTERNS: list[tuple[str, str]] = [
     ("Rotational", r"\b(rotating|rotation|rotational)\b"),
     ("On-call", r"\b(on[\s-]*call|pager\s*duty|after[\s-]*hours)\b"),
     ("Flexible", r"\b(flexible\s*schedule|flexible\s*hours|flex\s*time)\b"),
+]
+
+_SCHEDULE_TYPE_PATTERNS: list[tuple[str, str]] = [
+    ("full_time", r"\bfull[\s-]*time\b"),
+    ("part_time", r"\bpart[\s-]*time\b"),
+    ("contract", r"\b(contract|contractor|1099)\b"),
+    ("internship", r"\b(intern|internship)\b"),
+    ("shift", r"\b(day\s*shift|night\s*shift|swing\s*shift|rotating)\b"),
 ]
 
 
@@ -368,6 +432,16 @@ _CERT_PATTERNS: dict[str, str] = {
     "Docker Certified":    r"\bdocker\s*(certified|dca)\b",
 }
 
+_LICENSE_PATTERNS: dict[str, str] = {
+    "Driver's License": r"\b(driver'?s?\s*license|valid\s*license)\b",
+    "RN License": r"\b(rn|registered\s*nurse)\s*license\b",
+    "PE License": r"\b(professional\s*engineer|pe\s*license)\b",
+    "Medical License": r"\b(medical\s*license|board\s*certified)\b",
+    "Bar License": r"\b(bar\s*admission|licensed\s*attorney)\b",
+    "Teaching Credential": r"\b(teaching\s*credential|teaching\s*license)\b",
+    "CPA License": r"\b(cpa\s*license|licensed\s*cpa)\b",
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 11. JOB CATEGORY
@@ -456,6 +530,53 @@ def _quality_score(job: dict) -> float:
     return round(min(score, 1.0), 2)
 
 
+def _confidence_from_value(value) -> float:
+    if value in (None, "", [], {}, False):
+        return 0.0
+    if isinstance(value, bool):
+        return 0.75 if value else 0.4
+    if isinstance(value, (int, float)):
+        return 0.8
+    if isinstance(value, list):
+        return min(1.0, 0.45 + (0.12 * min(len(value), 4)))
+    text = str(value).strip()
+    if not text:
+        return 0.0
+    if len(text) < 4:
+        return 0.5
+    if len(text) < 15:
+        return 0.7
+    return 0.9
+
+
+def _resume_ready_score(data: dict) -> float:
+    checks: list[tuple[str, float]] = [
+        ("description", 0.20),
+        ("title", 0.12),
+        ("country", 0.06),
+        ("state", 0.04),
+        ("salary_raw", 0.08),
+        ("employment_type", 0.07),
+        ("experience_level", 0.07),
+        ("years_required", 0.05),
+        ("education_required", 0.05),
+        ("skills", 0.08),
+        ("certifications", 0.04),
+        ("languages_required", 0.03),
+        ("clearance_level", 0.03),
+        ("travel_required", 0.03),
+        ("benefits_list", 0.03),
+        ("job_category", 0.04),
+        ("department_normalized", 0.03),
+        ("company_name", 0.03),
+    ]
+    score = 0.0
+    for field, weight in checks:
+        if _confidence_from_value(data.get(field)) > 0:
+            score += weight
+    return round(min(score, 1.0), 3)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # MAIN FUNCTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -470,8 +591,11 @@ def extract_enrichments(job: dict) -> dict:
 
     Returns a dict with ~20 enrichment fields ready to .update() onto a RawJob.
     """
-    title = clean_job_text(job.get("title") or "", max_len=512)
-    description = clean_job_text(job.get("description") or "", max_len=50000)
+    raw_title = job.get("title") or ""
+    title = clean_job_text(raw_title, max_len=512)
+    normalized_title = normalize_job_title(raw_title or title)
+    content_meta = clean_job_content(job.get("description") or "", max_len=50000)
+    description = content_meta["clean_text"]
     requirements = clean_job_text(job.get("requirements") or "", max_len=20000)
     benefits = clean_job_text(job.get("benefits") or "", max_len=10000)
 
@@ -564,14 +688,23 @@ def extract_enrichments(job: dict) -> dict:
 
     # ── 11. Travel ────────────────────────────────────────────────────────────
     travel = ""
+    travel_pct_min: Optional[int] = None
+    travel_pct_max: Optional[int] = None
     m = _TRAVEL_RE.search(full_c)
     if m:
         if m.group(1):
             travel = f"up to {m.group(1)}%"
+            travel_pct_max = int(m.group(1))
         elif m.group(2):
             travel = f"up to {m.group(2)}%"
+            travel_pct_max = int(m.group(2))
         elif m.group(3):
             travel = m.group(3).lower()
+    m_range = re.search(r"\b(\d{1,2})\s*[-–to]+\s*(\d{1,2})\s*%\s*travel\b", full_c)
+    if m_range:
+        travel_pct_min = int(m_range.group(1))
+        travel_pct_max = int(m_range.group(2))
+        travel = f"{travel_pct_min}-{travel_pct_max}%"
 
     # ── 11.5 Shift schedule ──────────────────────────────────────────────────
     shift_schedule = ""
@@ -579,12 +712,33 @@ def extract_enrichments(job: dict) -> dict:
         if re.search(pattern, full_c):
             shift_schedule = label
             break
+    schedule_type = ""
+    for label, pattern in _SCHEDULE_TYPE_PATTERNS:
+        if re.search(pattern, full_c):
+            schedule_type = label
+            break
+    weekend_required: Optional[bool] = None
+    if re.search(r"\b(weekend|weekends|required\s*on\s*weekends?)\b", full_c):
+        weekend_required = True
+    elif re.search(r"\b(no\s*weekends?|weekdays?\s*only)\b", full_c):
+        weekend_required = False
+    hours_hint = ""
+    m_hours = re.search(r"\b(\d{1,2}\s*(am|pm)\s*[-–to]+\s*\d{1,2}\s*(am|pm)|\d{1,2}\s*hour\s*shifts?)\b", full_c)
+    if m_hours:
+        hours_hint = m_hours.group(1)[:64]
+    shift_details = ", ".join(
+        part for part in [shift_schedule, "weekend" if weekend_required else "", hours_hint] if part
+    )[:255]
 
     # ── 12. Certifications ────────────────────────────────────────────────────
     certs: list[str] = []
     for name, pattern in _CERT_PATTERNS.items():
         if re.search(pattern, full_c):
             certs.append(name)
+    licenses: list[str] = []
+    for name, pattern in _LICENSE_PATTERNS.items():
+        if re.search(pattern, full_c):
+            licenses.append(name)
 
     # ── 13. Benefits list ─────────────────────────────────────────────────────
     benefits_found: list[str] = []
@@ -637,12 +791,73 @@ def extract_enrichments(job: dict) -> dict:
 
     # ── 17. Quality score ─────────────────────────────────────────────────────
     quality = _quality_score(job)
+    clearance_level = ""
+    for level, pattern in _CLEARANCE_LEVEL_PATTERNS:
+        if re.search(pattern, full_raw):
+            clearance_level = level
+            break
+    if not clearance_level and clearance:
+        clearance_level = "General clearance required"
+
+    field_values_for_conf = {
+        "job_category": category,
+        "education_required": education,
+        "years_required": years_min,
+        "years_required_max": years_max,
+        "employment_type": job.get("employment_type") or "",
+        "experience_level": job.get("experience_level") or "",
+        "clearance_level": clearance_level,
+        "clearance_required": clearance,
+        "travel_required": travel,
+        "travel_pct_min": travel_pct_min,
+        "travel_pct_max": travel_pct_max,
+        "schedule_type": schedule_type,
+        "shift_schedule": shift_schedule,
+        "weekend_required": weekend_required,
+        "licenses_required": licenses,
+        "certifications": certs,
+        "languages_required": langs,
+        "encouraged_to_apply": encouraged,
+        "job_keywords": title_keywords,
+        "normalized_title": normalized_title,
+    }
+    field_confidence = {k: round(_confidence_from_value(v), 3) for k, v in field_values_for_conf.items()}
+    field_provenance = {k: "rule_regex_v2" for k in field_values_for_conf}
+    non_zero = [v for v in field_confidence.values() if v > 0]
+    classification_confidence = round(sum(non_zero) / len(non_zero), 3) if non_zero else 0.0
+    classification_provenance = {
+        "engine": "rule_regex_v2",
+        "signals_count": len(non_zero),
+        "text_basis": "title+description+requirements+benefits",
+    }
+    resume_score = _resume_ready_score({
+        "description": description,
+        "title": normalized_title or title,
+        "country": job.get("country") or "",
+        "state": job.get("state") or "",
+        "salary_raw": job.get("salary_raw") or "",
+        "employment_type": job.get("employment_type") or "",
+        "experience_level": job.get("experience_level") or "",
+        "years_required": years_min,
+        "education_required": education,
+        "skills": all_skills,
+        "certifications": certs,
+        "languages_required": langs,
+        "clearance_level": clearance_level,
+        "travel_required": travel,
+        "benefits_list": benefits_found,
+        "job_category": category,
+        "department_normalized": department_normalized,
+        "company_name": job.get("company_name") or "",
+    })
 
     return {
         # Skills
         "skills":               all_skills,
         "tech_stack":           tech_stack,
         "job_category":         category,
+        "normalized_title":     normalized_title,
+        "title_keywords":       title_keywords,
         # Experience
         "years_required":       years_min,
         "years_required_max":   years_max,
@@ -651,15 +866,23 @@ def extract_enrichments(job: dict) -> dict:
         "visa_sponsorship":     visa_sponsorship,
         "work_authorization":   work_authorization,
         "clearance_required":   clearance,
+        "clearance_level":      clearance_level,
         # Compensation extras
         "salary_equity":        salary_equity,
         "signing_bonus":        signing_bonus,
         "relocation_assistance": relocation,
         # Work conditions
         "travel_required":      travel,
+        "travel_pct_min":       travel_pct_min,
+        "travel_pct_max":       travel_pct_max,
+        "schedule_type":        schedule_type,
         "shift_schedule":       shift_schedule,
+        "shift_details":        shift_details,
+        "hours_hint":           hours_hint,
+        "weekend_required":     weekend_required,
         # Structured lists
         "certifications":       certs,
+        "licenses_required":    licenses,
         "benefits_list":        benefits_found,
         "languages_required":   langs,
         "encouraged_to_apply":  encouraged,
@@ -668,4 +891,14 @@ def extract_enrichments(job: dict) -> dict:
         # Quality
         "word_count":           word_count,
         "quality_score":        quality,
+        "jd_quality_score":     content_meta["jd_quality_score"],
+        "classification_confidence": classification_confidence,
+        "classification_provenance": classification_provenance,
+        "field_confidence":     field_confidence,
+        "field_provenance":     field_provenance,
+        "resume_ready_score":   resume_score,
+        "description_clean":    description,
+        "description_raw_html": content_meta["raw_html"],
+        "has_html_content":     content_meta["has_html_content"],
+        "cleaning_version":     content_meta["cleaning_version"],
     }

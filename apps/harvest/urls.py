@@ -25,8 +25,10 @@ from .views import (
     RawJobCompanyBreakdownView,
     RawJobDetailView,
     RawJobListView,
+    RawJobResumeProfileView,
     RawJobStatsView,
     RunBackfillDescriptionsView,
+    RunBackfillResumeContractView,
     RunBackfillNowView,
     RunBulkSyncView,
     RunCleanupNowView,
@@ -69,6 +71,7 @@ urlpatterns = [
     path("raw-jobs/company-status/", CompanyFetchStatusView.as_view(), name="harvest-rawjobs-company-status"),
     path("raw-jobs/stats/", RawJobStatsView.as_view(), name="harvest-rawjobs-stats"),
     path("raw-jobs/api/companies/", RawJobCompanyBreakdownView.as_view(), name="harvest-rawjobs-company-breakdown"),
+    path("raw-jobs/<int:pk>/resume-profile/", RawJobResumeProfileView.as_view(), name="harvest-rawjob-resume-profile"),
     path("raw-jobs/<int:pk>/", RawJobDetailView.as_view(), name="harvest-rawjob-detail"),
     # Trigger actions
     path("run/detect/", RunDetectNowView.as_view(), name="harvest-run-detect"),
@@ -83,6 +86,7 @@ urlpatterns = [
     path("run/stop-batch/", StopBatchView.as_view(), name="harvest-run-stop-batch"),
     path("run/backfill-descriptions/", RunBackfillDescriptionsView.as_view(), name="harvest-run-backfill-descriptions"),
     path("run/enrich-existing/", RunEnrichExistingView.as_view(), name="harvest-run-enrich-existing"),
+    path("run/backfill-resume-contract/", RunBackfillResumeContractView.as_view(), name="harvest-run-backfill-resume-contract"),
     path("run/setup-schedule/", SetupScheduleView.as_view(), name="harvest-run-setup-schedule"),
     # API helpers
     path("api/cooldown/", FetchCooldownStatusView.as_view(), name="harvest-api-cooldown"),

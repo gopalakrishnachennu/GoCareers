@@ -418,6 +418,17 @@
               </button>
             </form>
 
+            <form method="POST" action="{% url 'harvest-run-backfill-resume-contract' %}" id="backfill-resume-contract-form" style="margin-bottom:6px;">
+              {% csrf_token %}
+              <input type="hidden" name="batch_size" value="1500">
+              <input type="hidden" name="offset" value="0">
+              <button type="submit"
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🧩</span><span>Backfill Resume Contract Fields</span>
+              </button>
+            </form>
+
             <!-- ██ BACKFILL DESCRIPTIONS BUTTON ██ -->
             <form method="POST" action="{% url 'harvest-run-backfill-descriptions' %}" id="backfill-desc-form" style="margin-bottom:6px;">
               {% csrf_token %}
@@ -510,7 +521,7 @@
     <div id="panel-jobs" style="display:none;">
 
       <!-- Active filter banner -->
-      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk or selected_department or selected_country or selected_state or selected_education_required or selected_clearance_required or selected_language or selected_shift_schedule or selected_company_industry or selected_company_size or selected_founded_from or selected_founded_to %}
+      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk or selected_department or selected_country or selected_state or selected_education_required or selected_years_min or selected_years_max or selected_salary_min_from or selected_salary_max_to or selected_clearance_required or selected_language or selected_shift_schedule or selected_company_industry or selected_company_stage or selected_company_funding or selected_company_size or selected_founded_from or selected_founded_to or selected_certification or selected_benefit %}
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
@@ -528,12 +539,27 @@
           {% if selected_country %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Country: {{ selected_country }}</span>{% endif %}
           {% if selected_state %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">State: {{ selected_state }}</span>{% endif %}
           {% if selected_education_required %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Education: {{ selected_education_required }}</span>{% endif %}
+          {% if selected_years_min or selected_years_max %}<span style="padding:2px 10px;background:#f8fafc;color:#334155;border-radius:20px;font-size:11px;font-weight:600;">Years: {{ selected_years_min|default:"…" }} → {{ selected_years_max|default:"…" }}</span>{% endif %}
+          {% if selected_salary_min_from or selected_salary_max_to %}<span style="padding:2px 10px;background:#fff7ed;color:#9a3412;border-radius:20px;font-size:11px;font-weight:600;">Salary: {{ selected_salary_min_from|default:"…" }} → {{ selected_salary_max_to|default:"…" }}</span>{% endif %}
           {% if selected_clearance_required == '1' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Clearance required</span>{% endif %}
           {% if selected_clearance_required == '0' %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">No clearance</span>{% endif %}
+          {% if selected_clearance_level %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Clearance level: {{ selected_clearance_level }}</span>{% endif %}
           {% if selected_language %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Language: {{ selected_language }}</span>{% endif %}
+          {% if selected_license %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">License: {{ selected_license }}</span>{% endif %}
+          {% if selected_certification %}<span style="padding:2px 10px;background:#fef3c7;color:#92400e;border-radius:20px;font-size:11px;font-weight:600;">Certification: {{ selected_certification }}</span>{% endif %}
+          {% if selected_benefit %}<span style="padding:2px 10px;background:#dcfce7;color:#166534;border-radius:20px;font-size:11px;font-weight:600;">Benefit: {{ selected_benefit }}</span>{% endif %}
+          {% if selected_encouraged %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Encouraged: {{ selected_encouraged }}</span>{% endif %}
           {% if selected_shift_schedule %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Shift: {{ selected_shift_schedule }}</span>{% endif %}
+          {% if selected_schedule_type %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Schedule: {{ selected_schedule_type }}</span>{% endif %}
+          {% if selected_weekend_required == '1' %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Weekend required</span>{% endif %}
+          {% if selected_weekend_required == '0' %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">No weekend</span>{% endif %}
+          {% if selected_travel_min or selected_travel_max %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Travel %: {{ selected_travel_min|default:"…" }} → {{ selected_travel_max|default:"…" }}</span>{% endif %}
           {% if selected_company_industry %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Industry: {{ selected_company_industry }}</span>{% endif %}
+          {% if selected_company_stage %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Stage: {{ selected_company_stage }}</span>{% endif %}
+          {% if selected_company_funding %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Funding: {{ selected_company_funding }}</span>{% endif %}
           {% if selected_company_size %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Size: {{ selected_company_size }}</span>{% endif %}
+          {% if selected_resume_ready_min %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Resume score ≥ {{ selected_resume_ready_min }}</span>{% endif %}
+          {% if selected_classification_min_conf %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Classify conf ≥ {{ selected_classification_min_conf }}</span>{% endif %}
           {% if selected_founded_from or selected_founded_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Founded: {{ selected_founded_from|default:"…" }} → {{ selected_founded_to|default:"…" }}</span>{% endif %}
           {% if selected_company_id %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Company ID: {{ selected_company_id }}</span>{% endif %}
           {% if selected_label_pk %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Label: {{ selected_label_pk }}</span>{% endif %}
@@ -598,19 +624,48 @@
             <option value="">Education</option>
             {% for val, label in education_required_choices %}<option value="{{ val }}" {% if selected_education_required == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Years:</span>
+          <input type="number" min="0" max="60" name="years_min" id="jf-years-min" value="{{ selected_years_min }}" placeholder="Min" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="0" max="60" name="years_max" id="jf-years-max" value="{{ selected_years_max }}" placeholder="Max" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Salary:</span>
+          <input type="number" min="0" name="salary_min_from" id="jf-salary-min-from" value="{{ selected_salary_min_from }}" placeholder="Min $" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:88px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="0" name="salary_max_to" id="jf-salary-max-to" value="{{ selected_salary_max_to }}" placeholder="Max $" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:88px;">
           <select name="clearance_required" id="jf-clearance" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">Clearance?</option>
             <option value="1" {% if selected_clearance_required == '1' %}selected{% endif %}>Required</option>
             <option value="0" {% if selected_clearance_required == '0' %}selected{% endif %}>Not required</option>
           </select>
+          <input type="text" name="clearance_level" id="jf-clearance-level" value="{{ selected_clearance_level }}" placeholder="Clearance level…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
           <input type="text" name="language" id="jf-language" value="{{ selected_language }}" placeholder="Language…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="license" id="jf-license" value="{{ selected_license }}" placeholder="License…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="certification" id="jf-certification" value="{{ selected_certification }}" placeholder="Certification…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <input type="text" name="benefit" id="jf-benefit" value="{{ selected_benefit }}" placeholder="Benefit…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="encouraged" id="jf-encouraged" value="{{ selected_encouraged }}" placeholder="Encouraged group…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="schedule_type" id="jf-schedule" value="{{ selected_schedule_type }}" placeholder="Schedule type…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <select name="weekend_required" id="jf-weekend-required" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Weekend?</option>
+            <option value="1" {% if selected_weekend_required == '1' %}selected{% endif %}>Required</option>
+            <option value="0" {% if selected_weekend_required == '0' %}selected{% endif %}>Not required</option>
+          </select>
           <input type="text" name="shift_schedule" id="jf-shift" value="{{ selected_shift_schedule }}" placeholder="Shift / schedule…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
           <input type="text" name="company_industry" id="jf-company-industry" value="{{ selected_company_industry }}" placeholder="Industry…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="company_stage" id="jf-company-stage" value="{{ selected_company_stage }}" placeholder="Company stage…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <input type="text" name="company_funding" id="jf-company-funding" value="{{ selected_company_funding }}" placeholder="Funding…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
           <input type="text" name="company_size" id="jf-company-size" value="{{ selected_company_size }}" placeholder="Company size…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Travel %:</span>
+          <input type="number" min="0" max="100" name="travel_min" id="jf-travel-min" value="{{ selected_travel_min }}" placeholder="Min" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="0" max="100" name="travel_max" id="jf-travel-max" value="{{ selected_travel_max }}" placeholder="Max" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
           <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Founded:</span>
           <input type="number" min="1800" max="2100" name="founded_from" id="jf-founded-from" value="{{ selected_founded_from }}" placeholder="From" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
           <span style="font-size:11px;color:#94a3b8;">→</span>
           <input type="number" min="1800" max="2100" name="founded_to" id="jf-founded-to" value="{{ selected_founded_to }}" placeholder="To" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Resume score ≥</span>
+          <input type="number" min="0" max="1" step="0.05" name="resume_ready_min" id="jf-resume-ready-min" value="{{ selected_resume_ready_min }}" placeholder="0.60" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:80px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Conf ≥</span>
+          <input type="number" min="0" max="1" step="0.05" name="classification_min_conf" id="jf-class-min-conf" value="{{ selected_classification_min_conf }}" placeholder="0.60" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:80px;">
           <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
           <input type="date" name="fetched_from" id="jf-fetched-from" value="{{ selected_fetched_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
           <span style="font-size:11px;color:#94a3b8;">→</span>
@@ -635,8 +690,11 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Dept</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Geo</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Education</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Clearance</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Schedule</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Keywords</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Company Profile</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Resume Score</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Salary</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Posted</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Fetched</th>
@@ -685,8 +743,18 @@
                   {% endif %}
                 </td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{{ job.education_required|default:"—" }}</td>
-                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.job_keywords|join:', ' }}">
-                  {% if job.job_keywords %}{{ job.job_keywords|slice:":4"|join:", " }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.clearance_level|default:'' }}">
+                  {% if job.clearance_level %}{{ job.clearance_level|truncatechars:18 }}{% elif job.clearance_required %}Required{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.schedule_type }} {{ job.shift_schedule }}">
+                  {% if job.schedule_type or job.shift_schedule %}
+                    {{ job.schedule_type|default:"" }}{% if job.schedule_type and job.shift_schedule %} · {% endif %}{{ job.shift_schedule|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{% if job.title_keywords %}{{ job.title_keywords|join:', ' }}{% else %}{{ job.job_keywords|join:', ' }}{% endif %}">
+                  {% if job.title_keywords %}{{ job.title_keywords|slice:":4"|join:", " }}{% elif job.job_keywords %}{{ job.job_keywords|slice:":4"|join:", " }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
                 <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.company_industry }} {{ job.company_size }}">
                   {% if job.company_industry or job.company_size %}
@@ -694,6 +762,9 @@
                   {% else %}
                     <span style="color:#94a3b8;">—</span>
                   {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
+                  {% if job.resume_ready_score %}{{ job.resume_ready_score|floatformat:2 }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
                   {% if job.salary_min %}
@@ -727,7 +798,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="17" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="20" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -1391,9 +1462,12 @@ function showToast(msg, type='success') {
       : '';
     const geo = [j.state || '', j.country || ''].filter(Boolean).join(', ');
     const edu = j.education_required || '—';
+    const clearance = j.clearance_level || (j.clearance_required ? 'Required' : '—');
+    const schedule = [j.schedule_type || '', j.shift_schedule || ''].filter(Boolean).join(' · ') || '—';
     const dept = j.department || '—';
     const keywords = (j.keywords || []).join(', ') || '—';
     const companyProfile = [j.company_industry || '', j.company_size || ''].filter(Boolean).join(' · ') || '—';
+    const resumeScore = (j.resume_ready_score != null && j.resume_ready_score !== '') ? Number(j.resume_ready_score).toFixed(2) : '—';
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid #f1f5f9;transition:background .1s;';
     tr.onmouseover = () => { tr.style.background = '#f8fafc'; };
@@ -1410,8 +1484,11 @@ function showToast(msg, type='success') {
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${dept}">${dept.substring(0,20)}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${geo || '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${edu}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="${clearance}">${clearance}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;" title="${schedule}">${schedule}</td>
       <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${keywords}">${keywords}</td>
       <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${companyProfile}">${companyProfile}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${resumeScore}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${salary}</td>
       <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.posted_date || '—'}</td>
       <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.fetched_at || '—'}</td>

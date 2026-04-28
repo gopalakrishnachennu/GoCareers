@@ -30,6 +30,7 @@ from .models import (
     JobBoardPlatform,
     RawJob,
 )
+from .resume_profile import build_resume_job_profile
 
 logger = logging.getLogger(__name__)
 
@@ -577,7 +578,11 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 "sync_status", "has_description", "is_active",
                 "department", "department_normalized", "state", "country",
                 "education_required", "languages_required", "certifications",
-                "job_keywords", "company_industry", "company_size",
+                "licenses_required", "clearance_required", "clearance_level",
+                "schedule_type", "shift_schedule", "travel_pct_min", "travel_pct_max",
+                "resume_ready_score", "classification_confidence",
+                "job_keywords", "title_keywords",
+                "company_industry", "company_size",
             )
             paginator = Paginator(qs, self.paginate_by)
             try:
@@ -611,8 +616,17 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "country": (job.country or "")[:48],
                     "education_required": job.education_required or "",
                     "languages_required": (job.languages_required or [])[:3],
+                    "licenses_required": (job.licenses_required or [])[:3],
+                    "clearance_required": bool(job.clearance_required),
+                    "clearance_level": (job.clearance_level or "")[:64],
+                    "schedule_type": (job.schedule_type or "")[:32],
+                    "shift_schedule": (job.shift_schedule or "")[:64],
+                    "travel_pct_min": job.travel_pct_min,
+                    "travel_pct_max": job.travel_pct_max,
+                    "resume_ready_score": job.resume_ready_score,
+                    "classification_confidence": job.classification_confidence,
                     "certifications": (job.certifications or [])[:3],
-                    "keywords": (job.job_keywords or [])[:4],
+                    "keywords": (job.title_keywords or job.job_keywords or [])[:4],
                     "company_industry": (job.company_industry or "")[:64],
                     "company_size": (job.company_size or "")[:32],
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
@@ -639,6 +653,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 | Q(company_name__icontains=q)
                 | Q(skills__icontains=q)
                 | Q(job_keywords__icontains=q)
+                | Q(title_keywords__icontains=q)
+                | Q(description_clean__icontains=q)
             )
 
         company_id_f = self.request.GET.get("company_id", "").strip()
@@ -684,11 +700,37 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if edu_f:
             qs = qs.filter(education_required=edu_f)
 
+        years_min_f = self.request.GET.get("years_min", "").strip()
+        if years_min_f.isdigit():
+            qs = qs.filter(years_required__gte=int(years_min_f))
+
+        years_max_f = self.request.GET.get("years_max", "").strip()
+        if years_max_f.isdigit():
+            qs = qs.filter(years_required__lte=int(years_max_f))
+
+        salary_min_from_f = self.request.GET.get("salary_min_from", "").strip()
+        try:
+            if salary_min_from_f:
+                qs = qs.filter(salary_min__gte=float(salary_min_from_f))
+        except ValueError:
+            pass
+
+        salary_max_to_f = self.request.GET.get("salary_max_to", "").strip()
+        try:
+            if salary_max_to_f:
+                qs = qs.filter(salary_max__lte=float(salary_max_to_f))
+        except ValueError:
+            pass
+
         clear_f = self.request.GET.get("clearance_required", "").strip()
         if clear_f == "1":
             qs = qs.filter(clearance_required=True)
         elif clear_f == "0":
             qs = qs.filter(clearance_required=False)
+
+        clearance_level_f = self.request.GET.get("clearance_level", "").strip()
+        if clearance_level_f:
+            qs = qs.filter(clearance_level__icontains=clearance_level_f)
 
         lang_f = self.request.GET.get("language", "").strip()
         if lang_f:
@@ -701,13 +743,84 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if shift_f:
             qs = qs.filter(shift_schedule__icontains=shift_f)
 
+        schedule_f = self.request.GET.get("schedule_type", "").strip()
+        if schedule_f:
+            qs = qs.filter(schedule_type__icontains=schedule_f)
+
+        weekend_f = self.request.GET.get("weekend_required", "").strip()
+        if weekend_f == "1":
+            qs = qs.filter(weekend_required=True)
+        elif weekend_f == "0":
+            qs = qs.filter(weekend_required=False)
+
+        travel_min_f = self.request.GET.get("travel_min", "").strip()
+        if travel_min_f.isdigit():
+            qs = qs.filter(travel_pct_max__gte=int(travel_min_f))
+
+        travel_max_f = self.request.GET.get("travel_max", "").strip()
+        if travel_max_f.isdigit():
+            qs = qs.filter(travel_pct_min__lte=int(travel_max_f))
+
+        license_f = self.request.GET.get("license", "").strip()
+        if license_f:
+            try:
+                qs = qs.filter(licenses_required__contains=[license_f])
+            except Exception:
+                qs = qs.filter(licenses_required__icontains=license_f)
+
+        encouraged_f = self.request.GET.get("encouraged", "").strip()
+        if encouraged_f:
+            try:
+                qs = qs.filter(encouraged_to_apply__contains=[encouraged_f])
+            except Exception:
+                qs = qs.filter(encouraged_to_apply__icontains=encouraged_f)
+
+        cert_f = self.request.GET.get("certification", "").strip()
+        if cert_f:
+            try:
+                qs = qs.filter(certifications__contains=[cert_f])
+            except Exception:
+                qs = qs.filter(certifications__icontains=cert_f)
+
+        benefit_f = self.request.GET.get("benefit", "").strip()
+        if benefit_f:
+            try:
+                qs = qs.filter(benefits_list__contains=[benefit_f])
+            except Exception:
+                qs = qs.filter(benefits_list__icontains=benefit_f)
+
         industry_f = self.request.GET.get("company_industry", "").strip()
         if industry_f:
             qs = qs.filter(company_industry__icontains=industry_f)
 
+        company_stage_f = self.request.GET.get("company_stage", "").strip()
+        if company_stage_f:
+            qs = qs.filter(company_stage__icontains=company_stage_f)
+
         size_f = self.request.GET.get("company_size", "").strip()
         if size_f:
-            qs = qs.filter(company_size__icontains=size_f)
+            qs = qs.filter(
+                Q(company_size__icontains=size_f)
+                | Q(company_employee_count_band__icontains=size_f)
+            )
+
+        funding_f = self.request.GET.get("company_funding", "").strip()
+        if funding_f:
+            qs = qs.filter(company_funding__icontains=funding_f)
+
+        resume_score_f = self.request.GET.get("resume_ready_min", "").strip()
+        try:
+            if resume_score_f:
+                qs = qs.filter(resume_ready_score__gte=float(resume_score_f))
+        except ValueError:
+            pass
+
+        conf_min_f = self.request.GET.get("classification_min_conf", "").strip()
+        try:
+            if conf_min_f:
+                qs = qs.filter(classification_confidence__gte=float(conf_min_f))
+        except ValueError:
+            pass
 
         founded_from = self.request.GET.get("founded_from", "").strip()
         if founded_from.isdigit():
@@ -824,11 +937,28 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_country"] = self.request.GET.get("country", "")
         ctx["selected_state"] = self.request.GET.get("state", "")
         ctx["selected_education_required"] = self.request.GET.get("education_required", "")
+        ctx["selected_years_min"] = self.request.GET.get("years_min", "")
+        ctx["selected_years_max"] = self.request.GET.get("years_max", "")
+        ctx["selected_salary_min_from"] = self.request.GET.get("salary_min_from", "")
+        ctx["selected_salary_max_to"] = self.request.GET.get("salary_max_to", "")
         ctx["selected_clearance_required"] = self.request.GET.get("clearance_required", "")
+        ctx["selected_clearance_level"] = self.request.GET.get("clearance_level", "")
         ctx["selected_language"] = self.request.GET.get("language", "")
+        ctx["selected_license"] = self.request.GET.get("license", "")
+        ctx["selected_encouraged"] = self.request.GET.get("encouraged", "")
+        ctx["selected_certification"] = self.request.GET.get("certification", "")
+        ctx["selected_benefit"] = self.request.GET.get("benefit", "")
         ctx["selected_shift_schedule"] = self.request.GET.get("shift_schedule", "")
+        ctx["selected_schedule_type"] = self.request.GET.get("schedule_type", "")
+        ctx["selected_weekend_required"] = self.request.GET.get("weekend_required", "")
+        ctx["selected_travel_min"] = self.request.GET.get("travel_min", "")
+        ctx["selected_travel_max"] = self.request.GET.get("travel_max", "")
         ctx["selected_company_industry"] = self.request.GET.get("company_industry", "")
+        ctx["selected_company_stage"] = self.request.GET.get("company_stage", "")
         ctx["selected_company_size"] = self.request.GET.get("company_size", "")
+        ctx["selected_company_funding"] = self.request.GET.get("company_funding", "")
+        ctx["selected_resume_ready_min"] = self.request.GET.get("resume_ready_min", "")
+        ctx["selected_classification_min_conf"] = self.request.GET.get("classification_min_conf", "")
         ctx["selected_founded_from"] = self.request.GET.get("founded_from", "")
         ctx["selected_founded_to"] = self.request.GET.get("founded_to", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
@@ -874,6 +1004,24 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
 
     def get_queryset(self):
         return RawJob.objects.select_related("company", "job_platform", "platform_label")
+
+
+@method_decorator(never_cache, name="dispatch")
+class RawJobResumeProfileView(SuperuserRequiredMixin, View):
+    """JSON export used by resume generation pipeline."""
+
+    def get(self, request, pk):
+        raw_job = get_object_or_404(
+            RawJob.objects.select_related("company", "job_platform", "platform_label"),
+            pk=pk,
+        )
+        return JsonResponse(
+            {
+                "ok": True,
+                "raw_job_id": raw_job.pk,
+                "profile": build_resume_job_profile(raw_job),
+            }
+        )
 
 
 class FetchBatchListView(SuperuserRequiredMixin, ListView):
@@ -1206,6 +1354,26 @@ class RunEnrichExistingView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress(
             "harvest-rawjobs", task.id,
             f"Enrich existing jobs ({label})",
+        )
+
+
+class RunBackfillResumeContractView(SuperuserRequiredMixin, View):
+    """POST — backfill expanded resume-classification contract fields."""
+
+    def post(self, request):
+        from .tasks import backfill_resume_contract_task
+
+        batch_size = int(request.POST.get("batch_size", "1500") or "1500")
+        offset = int(request.POST.get("offset", "0") or "0")
+        task = backfill_resume_contract_task.delay(batch_size=batch_size, offset=offset)
+        messages.success(
+            request,
+            f"Resume contract backfill started (batch={batch_size:,}, offset={offset:,}) — Task {task.id[:8]}…",
+        )
+        return redirect_with_task_progress(
+            "harvest-rawjobs",
+            task.id,
+            "Backfill resume contract fields",
         )
 
 

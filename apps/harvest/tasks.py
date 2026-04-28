@@ -48,6 +48,7 @@ def _company_snapshot_fields(company) -> dict:
             "company_stage": "",
             "company_funding": "",
             "company_size": "",
+            "company_employee_count_band": "",
             "company_founding_year": None,
         }
     return {
@@ -56,6 +57,10 @@ def _company_snapshot_fields(company) -> dict:
         "company_funding": (getattr(company, "funding_amount", "") or "")[:128],
         "company_size": (
             (getattr(company, "size_band", "") or "")
+            or (getattr(company, "headcount_range", "") or "")
+        )[:64],
+        "company_employee_count_band": (
+            (getattr(company, "employee_count_band", "") or "")
             or (getattr(company, "headcount_range", "") or "")
         )[:64],
         "company_founding_year": getattr(company, "founding_year", None),
@@ -370,7 +375,7 @@ def harvest_jobs_task(
     from .harvesters import get_harvester
     from .normalizer import normalize_job_data
     from .rate_limiter import throttle as _throttle
-    from .enrichments import clean_job_text, extract_enrichments
+    from .enrichments import clean_job_content, clean_job_text, extract_enrichments
 
     tb = triggered_by if triggered_by in ("SCHEDULED", "MANUAL") else "SCHEDULED"
 
@@ -425,12 +430,17 @@ def harvest_jobs_task(
                         url_hash = normalized.get("url_hash", "")
                         if not original_url or not url_hash:
                             continue
-                        description = clean_job_text(normalized.get("description_text", ""), max_len=50000)
+                        desc_meta = clean_job_content(normalized.get("description_text", ""), max_len=50000)
+                        description = desc_meta["clean_text"]
                         requirements = clean_job_text(normalized.get("requirements_text", ""), max_len=20000)
                         benefits = clean_job_text(normalized.get("benefits_text", ""), max_len=10000)
                         enriched = extract_enrichments({
                             "title": normalized.get("title", ""),
                             "description": description,
+                            "description_clean": (enriched.get("description_clean") or description)[:50000],
+                            "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                            "has_html_content": bool(desc_meta.get("has_html_content")),
+                            "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
                             "requirements": requirements,
                             "benefits": benefits,
                             "department": normalized.get("department", ""),
@@ -828,7 +838,7 @@ def fetch_raw_jobs_for_company_task(
         raw_jobs = raw_jobs[:max_jobs]
 
     total_jobs = len(raw_jobs)
-    from .enrichments import clean_job_text
+    from .enrichments import clean_job_content, clean_job_text, extract_enrichments
     for idx, job_dict in enumerate(raw_jobs, start=1):
         try:
             original_url = (job_dict.get("original_url") or "").strip()
@@ -863,9 +873,25 @@ def fetch_raw_jobs_for_company_task(
                 except Exception:
                     pass
 
-            description = clean_job_text(job_dict.get("description") or "", max_len=50000)
+            desc_meta = clean_job_content(job_dict.get("description") or "", max_len=50000)
+            description = desc_meta["clean_text"]
             requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
             benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
+            enriched = extract_enrichments({
+                "title": job_dict.get("title") or "",
+                "description": description,
+                "requirements": requirements,
+                "benefits": benefits,
+                "department": job_dict.get("department") or "",
+                "location_raw": job_dict.get("location_raw") or "",
+                "employment_type": job_dict.get("employment_type") or "",
+                "experience_level": job_dict.get("experience_level") or "",
+                "salary_raw": job_dict.get("salary_raw") or "",
+                "company_name": job_dict.get("company_name") or label.company.name,
+                "country": job_dict.get("country") or "",
+                "state": job_dict.get("state") or "",
+                "posted_date": posted_date,
+            })
 
             defaults = {
                 "company": label.company,
@@ -892,6 +918,10 @@ def fetch_raw_jobs_for_company_task(
                 "salary_period": (job_dict.get("salary_period") or "")[:16],
                 "salary_raw": (job_dict.get("salary_raw") or "")[:256],
                 "description": description,
+                "description_clean": (enriched.get("description_clean") or description)[:50000],
+                "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                "has_html_content": bool(desc_meta.get("has_html_content")),
+                "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
                 "requirements": requirements,
                 "benefits": benefits,
                 "posted_date": posted_date,
@@ -900,6 +930,7 @@ def fetch_raw_jobs_for_company_task(
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
                 **_company_snapshot_fields(label.company),
+                **enriched,
             }
 
             # ── Dedup guard (ATS external_id): same label+external_id = same job ──
@@ -1145,13 +1176,20 @@ def fetch_raw_jobs_for_company_task(
             if _pipe_cfg.auto_enrich and new_jobs:
                 ENRICH_FIELDS = [
                     "skills", "tech_stack", "job_category",
+                    "normalized_title", "title_keywords",
                     "years_required", "years_required_max", "education_required",
-                    "visa_sponsorship", "work_authorization", "clearance_required",
+                    "visa_sponsorship", "work_authorization", "clearance_required", "clearance_level",
                     "salary_equity", "signing_bonus", "relocation_assistance",
-                    "travel_required", "certifications", "benefits_list",
-                    "languages_required", "shift_schedule", "encouraged_to_apply",
+                    "travel_required", "travel_pct_min", "travel_pct_max",
+                    "schedule_type", "shift_schedule", "shift_details", "hours_hint", "weekend_required",
+                    "certifications", "licenses_required", "benefits_list",
+                    "languages_required", "encouraged_to_apply",
                     "job_keywords", "department_normalized",
-                    "word_count", "quality_score",
+                    "word_count", "quality_score", "jd_quality_score",
+                    "classification_confidence", "classification_provenance",
+                    "field_confidence", "field_provenance",
+                    "resume_ready_score", "description_clean", "description_raw_html",
+                    "has_html_content", "cleaning_version",
                 ]
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:
@@ -1705,10 +1743,11 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     posted_date = _jarvis_parse_date(data.get("posted_date_raw", ""))
     closing_date = _jarvis_parse_date(data.get("closing_date_raw", ""))
 
-    from .enrichments import clean_job_text
+    from .enrichments import clean_job_content, clean_job_text
 
     # Normalize HTML-heavy scraped content into cleaner plain text.
-    description = clean_job_text(data.get("description") or "", max_len=50000)
+    desc_meta = clean_job_content(data.get("description") or "", max_len=50000)
+    description = desc_meta["clean_text"]
     requirements = clean_job_text(data.get("requirements") or "", max_len=20000)
     benefits = clean_job_text(data.get("benefits") or "", max_len=10000)
 
@@ -1765,6 +1804,10 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "salary_period": (data.get("salary_period") or "")[:16],
         "salary_raw": (data.get("salary_raw") or "")[:256],
         "description": description,
+        "description_clean": (enriched.get("description_clean") or description)[:50000],
+        "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+        "has_html_content": bool(desc_meta.get("has_html_content")),
+        "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
         "requirements": requirements,
         "benefits": benefits,
         "posted_date": posted_date,
@@ -2922,13 +2965,20 @@ def enrich_existing_jobs_task(
 
     ENRICH_FIELDS = [
         "skills", "tech_stack", "job_category",
+        "normalized_title", "title_keywords",
         "years_required", "years_required_max", "education_required",
-        "visa_sponsorship", "work_authorization", "clearance_required",
+        "visa_sponsorship", "work_authorization", "clearance_required", "clearance_level",
         "salary_equity", "signing_bonus", "relocation_assistance",
-        "travel_required", "certifications", "benefits_list",
-        "languages_required", "shift_schedule", "encouraged_to_apply",
+        "travel_required", "travel_pct_min", "travel_pct_max",
+        "schedule_type", "shift_schedule", "shift_details", "hours_hint", "weekend_required",
+        "certifications", "licenses_required", "benefits_list",
+        "languages_required", "encouraged_to_apply",
         "job_keywords", "department_normalized",
-        "word_count", "quality_score",
+        "word_count", "quality_score", "jd_quality_score",
+        "classification_confidence", "classification_provenance",
+        "field_confidence", "field_provenance",
+        "resume_ready_score", "description_clean", "description_raw_html",
+        "has_html_content", "cleaning_version",
     ]
 
     for idx, job in enumerate(jobs, start=1):
@@ -2988,4 +3038,143 @@ def enrich_existing_jobs_task(
         "remaining":       max(0, total - (offset + len(jobs))),
     }
     logger.info("Enrich existing jobs complete: %s", result)
+    return result
+
+
+@shared_task(bind=True, name="harvest.backfill_resume_contract")
+def backfill_resume_contract_task(
+    self,
+    batch_size: int = 1500,
+    offset: int = 0,
+):
+    """
+    Backfill new resume-classification contract fields for historical rows.
+    Safe to run repeatedly and in chunks.
+    """
+    from .enrichments import clean_job_content, extract_enrichments, normalize_job_title
+    from .models import RawJob
+
+    qs = RawJob.objects.select_related("company").order_by("pk")
+    total = qs.count()
+    if total == 0:
+        return {"message": "No RawJobs found.", "updated": 0}
+
+    jobs = list(qs[offset: offset + batch_size])
+    if not jobs:
+        return {"message": "No jobs in requested chunk.", "updated": 0, "remaining": 0}
+
+    update_task_progress(
+        self,
+        current=0,
+        total=len(jobs),
+        message=f"Backfilling resume contract ({len(jobs)} jobs)…",
+    )
+
+    updated = 0
+    CHUNK = 300
+    bulk_updates: list[RawJob] = []
+    update_fields = [
+        "description_clean",
+        "description_raw_html",
+        "has_html_content",
+        "cleaning_version",
+        "normalized_title",
+        "title_keywords",
+        "schedule_type",
+        "shift_details",
+        "hours_hint",
+        "weekend_required",
+        "clearance_level",
+        "travel_pct_min",
+        "travel_pct_max",
+        "licenses_required",
+        "jd_quality_score",
+        "classification_confidence",
+        "classification_provenance",
+        "field_confidence",
+        "field_provenance",
+        "resume_ready_score",
+        "company_industry",
+        "company_stage",
+        "company_funding",
+        "company_size",
+        "company_employee_count_band",
+        "company_founding_year",
+    ]
+
+    for idx, job in enumerate(jobs, start=1):
+        desc_meta = clean_job_content(job.description or "", max_len=50000)
+        enriched = extract_enrichments(
+            {
+                "title": job.title or "",
+                "description": job.description or "",
+                "requirements": job.requirements or "",
+                "benefits": job.benefits or "",
+                "department": job.department or "",
+                "location_raw": job.location_raw or "",
+                "employment_type": job.employment_type or "",
+                "experience_level": job.experience_level or "",
+                "salary_raw": job.salary_raw or "",
+                "company_name": job.company_name or "",
+                "country": job.country or "",
+                "state": job.state or "",
+                "posted_date": str(job.posted_date) if job.posted_date else "",
+            }
+        )
+        company = job.company
+        job.description_clean = (enriched.get("description_clean") or desc_meta["clean_text"] or "")[:50000]
+        job.description_raw_html = (enriched.get("description_raw_html") or desc_meta["raw_html"] or "")[:120000]
+        job.has_html_content = bool(enriched.get("has_html_content", desc_meta["has_html_content"]))
+        job.cleaning_version = (enriched.get("cleaning_version") or "v2")[:20]
+        job.normalized_title = (enriched.get("normalized_title") or normalize_job_title(job.title or ""))[:255]
+        job.title_keywords = enriched.get("title_keywords") or job.title_keywords or []
+        job.schedule_type = (enriched.get("schedule_type") or job.schedule_type or "")[:32]
+        job.shift_details = (enriched.get("shift_details") or job.shift_details or "")[:255]
+        job.hours_hint = (enriched.get("hours_hint") or job.hours_hint or "")[:64]
+        job.weekend_required = enriched.get("weekend_required", job.weekend_required)
+        job.clearance_level = (enriched.get("clearance_level") or job.clearance_level or "")[:64]
+        job.travel_pct_min = enriched.get("travel_pct_min", job.travel_pct_min)
+        job.travel_pct_max = enriched.get("travel_pct_max", job.travel_pct_max)
+        job.licenses_required = enriched.get("licenses_required") or job.licenses_required or []
+        job.jd_quality_score = enriched.get("jd_quality_score", job.jd_quality_score)
+        job.classification_confidence = enriched.get("classification_confidence", job.classification_confidence)
+        job.classification_provenance = enriched.get("classification_provenance") or job.classification_provenance or {}
+        job.field_confidence = enriched.get("field_confidence") or job.field_confidence or {}
+        job.field_provenance = enriched.get("field_provenance") or job.field_provenance or {}
+        job.resume_ready_score = enriched.get("resume_ready_score", job.resume_ready_score)
+        job.company_industry = ((job.company_industry or "") or (company.industry if company else "") or "")[:255]
+        job.company_stage = ((job.company_stage or "") or (company.funding_stage if company else "") or "")[:64]
+        job.company_funding = ((job.company_funding or "") or (company.funding_amount if company else "") or "")[:128]
+        job.company_size = ((job.company_size or "") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64]
+        job.company_employee_count_band = ((job.company_employee_count_band or "") or (company.employee_count_band if company else "") or (company.headcount_range if company else "") or "")[:64]
+        job.company_founding_year = job.company_founding_year or (company.founding_year if company else None)
+        bulk_updates.append(job)
+        updated += 1
+
+        if len(bulk_updates) >= CHUNK:
+            RawJob.objects.bulk_update(bulk_updates, update_fields)
+            bulk_updates.clear()
+
+        if idx % 100 == 0:
+            update_task_progress(
+                self,
+                current=idx,
+                total=len(jobs),
+                message=f"Backfilled {idx}/{len(jobs)} jobs…",
+            )
+
+    if bulk_updates:
+        RawJob.objects.bulk_update(bulk_updates, update_fields)
+
+    _invalidate_rawjobs_dashboard_cache()
+    processed = len(jobs)
+    remaining = max(0, total - (offset + processed))
+    result = {
+        "updated": updated,
+        "total_processed": processed,
+        "total_eligible": total,
+        "remaining": remaining,
+        "next_offset": offset + processed,
+    }
+    logger.info("Backfill resume contract complete: %s", result)
     return result

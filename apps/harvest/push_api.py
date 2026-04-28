@@ -68,6 +68,15 @@ def _safe_float(val) -> "float | None":
         return None
 
 
+def _safe_int(val) -> "int | None":
+    if val is None or val == "":
+        return None
+    try:
+        return int(val)
+    except (TypeError, ValueError):
+        return None
+
+
 def _resolve_company(company_name: str):
     """Find or create a Company stub by name. Returns Company or None."""
     if not company_name:
@@ -256,7 +265,7 @@ class PushJobsView(View):
             return _platform_cache[slug]
 
         from harvest.models import RawJob
-        from .enrichments import clean_job_text, extract_enrichments
+        from .enrichments import clean_job_content, clean_job_text, extract_enrichments
 
         for job_data in jobs:
             try:
@@ -293,7 +302,8 @@ class PushJobsView(View):
                 platform_slug = job_data.get("platform_slug", "").strip()
                 platform = get_platform(platform_slug)
                 external_id = str(job_data.get("external_id", "")).strip()[:512]
-                description = clean_job_text(job_data.get("description", ""), max_len=50000)
+                desc_meta = clean_job_content(job_data.get("description", ""), max_len=50000)
+                description = desc_meta["clean_text"]
                 requirements = clean_job_text(job_data.get("requirements", ""), max_len=20000)
                 benefits = clean_job_text(job_data.get("benefits", ""), max_len=10000)
                 enriched = extract_enrichments({
@@ -307,6 +317,8 @@ class PushJobsView(View):
                     "experience_level": job_data.get("experience_level") or "",
                     "salary_raw": job_data.get("salary_raw") or "",
                     "company_name": job_data.get("company_name") or "",
+                    "country": job_data.get("country") or "",
+                    "state": job_data.get("state") or "",
                     "posted_date": _parse_date(job_data.get("posted_date")),
                 })
 
@@ -345,6 +357,10 @@ class PushJobsView(View):
                     salary_period=str(job_data.get("salary_period", ""))[:16],
                     salary_raw=str(job_data.get("salary_raw", ""))[:256],
                     description=description,
+                    description_clean=(job_data.get("description_clean") or enriched.get("description_clean") or description)[:50000],
+                    description_raw_html=(job_data.get("description_raw_html") or desc_meta.get("raw_html") or "")[:120000],
+                    has_html_content=bool(job_data.get("has_html_content", desc_meta.get("has_html_content", False))),
+                    cleaning_version=str(job_data.get("cleaning_version") or desc_meta.get("cleaning_version") or "v2")[:20],
                     requirements=requirements,
                     benefits=benefits,
                     posted_date=_parse_date(job_data.get("posted_date")),
@@ -355,30 +371,47 @@ class PushJobsView(View):
                     skills=job_data.get("skills") or enriched.get("skills") or [],
                     tech_stack=job_data.get("tech_stack") or enriched.get("tech_stack") or [],
                     job_category=str(job_data.get("job_category", "") or enriched.get("job_category", ""))[:64],
+                    normalized_title=str(job_data.get("normalized_title", "") or enriched.get("normalized_title", ""))[:255],
                     years_required=job_data.get("years_required", enriched.get("years_required")),
                     years_required_max=job_data.get("years_required_max", enriched.get("years_required_max")),
                     education_required=str(job_data.get("education_required", "") or enriched.get("education_required", ""))[:12],
                     visa_sponsorship=job_data.get("visa_sponsorship", enriched.get("visa_sponsorship")),
                     work_authorization=str(job_data.get("work_authorization", "") or enriched.get("work_authorization", ""))[:64],
                     clearance_required=bool(job_data.get("clearance_required", enriched.get("clearance_required", False))),
+                    clearance_level=str(job_data.get("clearance_level", "") or enriched.get("clearance_level", ""))[:64],
                     salary_equity=bool(job_data.get("salary_equity", enriched.get("salary_equity", False))),
                     signing_bonus=bool(job_data.get("signing_bonus", enriched.get("signing_bonus", False))),
                     relocation_assistance=bool(job_data.get("relocation_assistance", enriched.get("relocation_assistance", False))),
                     travel_required=str(job_data.get("travel_required", "") or enriched.get("travel_required", ""))[:64],
+                    travel_pct_min=_safe_int(job_data.get("travel_pct_min", enriched.get("travel_pct_min"))),
+                    travel_pct_max=_safe_int(job_data.get("travel_pct_max", enriched.get("travel_pct_max"))),
+                    schedule_type=str(job_data.get("schedule_type", "") or enriched.get("schedule_type", ""))[:32],
                     shift_schedule=str(job_data.get("shift_schedule", "") or enriched.get("shift_schedule", ""))[:128],
+                    shift_details=str(job_data.get("shift_details", "") or enriched.get("shift_details", ""))[:255],
+                    hours_hint=str(job_data.get("hours_hint", "") or enriched.get("hours_hint", ""))[:64],
+                    weekend_required=job_data.get("weekend_required", enriched.get("weekend_required")),
                     certifications=job_data.get("certifications") or enriched.get("certifications") or [],
+                    licenses_required=job_data.get("licenses_required") or enriched.get("licenses_required") or [],
                     benefits_list=job_data.get("benefits_list") or enriched.get("benefits_list") or [],
                     languages_required=job_data.get("languages_required") or enriched.get("languages_required") or [],
                     encouraged_to_apply=job_data.get("encouraged_to_apply") or enriched.get("encouraged_to_apply") or [],
                     job_keywords=job_data.get("job_keywords") or enriched.get("job_keywords") or [],
+                    title_keywords=job_data.get("title_keywords") or enriched.get("title_keywords") or [],
                     department_normalized=str(job_data.get("department_normalized", "") or enriched.get("department_normalized", ""))[:128],
                     word_count=int(job_data.get("word_count", enriched.get("word_count", 0)) or 0),
                     quality_score=_safe_float(job_data.get("quality_score", enriched.get("quality_score"))),
+                    jd_quality_score=_safe_float(job_data.get("jd_quality_score", enriched.get("jd_quality_score"))),
+                    classification_confidence=_safe_float(job_data.get("classification_confidence", enriched.get("classification_confidence"))),
+                    classification_provenance=job_data.get("classification_provenance") or enriched.get("classification_provenance") or {},
+                    field_confidence=job_data.get("field_confidence") or enriched.get("field_confidence") or {},
+                    field_provenance=job_data.get("field_provenance") or enriched.get("field_provenance") or {},
+                    resume_ready_score=_safe_float(job_data.get("resume_ready_score", enriched.get("resume_ready_score"))),
                     company_industry=(job_data.get("company_industry") or (company.industry if company else "") or "")[:255],
                     company_stage=(job_data.get("company_stage") or (company.funding_stage if company else "") or "")[:64],
                     company_funding=(job_data.get("company_funding") or (company.funding_amount if company else "") or "")[:128],
                     company_size=(job_data.get("company_size") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64],
-                    company_founding_year=(job_data.get("company_founding_year") or (company.founding_year if company else None)),
+                    company_employee_count_band=(job_data.get("company_employee_count_band") or (company.employee_count_band if company else "") or (company.headcount_range if company else "") or "")[:64],
+                    company_founding_year=_safe_int(job_data.get("company_founding_year")) or (company.founding_year if company else None),
                     sync_status=RawJob.SyncStatus.PENDING,
                     is_active=True,
                 )
