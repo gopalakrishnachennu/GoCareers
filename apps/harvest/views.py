@@ -284,6 +284,8 @@ def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
     base = RawJob.objects.all()
     total = base.count()
 
+    # Funnel counts are intentionally "drill-down aligned":
+    # clicking a funnel card applies the same predicate in Jobs Browser.
     parsed = base.filter(has_description=True).count()
     enriched = base.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)).count()
     classified = base.filter(classification_confidence__gte=0.01).count()
@@ -1245,15 +1247,16 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
 
         stage_f = self.request.GET.get("stage", "").strip().upper()
         if stage_f == "FETCHED":
-            qs = qs.filter(has_description=False, sync_status=RawJob.SyncStatus.PENDING)
+            # Fetched = all harvested rows (top of funnel).
+            qs = qs
         elif stage_f == "PARSED":
-            qs = qs.filter(has_description=True, quality_score__isnull=True, jd_quality_score__isnull=True, sync_status=RawJob.SyncStatus.PENDING)
+            qs = qs.filter(has_description=True)
         elif stage_f == "ENRICHED":
-            qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False), classification_confidence__isnull=True, sync_status=RawJob.SyncStatus.PENDING)
+            qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False))
         elif stage_f == "CLASSIFIED":
-            qs = qs.filter(classification_confidence__gte=0.01, classification_confidence__lt=0.55, sync_status=RawJob.SyncStatus.PENDING)
+            qs = qs.filter(classification_confidence__gte=0.01)
         elif stage_f == "READY":
-            qs = qs.filter(has_description=True, classification_confidence__gte=0.55, is_active=True, sync_status=RawJob.SyncStatus.PENDING)
+            qs = qs.filter(has_description=True, classification_confidence__gte=0.55, is_active=True)
         elif stage_f == "SYNCED":
             qs = qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
         elif stage_f == "FAILED":
