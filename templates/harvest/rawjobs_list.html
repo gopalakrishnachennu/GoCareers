@@ -426,6 +426,20 @@
               </button>
             </form>
 
+            <!-- ██ JARVIS DEEP SCAN BUTTON ██ -->
+            <form method="POST" action="{% url 'harvest-run-backfill-descriptions' %}" id="deep-scan-form" style="margin-bottom:6px;">
+              {% csrf_token %}
+              <input type="hidden" name="batch_size" value="500">
+              <input type="hidden" name="parallel_workers" value="8">
+              <input type="hidden" name="force_jarvis" value="1">
+              <input type="hidden" name="reset_locks" value="1">
+              <button type="button" onclick="confirmDeepScan()"
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🔍</span><span>Jarvis Deep Scan — Force Browser Render All</span>
+              </button>
+            </form>
+
             <div style="position:relative;margin:12px 0;">
               <div style="border-top:1px solid #e2e8f0;"></div>
               <span style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:#fff;padding:0 10px;font-size:10px;color:#94a3b8;font-weight:500;">or filter by platform</span>
@@ -1253,6 +1267,45 @@ function confirmBackfillDesc() {
         <button onclick="document.getElementById('backfill-desc-form').submit();this.closest('[style*=fixed]').remove();"
           style="padding:10px 28px;background:linear-gradient(135deg,#0d9488,#0f766e);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(13,148,136,.3);">
           📝 Yes, Start Backfill
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if (e.target === modal) modal.remove(); });
+}
+
+function confirmDeepScan() {
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+  modal.innerHTML = `
+    <div style="background:#fff;border-radius:16px;padding:32px;max-width:480px;width:90%;box-shadow:0 24px 48px rgba(0,0,0,.2);text-align:center;">
+      <div style="font-size:48px;margin-bottom:12px;">🔍</div>
+      <h2 style="font-size:18px;font-weight:800;color:#0f172a;margin:0 0 10px;">Jarvis Deep Scan?</h2>
+      <p style="font-size:13px;color:#64748b;line-height:1.6;margin:0 0 6px;">
+        Forces <strong>full browser rendering</strong> for every job with a missing description — no API shortcuts.
+      </p>
+      <p style="font-size:12px;color:#94a3b8;margin:0 0 16px;">
+        8 parallel workers × 500 batch. At ~3–5 s/job expect <strong>~1–2 hours</strong> for ~4,000 jobs. Cooldown locks are cleared first so every job gets a fresh attempt.
+      </p>
+      <p style="font-size:12px;color:#7c2d12;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:10px 12px;margin:0 0 16px;text-align:left;line-height:1.5;">
+        ⚠️ <strong>Resource-intensive:</strong> Jarvis spawns a headless browser for each job. This will put higher load on the server for the duration of the scan. Do not run multiple deep scans simultaneously.
+      </p>
+      <div style="background:#faf5ff;border:1px solid #e9d5ff;border-radius:8px;padding:10px 14px;margin-bottom:20px;text-align:left;">
+        <p style="font-size:12px;color:#4c1d95;margin:0;line-height:1.6;">
+          ✅ Skips fast-path — every job goes straight to Jarvis browser render<br>
+          ✅ Resets all 12h cooldown locks so previously-failed jobs are retried<br>
+          ✅ Best for jobs on private portals (Dayforce, SAP, Oracle, etc.)<br>
+          ✅ Runs in background — watch the <strong>No JD yet</strong> stat card drop
+        </p>
+      </div>
+      <div style="display:flex;gap:10px;justify-content:center;">
+        <button onclick="this.closest('[style*=fixed]').remove();"
+          style="padding:10px 24px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;">
+          Cancel
+        </button>
+        <button onclick="document.getElementById('deep-scan-form').submit();this.closest('[style*=fixed]').remove();"
+          style="padding:10px 28px;background:linear-gradient(135deg,#7c3aed,#5b21b6);color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-shadow:0 4px 12px rgba(124,58,237,.3);">
+          🔍 Yes, Start Deep Scan
         </button>
       </div>
     </div>`;

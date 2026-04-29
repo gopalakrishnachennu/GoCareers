@@ -1188,7 +1188,7 @@ class JobJarvis:
         API: GET .../api/geo/{slug}/jobposting/{id}
         """
         m = re.search(
-            r"jobs\.dayforcehcm\.com/(?:[a-z]{2}-[A-Z]{2}/)?([^/]+)/([^/]+)/jobs/(\d+)",
+            r"jobs\.dayforcehcm\.com/(?:[a-z]{2}-[A-Z]{2}/)?([^/]+)/([^/]+)/jobs/([^/?#]+)",
             url, re.I,
         )
         if not m:
@@ -1217,9 +1217,15 @@ class JobJarvis:
         if not isinstance(data, dict):
             return None
 
-        title = data.get("JobTitle") or data.get("title") or ""
-        desc = data.get("Description") or data.get("description") or ""
-        loc = data.get("JobLocation") or data.get("location") or ""
+        title = data.get("JobTitle") or data.get("jobTitle") or data.get("title") or ""
+        desc = (
+            data.get("JobDescription")
+            or data.get("jobDescription")
+            or data.get("Description")
+            or data.get("description")
+            or ""
+        )
+        loc = data.get("JobLocation") or data.get("jobLocation") or data.get("location") or ""
 
         return {
             "title": title,

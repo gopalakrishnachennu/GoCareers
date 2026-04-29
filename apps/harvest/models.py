@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
 
@@ -332,8 +333,24 @@ class CompanyFetchRun(models.Model):
         return None
 
 
+class RawJobManager(models.Manager):
+    def missing_jd(self, stale_minutes: int = 60):
+        """Jobs that need JD backfill: no description + no active lock."""
+        from django.utils import timezone
+        from datetime import timedelta
+        stale_before = timezone.now() - timedelta(minutes=stale_minutes)
+        return self.filter(
+            has_description=False,
+        ).exclude(original_url="").filter(
+            Q(jd_backfill_locked_at__isnull=True)
+            | Q(jd_backfill_locked_at__lt=stale_before),
+        )
+
+
 class RawJob(models.Model):
     """Comprehensive job record harvested from an external ATS platform."""
+
+    objects = RawJobManager()
 
     class LocationType(models.TextChoices):
         REMOTE = "REMOTE", "Remote"
@@ -390,7 +407,7 @@ class RawJob(models.Model):
     # ── Identity / Dedup ──────────────────────────────────────────────────────
     external_id = models.CharField(max_length=512, blank=True)
     url_hash = models.CharField(max_length=64, unique=True, db_index=True)
-    original_url = models.URLField(max_length=1024, blank=True)
+    original_url = models.URLField(max_length=1024, blank=True, db_index=True)
     apply_url = models.URLField(max_length=1024, blank=True)
 
     # ── Core fields ───────────────────────────────────────────────────────────
@@ -496,6 +513,9 @@ class RawJob(models.Model):
     # Parallel JD backfill: set while a worker holds the row (cleared when done).
     # Stale locks are reclaimed after BACKFILL_LOCK_STALE_MINUTES in tasks.
     jd_backfill_locked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    # Denormalized flag: True when description has meaningful content (len > 1 after strip).
+    # Kept in sync by save() and all backfill update paths. Indexed for fast backfill queries.
+    has_description = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ["-fetched_at"]
@@ -508,10 +528,10 @@ class RawJob(models.Model):
             models.Index(fields=["location_type"]),
             models.Index(fields=["is_active"]),
             models.Index(fields=["job_category"]),
-            models.Index(fields=["education_required"]),
             models.Index(fields=["visa_sponsorship"]),
             models.Index(fields=["clearance_required"]),
-            models.Index(fields=["quality_score"]),
+            # Compound index for backfill eligibility queries
+            models.Index(fields=["has_description", "jd_backfill_locked_at"]),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"
@@ -557,6 +577,10 @@ class RawJob(models.Model):
         if self.is_expired_listing():
             return "expired"
         return "no"
+
+    def save(self, *args, **kwargs):
+        self.has_description = self.has_meaningful_description()
+        super().save(*args, **kwargs)
 
     def __str__(self):
         return f"{self.title} @ {self.company_name}"

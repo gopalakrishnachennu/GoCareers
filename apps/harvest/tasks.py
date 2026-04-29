@@ -50,24 +50,10 @@ def _supports_select_for_update_skip_locked() -> bool:
 
 
 def _backfill_eligible_queryset(platform_slug: str | None):
-    """Rows that still need a JD and are not actively claimed (unless lock is stale).
-
-    Uses the indexed has_description column - avoids a full-table annotation scan.
-    The has_description field is kept in sync by save() and by all backfill update
-    paths, so it's safe to rely on here.
-    """
+    """Rows that still need a JD and are not actively claimed (unless lock is stale)."""
     from .models import RawJob
 
-    stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
-    q = (
-        RawJob.objects.filter(has_description=False)
-        .exclude(original_url="")
-        .exclude(original_url__isnull=True)
-        .filter(
-            Q(jd_backfill_locked_at__isnull=True)
-            | Q(jd_backfill_locked_at__lt=stale_before),
-        )
-    )
+    q = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
     return q
@@ -2320,7 +2306,7 @@ _FAST_FETCH_REGISTRY: dict = {
 }
 
 
-def _backfill_process_one_job(job, jarvis):
+def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     """
     Fetch JD for a single RawJob row that was already claim-locked.
     Clears jd_backfill_locked_at on every exit path.
@@ -2360,7 +2346,7 @@ def _backfill_process_one_job(job, jarvis):
     fast_fn = _FAST_FETCH_REGISTRY.get(platform)
     fast_desc = ""
     fast_strategy = ""
-    if fast_fn and fetch_url:
+    if fast_fn and fetch_url and not force_jarvis:
         try:
             fast_desc = fast_fn(fetch_url) or ""
             if fast_desc:
@@ -2370,12 +2356,12 @@ def _backfill_process_one_job(job, jarvis):
 
     # Cooldown lock: when a job gets no description, set a future lock so it is
     # not immediately re-queued. This prevents the infinite-retry loop where the
-    # same 23k dead/empty jobs cycle through the backfill every round.
+    # same dead/empty jobs cycle through the backfill every round.
     _COOLDOWN_HOURS = 12
 
     if fast_desc:
         data = {"description": fast_desc, "strategy": fast_strategy}
-    elif fast_fn and platform in _API_ONLY_PLATFORMS:
+    elif not force_jarvis and fast_fn and platform in _API_ONLY_PLATFORMS:
         # API-only platform: fast path returned "" → job is expired or gone.
         # Skip Jarvis — it will also fail and waste 30-60s. Apply cooldown lock.
         future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
@@ -2495,6 +2481,7 @@ def _backfill_descriptions_chunk_impl(
     progress_hook=None,
     shard_index: int = 0,
     shard_count: int = 1,
+    force_jarvis: bool = False,
 ) -> dict:
     """
     Claim up to *claim_size* rows (SKIP LOCKED on Postgres) and fetch JDs sequentially.
@@ -2535,7 +2522,7 @@ def _backfill_descriptions_chunk_impl(
         if progress_hook:
             progress_hook("job_start", job=job, entry=None, lu=updated, ls=skipped, lf=failed)
         try:
-            outcome, entry = _backfill_process_one_job(job, jarvis)
+            outcome, entry = _backfill_process_one_job(job, jarvis, force_jarvis=force_jarvis)
         except SoftTimeLimitExceeded:
             logger.warning("backfill chunk soft time limit at job %s", job.pk)
             RawJob.objects.filter(pk__in=[j.pk for j in jobs[idx:]]).update(
@@ -2580,6 +2567,7 @@ def backfill_descriptions_chunk_task(
     platform_slug: str | None,
     shard_index: int = 0,
     shard_count: int = 1,
+    force_jarvis: bool = False,
 ):
     """Celery entry point for :func:`_backfill_descriptions_chunk_impl`."""
     return _backfill_descriptions_chunk_impl(
@@ -2587,6 +2575,7 @@ def backfill_descriptions_chunk_task(
         platform_slug,
         shard_index=shard_index,
         shard_count=shard_count,
+        force_jarvis=force_jarvis,
     )
 
 
@@ -2599,6 +2588,8 @@ def backfill_descriptions_task(
     offset: int = 0,
     _chain_depth: int = 0,
     _skip_streak: int = 0,
+    force_jarvis: bool = False,
+    reset_locks: bool = False,
 ):
     """
     Fetch JDs for RawJobs with no description using parallel chunk workers.
@@ -2623,6 +2614,11 @@ def backfill_descriptions_task(
             "backfill_descriptions_task: offset=%s is ignored.",
             offset,
         )
+
+    if reset_locks:
+        from django.utils import timezone as _tz
+        cleared = RawJob.objects.filter(jd_backfill_locked_at__gt=_tz.now()).update(jd_backfill_locked_at=None)
+        logger.info("backfill reset_locks: cleared %s cooldown locks", cleared)
 
     # Duplicate-run guard: Beat fires every hour; a full backfill can run for hours.
     # If another instance is already active, skip this firing instead of stacking workers.
@@ -2723,7 +2719,7 @@ def backfill_descriptions_task(
         return d
 
     start_msg = (
-        f"Starting — {total} jobs — {parallelism} worker(s) × {claim_size} rows/chunk"
+        f"{'[DEEP SCAN] ' if force_jarvis else ''}Starting — {total} jobs — {parallelism} worker(s) × {claim_size} rows/chunk"
     )
     if workers_requested != parallelism:
         start_msg += f" (you asked for {workers_requested})"
@@ -2782,6 +2778,7 @@ def backfill_descriptions_task(
                         progress_hook=_inline_progress,
                         shard_index=0,
                         shard_count=1,
+                        force_jarvis=force_jarvis,
                     )
                 ]
             else:
@@ -2801,6 +2798,7 @@ def backfill_descriptions_task(
                             platform_slug,
                             shard_index=shard_index,
                             shard_count=shard_count,
+                            force_jarvis=force_jarvis,
                         )
                     finally:
                         close_old_connections()
