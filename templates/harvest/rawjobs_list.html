@@ -16,6 +16,14 @@
     </a>
     <a href="{% url 'harvest-rawjobs-batches' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Batch History</a>
     <a href="{% url 'harvest-rawjobs-stats' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
+    <form method="post" action="{% url 'harvest-run-validate-urls' %}">{% csrf_token %}
+      <input type="hidden" name="pending_only" value="1">
+      <input type="hidden" name="recent_hours" value="168">
+      <input type="hidden" name="max_jobs" value="8000">
+      <button type="submit" class="px-3 py-2 bg-white border border-amber-200 text-amber-700 text-sm font-semibold rounded-lg hover:border-amber-300 transition">
+        Validate Live Links
+      </button>
+    </form>
     <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
       <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm" title="Sync only jobs that pass vet eligibility checks">
         Sync Qualified to Vet Queue

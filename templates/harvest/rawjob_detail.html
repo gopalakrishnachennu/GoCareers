@@ -168,6 +168,12 @@
         <!-- Actions -->
         <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
           <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 14px;text-transform:uppercase;letter-spacing:.4px;">Actions</h3>
+          {% if rawjob.original_url %}
+          <form method="post" action="{% url 'harvest-rawjob-recheck-live' rawjob.pk %}" style="margin:0 0 8px 0;">
+            {% csrf_token %}
+            <button type="submit" style="display:block;width:100%;padding:10px;background:#fff;color:#92400e;border:1px solid #fcd34d;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-sizing:border-box;">Recheck Active Status</button>
+          </form>
+          {% endif %}
           {% if rawjob.sync_status == 'PENDING' and rawjob.is_active %}
           <form method="post" action="{% url 'harvest-run-sync-selected' %}" style="margin:0 0 8px 0;">
             {% csrf_token %}

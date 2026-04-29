@@ -115,6 +115,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
     from jobs.models import Job
     from jobs.quality import compute_quality_score
     from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
+    from .url_health import check_job_posting_live
 
     existing = _find_existing_live_job_for_rawjob(raw_job)
     if existing:
@@ -123,6 +124,29 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             raw_job.save(update_fields=["sync_status", "updated_at"])
             _invalidate_rawjobs_dashboard_cache()
         return existing, False
+
+    # Last-mile link-health check before any promotion.
+    if (raw_job.original_url or "").strip():
+        live = check_job_posting_live(
+            raw_job.original_url,
+            platform_slug=(raw_job.platform_slug or ""),
+        )
+        if not live.is_live:
+            payload = dict(raw_job.raw_payload or {})
+            payload["link_health"] = {
+                "is_live": False,
+                "reason": live.reason,
+                "status_code": live.status_code,
+                "checked_at": _tz.now().isoformat(),
+                "final_url": live.final_url,
+            }
+            raw_job.is_active = False
+            raw_job.raw_payload = payload
+            raw_job.save(update_fields=["is_active", "raw_payload", "updated_at"])
+            _invalidate_rawjobs_dashboard_cache()
+            raise ValueError(
+                f"Cannot promote to vet queue: posting appears inactive ({live.reason})."
+            )
 
     gate = evaluate_raw_job_gate(raw_job)
     if not gate.passed:
@@ -746,6 +770,42 @@ class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress("harvest-rawjobs", task.id, "Retry failed fetches")
 
 
+class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
+    """POST — run robust link-health validation on active raw jobs."""
+
+    def post(self, request):
+        from .tasks import validate_raw_job_urls_task
+
+        platform = (request.POST.get("platform_slug") or "").strip() or None
+        recent_hours = request.POST.get("recent_hours", "").strip()
+        pending_only = (request.POST.get("pending_only", "1").strip() != "0")
+        max_jobs = request.POST.get("max_jobs", "").strip()
+
+        kwargs = {
+            "batch_size": 250,
+            "concurrency": 24,
+            "pending_only": pending_only,
+        }
+        if platform:
+            kwargs["platform_slug"] = platform
+        if recent_hours.isdigit():
+            kwargs["recent_hours"] = int(recent_hours)
+        else:
+            kwargs["recent_hours"] = 168
+        if max_jobs.isdigit():
+            kwargs["max_jobs"] = int(max_jobs)
+        else:
+            kwargs["max_jobs"] = 8000
+
+        task = validate_raw_job_urls_task.delay(**kwargs)
+        messages.success(
+            request,
+            f"Link-health validation queued (Task: {task.id[:8]}…). "
+            "Soft-404 pages will be marked inactive before vet sync.",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Validate Raw Job URLs")
+
+
 class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
     """POST — sync selected RawJob ids into pool."""
 
@@ -1341,6 +1401,45 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
         ctx = super().get_context_data(**kwargs)
         ctx["resume_jd_gate"] = evaluate_raw_job_resume_gate(self.object)
         return ctx
+
+
+class RawJobCheckLiveStatusView(SuperuserRequiredMixin, View):
+    """POST — recheck a single raw-job posting URL and update is_active immediately."""
+
+    def post(self, request, pk):
+        from .url_health import check_job_posting_live
+
+        raw_job = get_object_or_404(RawJob, pk=pk)
+        url = (raw_job.original_url or "").strip()
+        if not url:
+            messages.error(request, "No source URL available for this row.")
+            return redirect("harvest-rawjob-detail", pk=pk)
+
+        result = check_job_posting_live(url, platform_slug=(raw_job.platform_slug or ""))
+        payload = dict(raw_job.raw_payload or {})
+        payload["link_health"] = {
+            "is_live": bool(result.is_live),
+            "reason": result.reason,
+            "status_code": int(result.status_code or 0),
+            "checked_at": timezone.now().isoformat(),
+            "final_url": result.final_url,
+        }
+        raw_job.is_active = bool(result.is_live)
+        raw_job.raw_payload = payload
+        raw_job.save(update_fields=["is_active", "raw_payload", "updated_at"])
+        _invalidate_rawjobs_dashboard_cache()
+
+        if result.is_live:
+            messages.success(
+                request,
+                f"Link health check: ACTIVE ({result.reason}, HTTP {result.status_code}).",
+            )
+        else:
+            messages.warning(
+                request,
+                f"Link health check: INACTIVE ({result.reason}, HTTP {result.status_code}).",
+            )
+        return redirect("harvest-rawjob-detail", pk=pk)
 
 
 @method_decorator(never_cache, name="dispatch")

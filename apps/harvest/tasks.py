@@ -1249,12 +1249,25 @@ def fetch_raw_jobs_for_company_task(
         try:
             from .models import HarvestEngineConfig as _EngCfg3
             _sync_cfg = _EngCfg3.get()
+            # First run link-health validation to flip soft-404 rows inactive
+            # before promotion into Vet Queue.
+            validate_raw_job_urls_task.apply_async(
+                kwargs={
+                    "batch_size": 250,
+                    "concurrency": 24,
+                    "max_jobs": 6000,
+                    "pending_only": True,
+                    "recent_hours": 96,
+                },
+                countdown=15,
+            )
+            logger.info("Auto URL validation queued before sync (batch #%s)", batch.pk)
             if _sync_cfg.auto_sync_to_pool:
                 sync_harvested_to_pool_task.apply_async(
                     kwargs={"max_jobs": 5000},
-                    countdown=60,  # 60 s after last task — inline enrich is already done
+                    countdown=90,  # wait for URL validation pass first
                 )
-                logger.info("Auto-sync queued 60 s after batch #%s completion", batch.pk)
+                logger.info("Auto-sync queued 90 s after batch #%s completion", batch.pk)
         except Exception as exc:
             logger.warning("Auto-sync queue failed: %s", exc)
 
@@ -1480,6 +1493,8 @@ def validate_raw_job_urls_task(
     batch_size: int = 200,
     concurrency: int = 20,
     max_jobs: int | None = None,
+    pending_only: bool = False,
+    recent_hours: int | None = None,
 ):
     """
     HEAD-check raw job URLs and mark is_active=False for ones that return 4xx/5xx.
@@ -1496,36 +1511,30 @@ def validate_raw_job_urls_task(
     concurrency   — parallel HTTP threads
     max_jobs      — cap total checked (for quick spot-checks)
     """
-    import requests
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from .models import RawJob
+    from .url_health import check_job_posting_live
 
     qs = RawJob.objects.filter(is_active=True).exclude(original_url="")
     if platform_slug:
         qs = qs.filter(platform_slug=platform_slug)
+    if pending_only:
+        qs = qs.filter(sync_status=RawJob.SyncStatus.PENDING)
+    if recent_hours and recent_hours > 0:
+        qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=int(recent_hours)))
     if max_jobs:
         qs = qs[:max_jobs]
 
     total = qs.count()
     update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (compatible; GoCareers-UrlValidator/1.0; +https://chennu.co)"
-        )
-    }
-
     checked = alive = dead = errors = 0
 
     def check_url(job_id: int, url: str) -> tuple[int, bool]:
         """Returns (job_id, is_alive)."""
         try:
-            r = requests.head(url, timeout=10, allow_redirects=True, headers=headers)
-            if r.status_code == 405:
-                # HEAD blocked — try GET streaming (just headers)
-                r = requests.get(url, timeout=12, stream=True, allow_redirects=True, headers=headers)
-                r.close()
-            return job_id, r.status_code < 400
+            result = check_job_posting_live(url, platform_slug=platform_slug or "")
+            return job_id, bool(result.is_live)
         except Exception:
             return job_id, False  # treat network errors as dead
 
