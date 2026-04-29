@@ -524,7 +524,7 @@ class RunMonitorView(SuperuserRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         from .models import RawJob
-        from django_celery_results.models import TaskResult
+        from celery import current_app
 
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "monitor"
@@ -532,17 +532,54 @@ class RunMonitorView(SuperuserRequiredMixin, ListView):
         ctx["total_harvested"] = RawJob.objects.filter(is_active=True).count()
         ctx["pending_sync"] = RawJob.objects.filter(sync_status="PENDING").count()
         ctx["synced_count"] = RawJob.objects.filter(sync_status="SYNCED").count()
-        task_names = [
+        # Total run history from DB fetch runs (stable even when result backend is Redis).
+        recent_cutoff = timezone.now() - timedelta(days=7)
+        ctx["total_runs"] = CompanyFetchRun.objects.filter(started_at__gte=recent_cutoff).count()
+
+        # Live running/queued state from Celery inspect (source of truth for "running now").
+        running_names = {
             "harvest.harvest_jobs",
             "harvest.detect_company_platforms",
             "harvest.sync_harvested_to_pool",
             "harvest.validate_raw_job_urls",
             "harvest.cleanup_harvested_jobs",
-        ]
-        recent_cutoff = timezone.now() - timedelta(days=7)
-        q = TaskResult.objects.filter(task_name__in=task_names, date_created__gte=recent_cutoff)
-        ctx["total_runs"] = q.count()
-        ctx["running_runs"] = q.filter(status__in=["PENDING", "STARTED", "RETRY", "PROGRESS"]).count()
+            "harvest.fetch_raw_jobs_for_company",
+            "harvest.backfill_descriptions",
+            "harvest.backfill_descriptions_chunk",
+            "harvest.backfill_resume_contract",
+        }
+        running_now = 0
+        try:
+            inspect = current_app.control.inspect(timeout=2)
+            active_map = inspect.active() or {}
+            reserved_map = inspect.reserved() or {}
+            scheduled_map = inspect.scheduled() or {}
+
+            def _count_matching(entries, key_name: str = "name") -> int:
+                c = 0
+                for e in entries or []:
+                    task_name = (e.get(key_name) or "").strip()
+                    if task_name in running_names:
+                        c += 1
+                return c
+
+            for entries in active_map.values():
+                running_now += _count_matching(entries, "name")
+            for entries in reserved_map.values():
+                running_now += _count_matching(entries, "name")
+            # scheduled entries wrap the request payload under "request"
+            for entries in scheduled_map.values():
+                c = 0
+                for e in entries or []:
+                    req = e.get("request") or {}
+                    task_name = (req.get("name") or "").strip()
+                    if task_name in running_names:
+                        c += 1
+                running_now += c
+        except Exception:
+            running_now = 0
+
+        ctx["running_runs"] = running_now
         return ctx
 
 
