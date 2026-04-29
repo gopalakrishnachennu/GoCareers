@@ -1497,7 +1497,8 @@ def validate_raw_job_urls_task(
     recent_hours: int | None = None,
 ):
     """
-    HEAD-check raw job URLs and mark is_active=False for ones that return 4xx/5xx.
+    Validate raw job URLs with multi-signal liveness detection and mark inactive
+    only on *definitive* closed signals.
 
     Runs after every FETCH ALL batch (or on a schedule) to surface broken links
     before a human ever sees them. Results are visible in the Jobs Browser
@@ -1513,7 +1514,7 @@ def validate_raw_job_urls_task(
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from .models import RawJob
-    from .url_health import check_job_posting_live
+    from .url_health import check_job_posting_live, is_definitive_inactive
 
     qs = RawJob.objects.filter(is_active=True).exclude(original_url="")
     if platform_slug:
@@ -1528,19 +1529,20 @@ def validate_raw_job_urls_task(
     total = qs.count()
     update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
 
-    checked = alive = dead = errors = 0
+    checked = alive = dead = inconclusive = errors = 0
+    reason_counts: dict[str, int] = {}
 
-    def check_url(job_id: int, url: str) -> tuple[int, bool]:
-        """Returns (job_id, is_alive)."""
+    def check_url(job_id: int, url: str, slug: str) -> tuple[int, object]:
+        """Returns (job_id, LinkHealthResult)."""
         try:
-            result = check_job_posting_live(url, platform_slug=platform_slug or "")
-            return job_id, bool(result.is_live)
+            result = check_job_posting_live(url, platform_slug=slug or "")
+            return job_id, result
         except Exception:
-            return job_id, False  # treat network errors as dead
+            return job_id, check_job_posting_live("", platform_slug=slug or "")  # missing_url (non-fatal)
 
     offset = 0
     while True:
-        chunk = list(qs.values("id", "original_url")[offset: offset + batch_size])
+        chunk = list(qs.values("id", "original_url", "platform_slug")[offset: offset + batch_size])
         if not chunk:
             break
         if max_jobs and offset >= max_jobs:
@@ -1548,34 +1550,58 @@ def validate_raw_job_urls_task(
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = {
-                pool.submit(check_url, row["id"], row["original_url"]): row["id"]
+                pool.submit(check_url, row["id"], row["original_url"], row.get("platform_slug") or platform_slug or ""): row["id"]
                 for row in chunk
             }
             dead_ids = []
+            inactive_reasons: dict[int, str] = {}
             for future in as_completed(futures):
-                job_id, is_alive = future.result()
+                job_id, result = future.result()
                 checked += 1
-                if is_alive:
+                reason = (getattr(result, "reason", "") or "unknown").strip()[:120]
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if bool(result.is_live):
                     alive += 1
                 else:
-                    dead += 1
-                    dead_ids.append(job_id)
+                    if is_definitive_inactive(result):
+                        dead += 1
+                        dead_ids.append(job_id)
+                        inactive_reasons[job_id] = reason
+                    else:
+                        inconclusive += 1
 
-            # Mark dead jobs inactive in one batch update
+            # Mark definitively closed jobs inactive in one batch update.
             if dead_ids:
                 RawJob.objects.filter(pk__in=dead_ids).update(is_active=False)
+                # Store reason metadata for auditability on detail page.
+                for raw in RawJob.objects.filter(pk__in=dead_ids).only("id", "raw_payload"):
+                    payload = dict(raw.raw_payload or {})
+                    payload["link_health"] = {
+                        "is_live": False,
+                        "reason": inactive_reasons.get(raw.id, "inactive"),
+                        "checked_at": timezone.now().isoformat(),
+                        "decisive": True,
+                    }
+                    raw.raw_payload = payload
+                    raw.save(update_fields=["raw_payload", "updated_at"])
 
         offset += batch_size
         update_task_progress(
             self, current=checked, total=total,
-            message=f"Checked {checked:,}/{total:,} — {alive:,} alive, {dead:,} dead",
+            message=f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive",
         )
 
     logger.info(
-        "validate_raw_job_urls: checked=%d alive=%d dead=%d errors=%d",
-        checked, alive, dead, errors,
+        "validate_raw_job_urls: checked=%d live=%d inactive=%d inconclusive=%d errors=%d reasons=%s",
+        checked, alive, dead, inconclusive, errors, reason_counts,
     )
-    return {"checked": checked, "alive": alive, "dead": dead}
+    return {
+        "checked": checked,
+        "live": alive,
+        "inactive": dead,
+        "inconclusive": inconclusive,
+        "reason_counts": reason_counts,
+    }
 
 
 @shared_task(name="harvest.cleanup_harvested_jobs")

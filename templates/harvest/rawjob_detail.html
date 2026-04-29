@@ -399,6 +399,22 @@
               <p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Active</p>
               <span style="font-size:12px;color:#374151;">{% if rawjob.is_active %}✓ Yes{% else %}✗ No{% endif %}</span>
             </div>
+            {% if rawjob.raw_payload.link_health %}
+            <div>
+              <p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Link Health</p>
+              <span style="font-size:11px;color:#374151;">
+                {{ rawjob.raw_payload.link_health.reason|default:"unknown" }}
+                {% if rawjob.raw_payload.link_health.status_code %}
+                  · HTTP {{ rawjob.raw_payload.link_health.status_code }}
+                {% endif %}
+                {% if rawjob.raw_payload.link_health.decisive %}
+                  · decisive
+                {% else %}
+                  · inconclusive
+                {% endif %}
+              </span>
+            </div>
+            {% endif %}
           </div>
         </div>
 

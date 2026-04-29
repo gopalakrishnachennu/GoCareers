@@ -24,18 +24,63 @@ _DEAD_MARKERS_GENERIC = (
     "position has been filled",
     "position is filled",
     "no longer accepting applications",
+    "job posting has expired",
+    "this posting has expired",
+    "position has been closed",
+    "this position has been closed",
+    "this job has been closed",
+    "this requisition is no longer active",
+    "requisition has been removed",
+    "opportunity has expired",
 )
 
 _DEAD_MARKERS_BY_PLATFORM = {
     "workday": (
-        "search for jobs",
-        "careers at",
         "the page you are looking for doesnt exist",
         "the page you are looking for does not exist",
+        "the job you are trying to view is no longer available",
+        "we are unable to find the job you are looking for",
     ),
     "icims": (
         "job description no longer available",
         "this opportunity is no longer available",
+        "this job is no longer posted",
+        "this position is no longer posted",
+    ),
+    "greenhouse": (
+        "this job has been filled",
+        "this role is no longer open",
+    ),
+    "lever": (
+        "this posting is no longer available",
+        "the position has been filled",
+    ),
+}
+
+_LIVE_MARKERS_GENERIC = (
+    "job description",
+    "responsibilities",
+    "qualifications",
+    "requirements",
+    "about the role",
+    "about this role",
+    "what you'll do",
+    "what you will do",
+    "apply now",
+    "apply for this",
+)
+
+_LIVE_MARKERS_BY_PLATFORM = {
+    "workday": (
+        "job profile summary",
+        "posted",
+        "locations",
+        "apply now",
+    ),
+    "icims": (
+        "apply for this job",
+        "job summary",
+        "job description",
     ),
 }
 
@@ -68,6 +113,52 @@ def _contains_dead_marker(text: str, platform_slug: str) -> bool:
     markers = list(_DEAD_MARKERS_GENERIC)
     markers.extend(_DEAD_MARKERS_BY_PLATFORM.get((platform_slug or "").lower(), ()))
     return any(m in text for m in markers)
+
+
+def _contains_live_marker(text: str, platform_slug: str) -> bool:
+    if not text:
+        return False
+    markers = list(_LIVE_MARKERS_GENERIC)
+    markers.extend(_LIVE_MARKERS_BY_PLATFORM.get((platform_slug or "").lower(), ()))
+    return any(m in text for m in markers)
+
+
+def _looks_like_detail_path(path: str, platform_slug: str) -> bool:
+    p = (path or "").lower()
+    if not p:
+        return False
+    slug = (platform_slug or "").lower()
+    if slug == "workday":
+        return "/job/" in p or "/details/" in p
+    if slug == "icims":
+        return "/jobs/" in p and "/search" not in p
+    return any(seg in p for seg in ("/job/", "/jobs/", "/details/", "/positions/"))
+
+
+def is_definitive_inactive(result: LinkHealthResult) -> bool:
+    """
+    Conservative decision policy for flipping DB rows inactive.
+
+    We only deactivate on strong evidence to avoid false negatives:
+    - hard 404/410/451
+    - explicit soft-404 / no-match markers
+    - explicit redirect-to-search + dead markers
+    """
+    if result.is_live:
+        return False
+    reason = (result.reason or "").lower()
+    code = int(result.status_code or 0)
+    if reason.startswith("http_"):
+        return code in {404, 410, 451}
+    if reason in {
+        "soft_404_marker",
+        "redirected_to_search_soft404",
+        "redirected_to_non_detail_no_live_signals",
+        "workday_cxs_not_found",
+        "workday_search_no_match",
+    }:
+        return True
+    return False
 
 
 def _workday_cxs_liveness(url: str) -> LinkHealthResult | None:
@@ -181,8 +272,9 @@ def check_job_posting_live(
         final_url = url
 
     # Hard failures
-    if status >= 400 and status != 405:
+    if status in {404, 410, 451}:
         return LinkHealthResult(False, status, f"http_{status}", final_url)
+    # Rate-limited / temporary server failures are inconclusive. Do not hard-fail yet.
 
     # GET + body sniff for soft-404 detection (needed for Workday/iCIMS, etc.)
     try:
@@ -195,9 +287,14 @@ def check_job_posting_live(
         )
         status_get = int(r_get.status_code or 0)
         final_url = str(getattr(r_get, "url", "") or final_url or url)
-        if status_get >= 400:
+        if status_get in {404, 410, 451}:
             r_get.close()
             return LinkHealthResult(False, status_get, f"http_{status_get}", final_url)
+        if status_get in {429, 500, 502, 503, 504}:
+            # Temporary throttling/upstream issues: treat as unknown-live to prevent
+            # accidental mass deactivation.
+            r_get.close()
+            return LinkHealthResult(True, status_get, f"transient_http_{status_get}", final_url)
 
         body_bytes = r_get.raw.read(max_read_bytes, decode_content=True) or b""
         r_get.close()
@@ -205,18 +302,31 @@ def check_job_posting_live(
 
         # If the resulting URL already points to search/home routes, it's likely no longer a detail posting.
         path_l = urlparse(final_url).path.lower()
+        detail_path = _looks_like_detail_path(path_l, platform_slug)
+        dead_marker = _contains_dead_marker(text, platform_slug)
+        live_marker = _contains_live_marker(text, platform_slug)
+
         if any(seg in path_l for seg in ("/jobs/search", "/search", "/job-search")) and not any(
             seg in path_l for seg in ("/job/", "/details/")
         ):
-            if _contains_dead_marker(text, platform_slug):
+            if dead_marker:
                 return LinkHealthResult(False, status_get, "redirected_to_search_soft404", final_url)
+            if not live_marker:
+                return LinkHealthResult(False, status_get, "redirected_to_non_detail_no_live_signals", final_url)
 
-        if _contains_dead_marker(text, platform_slug):
+        if dead_marker:
             return LinkHealthResult(False, status_get, "soft_404_marker", final_url)
+
+        if detail_path and live_marker:
+            return LinkHealthResult(True, status_get, "detail_live_markers", final_url)
+
+        if detail_path and len(text) > 800:
+            return LinkHealthResult(True, status_get, "detail_long_content", final_url)
 
         return LinkHealthResult(True, status_get, "ok", final_url)
     except Exception:
         # If GET fails after a successful HEAD<400, keep live as unknown to reduce false negatives.
         if 0 < status < 400:
             return LinkHealthResult(True, status, "head_ok_get_failed", final_url)
-        return LinkHealthResult(False, status or 0, "request_error", final_url)
+        # Network errors with no hard signal are treated as unknown-live.
+        return LinkHealthResult(True, status or 0, "request_error_unknown", final_url)

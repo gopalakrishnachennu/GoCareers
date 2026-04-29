@@ -115,7 +115,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
     from jobs.models import Job
     from jobs.quality import compute_quality_score
     from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
-    from .url_health import check_job_posting_live
+    from .url_health import check_job_posting_live, is_definitive_inactive
 
     existing = _find_existing_live_job_for_rawjob(raw_job)
     if existing:
@@ -131,7 +131,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             raw_job.original_url,
             platform_slug=(raw_job.platform_slug or ""),
         )
-        if not live.is_live:
+        if not live.is_live and is_definitive_inactive(live):
             payload = dict(raw_job.raw_payload or {})
             payload["link_health"] = {
                 "is_live": False,
@@ -139,6 +139,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
                 "status_code": live.status_code,
                 "checked_at": _tz.now().isoformat(),
                 "final_url": live.final_url,
+                "decisive": True,
             }
             raw_job.is_active = False
             raw_job.raw_payload = payload
@@ -1485,7 +1486,7 @@ class RawJobCheckLiveStatusView(SuperuserRequiredMixin, View):
     """POST — recheck a single raw-job posting URL and update is_active immediately."""
 
     def post(self, request, pk):
-        from .url_health import check_job_posting_live
+        from .url_health import check_job_posting_live, is_definitive_inactive
 
         raw_job = get_object_or_404(RawJob, pk=pk)
         url = (raw_job.original_url or "").strip()
@@ -1501,8 +1502,13 @@ class RawJobCheckLiveStatusView(SuperuserRequiredMixin, View):
             "status_code": int(result.status_code or 0),
             "checked_at": timezone.now().isoformat(),
             "final_url": result.final_url,
+            "decisive": bool((not result.is_live) and is_definitive_inactive(result)),
         }
-        raw_job.is_active = bool(result.is_live)
+        # Only flip inactive on definitive evidence to avoid transient false negatives.
+        if result.is_live:
+            raw_job.is_active = True
+        elif is_definitive_inactive(result):
+            raw_job.is_active = False
         raw_job.raw_payload = payload
         raw_job.save(update_fields=["is_active", "raw_payload", "updated_at"])
         _invalidate_rawjobs_dashboard_cache()
