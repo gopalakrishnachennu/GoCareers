@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
+import re
 
 from django.db.models import Q
 
@@ -81,7 +82,29 @@ def _platform_tenant_match(raw_job) -> bool:
     tenant = (label.tenant_id or "").strip().lower()
     if not tenant:
         return pattern_ok
-    return pattern_ok and (tenant in url.lower())
+
+    # Tenants are often stored as composite tokens for ATS links
+    # (examples: "wgu.wd5|external", "kestra|kestracareersite").
+    # Require at least one meaningful tenant token to appear in URL/host.
+    # This keeps the check strong while avoiding false negatives.
+    raw_tokens = [t.strip().lower() for t in re.split(r"[|,;/\s]+", tenant) if t.strip()]
+    tokens: list[str] = []
+    for tok in raw_tokens:
+        tokens.append(tok)
+        tokens.append(tok.replace("-", ""))
+        tokens.append(tok.replace("_", ""))
+        tokens.append(tok.replace(".", ""))
+    tokens = [t for t in dict.fromkeys(tokens) if len(t) >= 3]
+    if not tokens:
+        return pattern_ok
+
+    url_l = url.lower()
+    host_l = host.lower()
+    tenant_ok = any(
+        (tok in url_l) or (tok in host_l) or (tok in url_l.replace("-", "").replace("_", "").replace(".", ""))
+        for tok in tokens
+    )
+    return pattern_ok and tenant_ok
 
 
 def _duplicate_risk(raw_job) -> bool:
