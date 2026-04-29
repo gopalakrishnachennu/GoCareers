@@ -786,9 +786,9 @@ class RunSyncNowView(SuperuserRequiredMixin, View):
         from .tasks import sync_harvested_to_pool_task
         raw_max = (request.POST.get("max_jobs", "") or "").strip()
         try:
-            max_jobs = int(raw_max) if raw_max else 20000
+            max_jobs = int(raw_max) if raw_max else 0
         except (TypeError, ValueError):
-            max_jobs = 20000
+            max_jobs = 0
         qualified_only = (request.POST.get("qualified_only", "1").strip() != "0")
         chunk_raw = (request.POST.get("chunk_size", "") or "").strip()
         try:

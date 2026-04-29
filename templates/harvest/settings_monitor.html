@@ -79,7 +79,7 @@
       <form method="post" action="{% url 'harvest-run-sync' %}">
         {% csrf_token %}
         <input type="hidden" name="qualified_only" value="1">
-        <input type="hidden" name="max_jobs" value="20000">
+        <input type="hidden" name="max_jobs" value="0">
         <input type="hidden" name="chunk_size" value="500">
         <input type="hidden" name="return_to" value="harvest-monitor">
         <button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 shadow-sm transition-colors inline-flex items-center gap-2">
