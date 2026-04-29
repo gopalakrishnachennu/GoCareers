@@ -422,6 +422,7 @@
         <th class="tbl-th">Job</th>
         <th class="tbl-th hidden md:table-cell">Platform</th>
         <th class="tbl-th hidden md:table-cell">Stage</th>
+        <th class="tbl-th hidden md:table-cell">Active</th>
         <th class="tbl-th hidden lg:table-cell">Location</th>
         <th class="tbl-th hidden lg:table-cell">Gate</th>
         <th class="tbl-th hidden lg:table-cell">Harvested</th>
@@ -442,6 +443,13 @@
         </td>
         <td class="tbl-td hidden md:table-cell">
           <span class="badge-gray">{{ raw.pipeline_stage_label }}</span>
+        </td>
+        <td class="tbl-td hidden md:table-cell">
+          {% if raw.is_active %}
+          <span class="badge-green">✓ Active</span>
+          {% else %}
+          <span class="badge-red">✗ Inactive</span>
+          {% endif %}
         </td>
         <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">{{ raw.location_raw|default:"—" }}</td>
         <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">

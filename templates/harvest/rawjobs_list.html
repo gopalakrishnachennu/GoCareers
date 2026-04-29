@@ -894,6 +894,7 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;position:sticky;left:0;background:#0f172a;z-index:3;">Company</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Platform</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Stage</th>
+                <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Active</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Age</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;min-width:200px;">Title</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Location</th>
@@ -932,6 +933,15 @@
                   {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
                 <td style="padding:9px 14px;white-space:nowrap;"><span style="padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;background:#eef2ff;color:#4338ca;">{{ job.pipeline_stage_label }}</span></td>
+                <td style="padding:9px 14px;text-align:center;white-space:nowrap;">
+                  {% with lh=job.raw_payload.link_health %}
+                    {% if job.is_active %}
+                      <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;" title="{% if lh.checked_at %}Last checked: {{ lh.checked_at }}{% else %}Live/active by validator{% endif %}">✓ Active</span>
+                    {% else %}
+                      <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;" title="{{ lh.reason|default:'Marked inactive by live-link validator' }}">✗ Inactive</span>
+                    {% endif %}
+                  {% endwith %}
+                </td>
                 <td style="padding:9px 14px;white-space:nowrap;color:#64748b;font-size:11px;">{{ job.fetched_at|timesince }}</td>
                 <td style="padding:9px 14px;color:#374151;max-width:220px;">
                   <a href="{% url 'harvest-rawjob-detail' job.pk %}" style="color:#1d4ed8;text-decoration:none;font-weight:500;" title="{{ job.title }}">{{ job.title|truncatechars:40 }}</a>
@@ -1033,7 +1043,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="29" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="30" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -1852,6 +1862,14 @@ function showToast(msg, type='success') {
     const resumeJdUsable = !!j.resume_jd_usable;
     const resumeJdWords = Number(j.word_count || 0);
     const resumeJdTitle = escHtml(j.resume_jd_reason_text || '');
+    const isActive = !!j.is_active;
+    const activeTitle = escHtml(
+      j.link_health_reason
+      || (isActive ? 'Live / active by validator' : 'Marked inactive by live-link validator')
+    );
+    const activeBadge = isActive
+      ? '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;" title="Live / active by validator">✓ Active</span>'
+      : `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;" title="${activeTitle}">✗ Inactive</span>`;
     const age = (() => {
       if (!j.fetched_at_iso) return '—';
       const ts = new Date(j.fetched_at_iso).getTime();
@@ -1872,6 +1890,7 @@ function showToast(msg, type='success') {
       <td style="padding:9px 14px;position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;font-weight:600;color:#0f172a;max-width:160px;overflow:hidden;text-overflow:ellipsis;" title="${j.company_name}">${j.company_name.substring(0,22)}</td>
       <td style="padding:9px 14px;">${j.platform_slug ? `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;white-space:nowrap;">${j.platform_slug}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;white-space:nowrap;"><span style="padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;${stageColor}">${stage}</span></td>
+      <td style="padding:9px 14px;text-align:center;white-space:nowrap;">${activeBadge}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;font-size:11px;">${age}</td>
       <td style="padding:9px 14px;color:#374151;max-width:220px;">
         <a href="${j.detail_url}" style="color:#1d4ed8;text-decoration:none;font-weight:500;" title="${j.title}">${j.title.substring(0,40)}</a>${remBadge}
