@@ -402,6 +402,10 @@
     <a href="{% url 'harvest-rawjobs-batches' %}" class="btn-secondary btn-sm">View Batches</a>
     <a href="{% url 'harvest-rawjobs-stats' %}" class="btn-secondary btn-sm">Stats</a>
     <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
+      <input type="hidden" name="qualified_only" value="1">
+      <input type="hidden" name="max_jobs" value="20000">
+      <input type="hidden" name="chunk_size" value="500">
+      <input type="hidden" name="return_to" value="harvest-rawjobs">
       <button type="submit" class="btn-primary btn-sm">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
         Sync Qualified to Vet Queue

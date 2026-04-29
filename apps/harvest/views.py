@@ -524,14 +524,25 @@ class RunMonitorView(SuperuserRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         from .models import RawJob
+        from django_celery_results.models import TaskResult
+
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "monitor"
         ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True)
         ctx["total_harvested"] = RawJob.objects.filter(is_active=True).count()
         ctx["pending_sync"] = RawJob.objects.filter(sync_status="PENDING").count()
         ctx["synced_count"] = RawJob.objects.filter(sync_status="SYNCED").count()
-        ctx["total_runs"] = 0
-        ctx["running_runs"] = 0
+        task_names = [
+            "harvest.harvest_jobs",
+            "harvest.detect_company_platforms",
+            "harvest.sync_harvested_to_pool",
+            "harvest.validate_raw_job_urls",
+            "harvest.cleanup_harvested_jobs",
+        ]
+        recent_cutoff = timezone.now() - timedelta(days=7)
+        q = TaskResult.objects.filter(task_name__in=task_names, date_created__gte=recent_cutoff)
+        ctx["total_runs"] = q.count()
+        ctx["running_runs"] = q.filter(status__in=["PENDING", "STARTED", "RETRY", "PROGRESS"]).count()
         return ctx
 
 
@@ -736,17 +747,44 @@ class RunHarvestNowView(SuperuserRequiredMixin, View):
 class RunSyncNowView(SuperuserRequiredMixin, View):
     def post(self, request):
         from .tasks import sync_harvested_to_pool_task
-        max_jobs = int(request.POST.get("max_jobs", "500") or "500")
-        task = sync_harvested_to_pool_task.delay(max_jobs=max_jobs)
-        messages.success(request, f"Sync to job pool started (max {max_jobs:,} jobs, Task: {task.id[:8]}...)")
-        return redirect_with_task_progress("harvest-monitor", task.id, "Sync to job pool")
+        raw_max = (request.POST.get("max_jobs", "") or "").strip()
+        try:
+            max_jobs = int(raw_max) if raw_max else 20000
+        except (TypeError, ValueError):
+            max_jobs = 20000
+        qualified_only = (request.POST.get("qualified_only", "1").strip() != "0")
+        chunk_raw = (request.POST.get("chunk_size", "") or "").strip()
+        try:
+            chunk_size = int(chunk_raw) if chunk_raw else 500
+        except (TypeError, ValueError):
+            chunk_size = 500
+
+        task = sync_harvested_to_pool_task.delay(
+            max_jobs=max_jobs,
+            qualified_only=qualified_only,
+            chunk_size=chunk_size,
+        )
+        scope_txt = "all qualified pending jobs" if not max_jobs else f"up to {max_jobs:,} qualified jobs"
+        if not qualified_only:
+            scope_txt = "pending jobs"
+            if max_jobs:
+                scope_txt = f"up to {max_jobs:,} pending jobs"
+        messages.success(
+            request,
+            f"Vet sync started ({scope_txt}, Task: {task.id[:8]}…). "
+            "This scans across the backlog and updates multi-page results.",
+        )
+        return_to = (request.POST.get("return_to", "") or "").strip() or "harvest-rawjobs"
+        if return_to not in {"harvest-rawjobs", "harvest-monitor", "jobs-pipeline", "harvest-schedule"}:
+            return_to = "harvest-rawjobs"
+        return redirect_with_task_progress(return_to, task.id, "Sync Qualified to Vet Queue")
 
 
 class RunBulkSyncView(SuperuserRequiredMixin, View):
     """POST — sync up to 20,000 pending RawJobs to the pool in one shot."""
     def post(self, request):
         from .tasks import sync_harvested_to_pool_task
-        task = sync_harvested_to_pool_task.delay(max_jobs=20000)
+        task = sync_harvested_to_pool_task.delay(max_jobs=20000, qualified_only=False, chunk_size=500)
         messages.success(
             request,
             f"Bulk sync started — up to 20,000 pending jobs → pool (Task: {task.id[:8]}…). "
