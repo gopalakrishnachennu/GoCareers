@@ -33,6 +33,7 @@ from .models import (
 )
 from .resume_profile import build_resume_job_profile
 from .jd_gate import evaluate_raw_job_resume_gate
+from .enrichments import infer_country_from_location
 
 logger = logging.getLogger(__name__)
 
@@ -994,6 +995,11 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             jobs_data = []
             for job in page_obj.object_list:
                 jd_gate = evaluate_raw_job_resume_gate(job)
+                detected_country = infer_country_from_location(
+                    location_raw=job.location_raw or "",
+                    state=job.state or "",
+                    country=job.country or "",
+                )
                 jobs_data.append({
                     "id": job.pk,
                     "company_name": (job.company_name or "")[:30],
@@ -1016,7 +1022,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "is_active": bool(job.is_active),
                     "department": (job.department_normalized or job.department or "")[:40],
                     "state": (job.state or "")[:48],
-                    "country": (job.country or "")[:48],
+                    "country": (detected_country or "")[:48],
                     "education_required": job.education_required or "",
                     "languages_required": (job.languages_required or [])[:3],
                     "licenses_required": (job.licenses_required or [])[:3],
@@ -1359,6 +1365,16 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "rawjobs"
+
+        # Display fallback country immediately from location text, even before
+        # a full backfill writes inferred country into DB rows.
+        for job in ctx.get("object_list", []):
+            detected_country = infer_country_from_location(
+                location_raw=job.location_raw or "",
+                state=job.state or "",
+                country=job.country or "",
+            )
+            setattr(job, "country_display", detected_country)
 
         # Unified KPI aggregation with short TTL + invalidation on writes.
         stats = _load_rawjobs_dashboard_stats(force_refresh=False)

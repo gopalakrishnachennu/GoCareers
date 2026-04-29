@@ -902,6 +902,7 @@
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Level</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Dept</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Geo</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Country</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Education</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Clearance</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Schedule</th>
@@ -974,11 +975,10 @@
                 </td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.department_normalized|default:job.department }}">{{ job.department_normalized|default:job.department|truncatechars:20|default:"—" }}</td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
-                  {% if job.state or job.country %}
-                    {{ job.state|default:"" }}{% if job.state and job.country %}, {% endif %}{{ job.country|default:"" }}
-                  {% else %}
-                    <span style="color:#94a3b8;">—</span>
-                  {% endif %}
+                  {% if job.state %}{{ job.state }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
+                  {% if job.country_display %}{{ job.country_display }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{{ job.education_required|default:"—" }}</td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.clearance_level|default:'' }}">
@@ -1050,7 +1050,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="30" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="31" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -1853,7 +1853,8 @@ function showToast(msg, type='success') {
     const extLink = j.original_url
       ? `<a href="${j.original_url}" target="_blank" rel="noopener" style="color:#3b82f6;font-size:11px;text-decoration:none;" title="Open original">↗</a>`
       : '';
-    const geo = [j.state || '', j.country || ''].filter(Boolean).join(', ');
+    const geo = j.state || '';
+    const country = j.country || '';
     const edu = j.education_required || '—';
     const clearance = j.clearance_level || (j.clearance_required ? 'Required' : '—');
     const schedule = [j.schedule_type || '', j.shift_schedule || ''].filter(Boolean).join(' · ') || '—';
@@ -1907,6 +1908,7 @@ function showToast(msg, type='success') {
       <td style="padding:9px 14px;white-space:nowrap;">${j.experience_level && j.experience_level !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">${j.experience_level}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${dept}">${dept.substring(0,20)}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${geo || '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${country || '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${edu}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="${clearance}">${clearance}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;" title="${schedule}">${schedule}</td>

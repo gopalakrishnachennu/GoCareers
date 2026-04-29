@@ -86,6 +86,228 @@ def clean_job_text(text: str, *, max_len: int | None = None) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Location / country inference
+# ─────────────────────────────────────────────────────────────────────────────
+
+_COUNTRY_ALIASES: dict[str, str] = {
+    "us": "United States",
+    "usa": "United States",
+    "u.s.": "United States",
+    "u.s.a.": "United States",
+    "united states": "United States",
+    "united states of america": "United States",
+    "ca": "Canada",
+    "can": "Canada",
+    "canada": "Canada",
+    "uk": "United Kingdom",
+    "u.k.": "United Kingdom",
+    "gb": "United Kingdom",
+    "gbr": "United Kingdom",
+    "united kingdom": "United Kingdom",
+    "england": "United Kingdom",
+    "scotland": "United Kingdom",
+    "wales": "United Kingdom",
+    "ie": "Ireland",
+    "irl": "Ireland",
+    "ireland": "Ireland",
+    "au": "Australia",
+    "aus": "Australia",
+    "australia": "Australia",
+    "nz": "New Zealand",
+    "nzl": "New Zealand",
+    "new zealand": "New Zealand",
+    "de": "Germany",
+    "deu": "Germany",
+    "germany": "Germany",
+    "fr": "France",
+    "fra": "France",
+    "france": "France",
+    "es": "Spain",
+    "esp": "Spain",
+    "spain": "Spain",
+    "it": "Italy",
+    "ita": "Italy",
+    "italy": "Italy",
+    "nl": "Netherlands",
+    "nld": "Netherlands",
+    "netherlands": "Netherlands",
+    "be": "Belgium",
+    "bel": "Belgium",
+    "belgium": "Belgium",
+    "se": "Sweden",
+    "swe": "Sweden",
+    "sweden": "Sweden",
+    "no": "Norway",
+    "nor": "Norway",
+    "norway": "Norway",
+    "dk": "Denmark",
+    "dnk": "Denmark",
+    "denmark": "Denmark",
+    "fi": "Finland",
+    "fin": "Finland",
+    "finland": "Finland",
+    "ch": "Switzerland",
+    "che": "Switzerland",
+    "switzerland": "Switzerland",
+    "at": "Austria",
+    "aut": "Austria",
+    "austria": "Austria",
+    "pl": "Poland",
+    "pol": "Poland",
+    "poland": "Poland",
+    "pt": "Portugal",
+    "prt": "Portugal",
+    "portugal": "Portugal",
+    "gr": "Greece",
+    "grc": "Greece",
+    "greece": "Greece",
+    "in": "India",
+    "ind": "India",
+    "india": "India",
+    "sg": "Singapore",
+    "sgp": "Singapore",
+    "singapore": "Singapore",
+    "my": "Malaysia",
+    "mys": "Malaysia",
+    "malaysia": "Malaysia",
+    "ph": "Philippines",
+    "phl": "Philippines",
+    "philippines": "Philippines",
+    "vn": "Vietnam",
+    "vnm": "Vietnam",
+    "vietnam": "Vietnam",
+    "id": "Indonesia",
+    "idn": "Indonesia",
+    "indonesia": "Indonesia",
+    "th": "Thailand",
+    "tha": "Thailand",
+    "thailand": "Thailand",
+    "jp": "Japan",
+    "jpn": "Japan",
+    "japan": "Japan",
+    "kr": "South Korea",
+    "kor": "South Korea",
+    "south korea": "South Korea",
+    "cn": "China",
+    "chn": "China",
+    "china": "China",
+    "hk": "Hong Kong",
+    "hkg": "Hong Kong",
+    "hong kong": "Hong Kong",
+    "tw": "Taiwan",
+    "twn": "Taiwan",
+    "taiwan": "Taiwan",
+    "mx": "Mexico",
+    "mex": "Mexico",
+    "mexico": "Mexico",
+    "br": "Brazil",
+    "bra": "Brazil",
+    "brazil": "Brazil",
+    "ar": "Argentina",
+    "arg": "Argentina",
+    "argentina": "Argentina",
+    "cl": "Chile",
+    "chl": "Chile",
+    "chile": "Chile",
+    "co": "Colombia",
+    "col": "Colombia",
+    "colombia": "Colombia",
+    "za": "South Africa",
+    "zaf": "South Africa",
+    "south africa": "South Africa",
+    "ae": "United Arab Emirates",
+    "are": "United Arab Emirates",
+    "united arab emirates": "United Arab Emirates",
+    "sa": "Saudi Arabia",
+    "sau": "Saudi Arabia",
+    "saudi arabia": "Saudi Arabia",
+}
+
+_US_STATE_CODES = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    "DC",
+}
+_US_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia", "washington",
+    "west virginia", "wisconsin", "wyoming", "district of columbia",
+}
+
+
+def _normalize_country_token(value: str, *, allow_passthrough: bool = False) -> str:
+    token = (value or "").strip()
+    if not token:
+        return ""
+    lower = token.lower().strip(" .")
+    if lower in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[lower]
+    clean = re.sub(r"[^a-zA-Z ]+", "", token).strip().lower()
+    if clean in _COUNTRY_ALIASES:
+        return _COUNTRY_ALIASES[clean]
+    if len(token) == 2 and token.isalpha():
+        return _COUNTRY_ALIASES.get(token.lower(), "")
+    if len(token) == 3 and token.isalpha():
+        return _COUNTRY_ALIASES.get(token.lower(), "")
+    return token[:128] if allow_passthrough else ""
+
+
+def infer_country_from_location(location_raw: str, state: str = "", country: str = "") -> str:
+    """
+    Best-effort country detection from explicit country field + location string.
+    Examples:
+    - "US-PA-West Chester" -> United States
+    - "Paris, France" -> France
+    - state="TX" (with no country) -> United States
+    """
+    direct = _normalize_country_token(country, allow_passthrough=True)
+    if direct:
+        return direct
+
+    state_s = (state or "").strip()
+    state_key = state_s.lower()
+
+    loc = clean_job_text(location_raw or "", max_len=512)
+    loc_l = loc.lower()
+
+    # Common ATS prefix format: "US-PA-..." / "CA-ON-..."
+    m_pref = re.match(r"^\s*([A-Za-z]{2})-[A-Za-z]{2}(?:-|$)", loc)
+    if m_pref:
+        pref = _normalize_country_token(m_pref.group(1))
+        if pref:
+            return pref
+
+    # Split location fragments and check likely country token first.
+    parts = [p.strip() for p in re.split(r"[,|/]+", loc) if p and p.strip()]
+    for p in reversed(parts):
+        cand = _normalize_country_token(p)
+        if cand:
+            return cand
+
+    # Fallback: direct mention anywhere in location text.
+    for alias, canonical in sorted(_COUNTRY_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True):
+        if re.search(rf"\b{re.escape(alias)}\b", loc_l):
+            return canonical
+
+    # Fallback from US state clue.
+    state_upper = state_s.upper()
+    if state_upper in _US_STATE_CODES or state_key in _US_STATE_NAMES:
+        return "United States"
+
+    return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 1. TECH SKILLS vocabulary
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -598,6 +820,12 @@ def extract_enrichments(job: dict) -> dict:
     description = content_meta["clean_text"]
     requirements = clean_job_text(job.get("requirements") or "", max_len=20000)
     benefits = clean_job_text(job.get("benefits") or "", max_len=10000)
+    location_raw = clean_job_text(job.get("location_raw") or "", max_len=512)
+    detected_country = infer_country_from_location(
+        location_raw=location_raw,
+        state=(job.get("state") or ""),
+        country=(job.get("country") or ""),
+    )
 
     # Build clean plain-text versions of each section
     title_c = title.lower()
@@ -833,7 +1061,7 @@ def extract_enrichments(job: dict) -> dict:
     resume_score = _resume_ready_score({
         "description": description,
         "title": normalized_title or title,
-        "country": job.get("country") or "",
+        "country": detected_country,
         "state": job.get("state") or "",
         "salary_raw": job.get("salary_raw") or "",
         "employment_type": job.get("employment_type") or "",
@@ -888,6 +1116,7 @@ def extract_enrichments(job: dict) -> dict:
         "encouraged_to_apply":  encouraged,
         "job_keywords":         title_keywords,
         "department_normalized": department_normalized,
+        "country":              detected_country,
         # Quality
         "word_count":           word_count,
         "quality_score":        quality,
