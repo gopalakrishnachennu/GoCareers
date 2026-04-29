@@ -873,7 +873,7 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
         if max_jobs.isdigit():
             kwargs["max_jobs"] = int(max_jobs)
         else:
-            kwargs["max_jobs"] = 8000
+            kwargs["max_jobs"] = 0
 
         task = validate_raw_job_urls_task.delay(**kwargs)
         messages.success(

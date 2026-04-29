@@ -19,7 +19,7 @@
     <form method="post" action="{% url 'harvest-run-validate-urls' %}">{% csrf_token %}
       <input type="hidden" name="pending_only" value="1">
       <input type="hidden" name="recent_hours" value="168">
-      <input type="hidden" name="max_jobs" value="8000">
+      <input type="hidden" name="max_jobs" value="0">
       <button type="submit" class="px-3 py-2 bg-white border border-amber-200 text-amber-700 text-sm font-semibold rounded-lg hover:border-amber-300 transition">
         Validate Live Links
       </button>
