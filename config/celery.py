@@ -89,6 +89,12 @@ app.conf.beat_schedule = {
         "task": "harvest.cleanup_harvested_jobs",
         "schedule": crontab(hour=0, minute=0),       # daily midnight UTC
     },
+    "harvest-validate-live-links-daily": {
+        "task": "harvest.validate_raw_job_urls",
+        "schedule": crontab(hour=3, minute=0),       # daily 03:00 UTC
+        "kwargs": {"batch_size": 300, "concurrency": 25},
+        "options": {"queue": "harvest"},
+    },
 
     # Continuously fetch missing JDs — runs every hour so new harvests get
     # their descriptions filled without manual intervention. The task itself
