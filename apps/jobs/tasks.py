@@ -191,9 +191,11 @@ def validate_job_urls_task(self, batch_size: int = 50):
     now = timezone.now()
     cutoff = now - timezone.timedelta(hours=24)
 
-    # Check both OPEN and POOL jobs so pool UI status stays accurate too.
+    # Only check Jobs without a source_raw_job — those linked to a RawJob are
+    # already handled by validate_raw_job_urls_task which propagates status here.
     qs = Job.objects.filter(status__in=[Job.Status.OPEN, Job.Status.POOL], is_archived=False)
     qs = qs.filter(original_link__isnull=False).exclude(original_link="")
+    qs = qs.filter(source_raw_job__isnull=True)
     qs = qs.filter(
         original_link_last_checked_at__lt=cutoff
     ) | qs.filter(

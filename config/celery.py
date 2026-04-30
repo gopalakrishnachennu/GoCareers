@@ -26,7 +26,7 @@ app.conf.beat_schedule = {
     # ── JOB PIPELINE ─────────────────────────────────────────────────────────
     "validate-job-urls-daily": {
         "task": "jobs.tasks.validate_job_urls_task",
-        "schedule": crontab(hour=3, minute=0),       # daily 03:00 UTC
+        "schedule": crontab(hour=3, minute=30),      # daily 03:30 UTC — only manually-created jobs (harvest-linked jobs handled by harvest-validate-live-links-daily)
         "kwargs": {"batch_size": 100},
     },
     "auto-close-stale-jobs-daily": {

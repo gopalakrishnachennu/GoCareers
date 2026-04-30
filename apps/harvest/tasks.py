@@ -1540,6 +1540,7 @@ def validate_raw_job_urls_task(
                 for row in chunk
             }
             dead_ids = []
+            alive_ids = []
             inactive_reasons: dict[int, str] = {}
             for future in as_completed(futures):
                 job_id, result = future.result()
@@ -1548,6 +1549,7 @@ def validate_raw_job_urls_task(
                 reason_counts[reason] = reason_counts.get(reason, 0) + 1
                 if bool(result.is_live):
                     alive += 1
+                    alive_ids.append(job_id)
                 else:
                     if is_definitive_inactive(result):
                         dead += 1
@@ -1558,6 +1560,7 @@ def validate_raw_job_urls_task(
 
             # Mark definitively closed jobs inactive in one batch update.
             if dead_ids:
+                now = timezone.now()
                 RawJob.objects.filter(pk__in=dead_ids).update(is_active=False)
                 # Store reason metadata for auditability on detail page.
                 for raw in RawJob.objects.filter(pk__in=dead_ids).only("id", "raw_payload"):
@@ -1565,11 +1568,50 @@ def validate_raw_job_urls_task(
                     payload["link_health"] = {
                         "is_live": False,
                         "reason": inactive_reasons.get(raw.id, "inactive"),
-                        "checked_at": timezone.now().isoformat(),
+                        "checked_at": now.isoformat(),
                         "decisive": True,
                     }
                     raw.raw_payload = payload
                     raw.save(update_fields=["raw_payload", "updated_at"])
+
+                # Propagate to linked Job records — no second HTTP call needed.
+                try:
+                    from jobs.models import Job
+                    from jobs.notify import notify_job_posting_link_unhealthy
+                    linked_jobs = list(
+                        Job.objects.filter(
+                            source_raw_job_id__in=dead_ids,
+                            status__in=[Job.Status.OPEN, Job.Status.POOL],
+                            is_archived=False,
+                        ).only("id", "status", "possibly_filled", "original_link")
+                    )
+                    for job in linked_jobs:
+                        was_pf = job.possibly_filled
+                        job.original_link_is_live = False
+                        job.original_link_last_checked_at = now
+                        job.possibly_filled = job.status == Job.Status.OPEN
+                        job.save(update_fields=[
+                            "original_link_is_live", "original_link_last_checked_at", "possibly_filled"
+                        ])
+                        if job.possibly_filled and not was_pf:
+                            try:
+                                notify_job_posting_link_unhealthy(job)
+                            except Exception:
+                                pass
+                except Exception:
+                    logger.warning("validate_raw_job_urls: failed to propagate dead status to Jobs", exc_info=True)
+
+            # Stamp last_checked_at on linked Jobs whose URL is still live.
+            if alive_ids:
+                try:
+                    from jobs.models import Job
+                    Job.objects.filter(
+                        source_raw_job_id__in=alive_ids,
+                        status__in=[Job.Status.OPEN, Job.Status.POOL],
+                        is_archived=False,
+                    ).update(original_link_is_live=True, original_link_last_checked_at=timezone.now())
+                except Exception:
+                    logger.warning("validate_raw_job_urls: failed to stamp live status on Jobs", exc_info=True)
 
         offset += batch_size
         update_task_progress(
