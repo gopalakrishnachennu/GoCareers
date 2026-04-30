@@ -1064,18 +1064,21 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     def get(self, request):
         tab = request.GET.get('tab', 'pool')
         q = (request.GET.get('q') or '').strip()
+        raw_selected_stage = (request.GET.get("stage") or "").strip().upper()
 
         # ── Summary stats (always computed) ─────────────────────────────────
         from harvest.models import RawJob, FetchBatch
         from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
         from harvest.services.rawjob_query import (
             apply_rawjob_filters,
+            build_funnel_counts,
             effective_classification_q,
             ready_stage_q,
         )
 
         raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
         raw_total = raw_stats.get("total", 0)
+        raw_funnel = build_funnel_counts(RawJob.objects.all())
         raw_ready_q = ready_stage_q(min_conf=0.55)
         raw_qualified_pending = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
         raw_qualified_synced = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
@@ -1202,7 +1205,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         ctx = {
             'tab': tab,
             'q': q,
+            'raw_selected_stage': raw_selected_stage,
             'raw_total': raw_total,
+            'raw_funnel': raw_funnel,
             'raw_gate_summary': raw_gate_summary,
             'pool_total': pool_total,
             'live_total': live_total,

@@ -115,6 +115,9 @@
   <!-- Search — right-aligned in the same row -->
   <form method="get" class="flex items-center gap-2 ml-auto shrink-0">
     <input type="hidden" name="tab" value="{{ tab }}">
+    {% if tab == 'raw' and raw_selected_stage %}
+      <input type="hidden" name="stage" value="{{ raw_selected_stage }}">
+    {% endif %}
     <div class="relative">
       <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
@@ -415,6 +418,51 @@
   </div>
 </div>
 
+<div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white">
+  <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+    <div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Pipeline funnel</div>
+    <div class="text-[11px] text-slate-500">Click any stage to open matching jobs in this table</div>
+  </div>
+  <div class="grid grid-cols-2 lg:grid-cols-6 gap-2">
+    <a href="?tab=raw#raw-jobs-table" class="p-2.5 rounded-lg border {% if not raw_selected_stage %}border-slate-500 bg-slate-50{% else %}border-slate-200 hover:border-slate-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Fetched</div>
+      <div class="text-xl font-bold text-slate-900">{{ raw_funnel.fetched }}</div>
+      <div class="text-[11px] text-slate-500">100%</div>
+    </a>
+    <a href="?tab=raw&stage=PARSED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'PARSED' %}border-sky-400 bg-sky-50{% else %}border-slate-200 hover:border-sky-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Parsed</div>
+      <div class="text-xl font-bold text-sky-600">{{ raw_funnel.parsed }}</div>
+      <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.parsed raw_funnel.fetched 100 %}%</div>
+    </a>
+    <a href="?tab=raw&stage=ENRICHED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'ENRICHED' %}border-violet-400 bg-violet-50{% else %}border-slate-200 hover:border-violet-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Enriched</div>
+      <div class="text-xl font-bold text-violet-600">{{ raw_funnel.enriched }}</div>
+      <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.enriched raw_funnel.fetched 100 %}%</div>
+    </a>
+    <a href="?tab=raw&stage=CLASSIFIED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'CLASSIFIED' %}border-amber-400 bg-amber-50{% else %}border-slate-200 hover:border-amber-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Classified</div>
+      <div class="text-xl font-bold text-amber-600">{{ raw_funnel.classified }}</div>
+      <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.classified raw_funnel.fetched 100 %}%</div>
+    </a>
+    <a href="?tab=raw&stage=READY#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'READY' %}border-emerald-400 bg-emerald-50{% else %}border-slate-200 hover:border-emerald-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Ready</div>
+      <div class="text-xl font-bold text-emerald-600">{{ raw_funnel.ready }}</div>
+      <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.ready raw_funnel.fetched 100 %}%</div>
+    </a>
+    <a href="?tab=raw&stage=SYNCED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'SYNCED' %}border-teal-400 bg-teal-50{% else %}border-slate-200 hover:border-teal-300{% endif %}">
+      <div class="text-[10px] uppercase text-slate-500">Synced</div>
+      <div class="text-xl font-bold text-teal-600">{{ raw_funnel.synced }}</div>
+      <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.synced raw_funnel.fetched 100 %}%</div>
+    </a>
+  </div>
+  {% if raw_selected_stage %}
+  <div class="mt-2 text-xs text-slate-600">
+    Filter active: <span class="font-semibold">{{ raw_selected_stage }}</span>.
+    <a href="?tab=raw#raw-jobs-table" class="text-indigo-600 hover:underline">Clear stage filter</a>
+  </div>
+  {% endif %}
+</div>
+
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
   <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&stage=READY&sync_status=PENDING"
      class="p-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:border-emerald-300 transition">
@@ -449,6 +497,7 @@
 </div>
 
 {% if tab_raw %}
+<div id="raw-jobs-table"></div>
 <div class="card-table">
   <table class="w-full text-sm">
     <thead class="tbl-head">

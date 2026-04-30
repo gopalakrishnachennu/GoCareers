@@ -1214,6 +1214,25 @@ class RawJobPipelineUnificationTests(TestCase):
         self.assertEqual(summary["blocked_inactive"], 0)
         self.assertEqual(summary["blocked_low_conf"], 1)
 
+    def test_jobs_pipeline_raw_stage_filter_uses_shared_filter(self):
+        from harvest.models import RawJob
+        from harvest.services.rawjob_query import apply_rawjob_filters
+
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "raw", "stage": "CLASSIFIED"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["raw_selected_stage"], "CLASSIFIED")
+
+        expected_ids = list(
+            apply_rawjob_filters(RawJob.objects.all(), {"stage": "CLASSIFIED"})
+            .order_by("-fetched_at")
+            .values_list("id", flat=True)[:200]
+        )
+        actual_ids = [row.id for row in response.context["tab_raw"]]
+        self.assertEqual(actual_ids, expected_ids)
+
+        html = response.content.decode("utf-8")
+        self.assertIn("?tab=raw&stage=CLASSIFIED#raw-jobs-table", html)
+
 
 class HarvestPhase3NavigationTests(TestCase):
     def setUp(self):
