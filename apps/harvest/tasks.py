@@ -87,24 +87,10 @@ def _supports_select_for_update_skip_locked() -> bool:
 
 
 def _backfill_eligible_queryset(platform_slug: str | None):
-    """Rows that still need a JD and are not actively claimed (unless lock is stale).
-
-    Uses the indexed has_description column - avoids a full-table annotation scan.
-    The has_description field is kept in sync by save() and by all backfill update
-    paths, so it's safe to rely on here.
-    """
+    """Rows that still need a JD and are not actively claimed (unless lock is stale)."""
     from .models import RawJob
 
-    stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
-    q = (
-        RawJob.objects.filter(has_description=False)
-        .exclude(original_url="")
-        .exclude(original_url__isnull=True)
-        .filter(
-            Q(jd_backfill_locked_at__isnull=True)
-            | Q(jd_backfill_locked_at__lt=stale_before),
-        )
-    )
+    q = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
     return q
@@ -2598,23 +2584,36 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
 def _fast_workday_description(job_url: str) -> str:
     """Fetch a Workday JD directly via the CXS JSON API — no Jarvis/scraping needed.
 
-    Returns the description HTML string or '' on any failure.
-    Workday's CXS endpoint returns structured JSON at:
-      https://{subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}
+    Handles URL patterns:
+      - https://{sub}.myworkdayjobs.com/{board}/job/{loc}/{slug}
+      - https://{sub}.myworkdayjobs.com/{board}/details/{loc}/{slug}
+      - https://{sub}.wd1.myworkdayjobs.com/{board}/job/...  (versioned subdomains)
+      - https://{sub}.myworkdayjobs.com/en-US/{board}/job/...  (locale-prefixed)
     """
     import re as _re2
     import requests as _req
 
+    # Pattern 1: direct board path — /{board}/(job|details)/...
     m = _re2.match(
-        r"https?://([\w-]+(?:\.wd\d+)?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
-        job_url,
-        _re2.I,
+        r"https?://([\w.-]+?)\.myworkdayjobs\.com/([^/?#]+)(/(?:details|job)/[^?#]+)",
+        job_url, _re2.I,
     )
-    if not m:
-        return ""
-    full_subdomain = m.group(1)
-    jobboard = m.group(2)
-    ext_path = m.group(3).split("?")[0]
+    if m:
+        full_subdomain = m.group(1)
+        jobboard = m.group(2)
+        ext_path = m.group(3).split("?")[0]
+    else:
+        # Pattern 2: locale-prefixed — /en-US/{board}/(job|details)/...
+        m2 = _re2.match(
+            r"https?://([\w.-]+?)\.myworkdayjobs\.com/[a-z]{2}-[A-Z]{2}/([^/?#]+)(/(?:details|job)/[^?#]+)",
+            job_url, _re2.I,
+        )
+        if not m2:
+            return ""
+        full_subdomain = m2.group(1)
+        jobboard = m2.group(2)
+        ext_path = m2.group(3).split("?")[0]
+
     tenant = _re2.sub(r"\.wd\d+$", "", full_subdomain, flags=_re2.I)
     cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
     try:
@@ -2637,7 +2636,552 @@ def _fast_workday_description(job_url: str) -> str:
     return ""
 
 
-def _backfill_process_one_job(job, jarvis):
+def _html_jd_extract(url: str, extra_selectors: list[str] | None = None, timeout: int = 15) -> str:
+    """Generic HTML JD extractor used by platform fast paths as a fallback.
+
+    Tries in order:
+      1. JSON-LD <script type="application/ld+json"> JobPosting schema
+      2. <meta property="og:description"> (short but structured)
+      3. Platform-specific CSS class selectors (passed via extra_selectors)
+      4. Largest <div> block containing 'experience'/'responsibilities'/'qualifications'
+    Returns the best non-empty string found, or "".
+    """
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    try:
+        resp = _req.get(
+            url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)",
+            },
+            timeout=timeout,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+    except Exception:
+        return ""
+
+    # 1. JSON-LD JobPosting
+    for block in _re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I
+    ):
+        try:
+            schema = _json.loads(block)
+            if isinstance(schema, list):
+                schema = next((s for s in schema if isinstance(s, dict) and s.get("@type") == "JobPosting"), schema[0] if schema else {})
+            if isinstance(schema, dict):
+                if schema.get("@type") in ("JobPosting", "jobPosting"):
+                    for k in ("description", "responsibilities", "qualifications"):
+                        val = schema.get(k) or ""
+                        if val and len(str(val)) > 80:
+                            return str(val).strip()
+        except Exception:
+            continue
+
+    # 2. og:description
+    og_m = _re.search(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']', html, _re.I)
+    if not og_m:
+        og_m = _re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']', html, _re.I)
+    og_desc = og_m.group(1).strip() if og_m else ""
+
+    # 3. Extra selectors provided by caller
+    if extra_selectors:
+        for sel_class in extra_selectors:
+            pat = rf'<[^>]+class=["\'][^"\']*{_re.escape(sel_class)}[^"\']*["\'][^>]*>([\s\S]{{100,8000}}?)</[^>]+>'
+            sel_m = _re.search(pat, html, _re.I)
+            if sel_m:
+                text = _re.sub(r"<[^>]+>", " ", sel_m.group(1))
+                text = _re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    return text
+
+    # 4. Largest paragraph-heavy block (heuristic)
+    blocks = _re.findall(r'<(?:div|section|article)[^>]*>([\s\S]{300,10000}?)</(?:div|section|article)>', html, _re.I)
+    best = ""
+    for b in blocks:
+        text = _re.sub(r"<[^>]+>", " ", b)
+        text = _re.sub(r"\s+", " ", text).strip()
+        kws = sum(1 for w in ("experience", "responsibilities", "qualifications", "requirements", "role", "position") if w in text.lower())
+        if kws >= 2 and len(text) > len(best):
+            best = text
+    if best:
+        return best
+
+    return og_desc
+
+
+def _fast_greenhouse_description(job_url: str) -> str:
+    """Greenhouse public boards API — returns full description in one JSON call."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"boards\.greenhouse\.io/([^/]+)/jobs/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"greenhouse\.io/(?:jobs|careers)/(\d+)", job_url, _re.I)
+        if m:
+            return ""  # can't derive board token from this URL form
+    if not m:
+        return ""
+    board_token, job_id = m.group(1), m.group(2)
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?content=true"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        return str(d.get("content") or "").strip()
+    except Exception:
+        return ""
+
+
+def _fast_lever_description(job_url: str) -> str:
+    """Lever public postings API — returns full description including lists."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})", job_url, _re.I)
+    if not m:
+        return ""
+    company, posting_id = m.group(1), m.group(2)
+    api_url = f"https://api.lever.co/v0/postings/{company}/{posting_id}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        parts = []
+        desc = d.get("descriptionPlain") or d.get("description") or ""
+        if desc:
+            parts.append(str(desc).strip())
+        for lst in d.get("lists") or d.get("listsPlain") or []:
+            if isinstance(lst, dict):
+                text = lst.get("content") or lst.get("text") or ""
+                if text:
+                    parts.append(str(text).strip())
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+def _fast_ashby_description(job_url: str) -> str:
+    """Ashby public REST job-board API — fetches full board and finds job by ID.
+
+    api.ashbyhq.com/posting-api/job-board/{company} returns all jobs with
+    descriptionHtml inline; no per-job auth required.
+    """
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.ashbyhq\.com/([^/]+)/([0-9a-f-]{36})", job_url, _re.I)
+    if not m:
+        return ""
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        jobs = resp.json().get("jobs") or []
+        match = next((j for j in jobs if (j.get("id") or "").lower() == job_id.lower()), None)
+        if not match:
+            return ""
+        desc = match.get("descriptionHtml") or match.get("descriptionPlain") or ""
+        return str(desc).strip()
+    except Exception:
+        return ""
+
+
+def _fast_bamboohr_description(job_url: str) -> str:
+    """BambooHR — extract job description from JSON-LD on the careers detail page."""
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.bamboohr\.com/(?:careers|jobs)/(\d+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, job_id = m.group(1), m.group(2)
+    detail_url = f"https://{slug}.bamboohr.com/careers/{job_id}"
+    try:
+        resp = _req.get(
+            detail_url,
+            headers={"Accept": "text/html", "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)"},
+            timeout=15,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+        for block in _re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I
+        ):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting",):
+                    desc = schema.get("description") or ""
+                    if desc:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        return ""
+    except Exception:
+        return ""
+
+
+def _fast_workable_description(job_url: str) -> str:
+    """Workable public API v1 — per-job detail endpoint."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"apply\.workable\.com/([^/]+)/j/([A-Z0-9]+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, shortcode = m.group(1), m.group(2)
+    api_url = f"https://apply.workable.com/api/v1/accounts/{slug}/jobs/{shortcode}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        parts = [
+            str(d.get("description") or "").strip(),
+            str(d.get("requirements") or "").strip(),
+            str(d.get("benefits") or "").strip(),
+        ]
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+def _fast_icims_description(job_url: str) -> str:
+    """iCIMS — extract structured JSON-LD from job detail page."""
+    import json as _json
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.icims\.com/jobs/(\d+)/", job_url, _re.I)
+    if not m:
+        return ""
+    tenant, job_id = m.group(1), m.group(2)
+    detail_url = f"https://{tenant}.icims.com/jobs/{job_id}/job"
+    try:
+        resp = _req.get(
+            detail_url,
+            headers={
+                "Accept": "text/html,application/xhtml+xml",
+                "User-Agent": "Mozilla/5.0 (compatible; GoCareers-Bot/1.0)",
+            },
+            timeout=15,
+        )
+        if not resp.ok:
+            return ""
+        html = resp.text
+        for block in _re.findall(r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting", "jobPosting"):
+                    desc = schema.get("description") or schema.get("responsibilities") or ""
+                    if desc:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        m2 = _re.search(r'<div[^>]+class=["\'][^"\']*iCIMS_JobDescription[^"\']*["\'][^>]*>(.*?)</div>', html, _re.S | _re.I)
+        if m2:
+            text = _re.sub(r"<[^>]+>", " ", m2.group(1)).strip()
+            if len(text) > 50:
+                return text
+        return ""
+    except Exception:
+        return ""
+
+
+def _fast_oracle_description(job_url: str) -> str:
+    """Oracle HCM — ShortDescriptionStr from REST API + og:description fallback.
+
+    The Oracle CX public REST API only exposes ShortDescriptionStr (summary).
+    Full description lives in the SPA (requires JS). We return ShortDescriptionStr
+    when available; Jarvis handles the full render if still empty after backfill.
+    """
+    import re as _re
+    import requests as _req
+
+    m = _re.search(
+        r"([\w.-]+\.oraclecloud\.com)/hcmUI/CandidateExperience/[^/]+/sites/([^/]+)/(?:requisitions?(?:/preview)?|jobs?)/(\d+)",
+        job_url, _re.I,
+    )
+    if not m:
+        m = _re.search(r"([\w.-]+\.oraclecloud\.com).*?/(\d{5,})", job_url, _re.I)
+        if not m:
+            return _html_jd_extract(job_url)
+        host, sites_id, req_num = m.group(1), "", m.group(2)
+    else:
+        host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
+
+    if sites_id:
+        api_url = (
+            f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+            f"?onlyData=true&expand=requisitionList&limit=5"
+            f"&finder=findReqs;siteNumber={sites_id}"
+        )
+        try:
+            resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
+            if resp.ok:
+                items = resp.json().get("items") or []
+                req_list = items[0].get("requisitionList", []) if items else []
+                for req in req_list:
+                    if str(req.get("Id") or "") == req_num:
+                        for key in ("ShortDescriptionStr", "ExternalDescriptionStr",
+                                    "ExternalQualificationsStr", "ExternalResponsibilitiesStr"):
+                            val = str(req.get(key) or "").strip()
+                            if val:
+                                return val
+        except Exception:
+            pass
+
+    # HTML fallback — og:description is usually populated
+    return _html_jd_extract(job_url, extra_selectors=["requisition-description", "job-detail__description"])
+
+
+def _fast_smartrecruiters_description(job_url: str) -> str:
+    """SmartRecruiters public API — per-job detail endpoint."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"jobs\.smartrecruiters\.com/([^/]+)/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"smartrecruiters\.com/([^/]+)/(\d+)", job_url, _re.I)
+    if not m:
+        return ""
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+        if not resp.ok:
+            return ""
+        d = resp.json()
+        sections = (d.get("jobAd") or {}).get("sections") or {}
+        parts = [
+            str((sections.get("jobDescription") or {}).get("text") or "").strip(),
+            str((sections.get("qualifications") or {}).get("text") or "").strip(),
+            str((sections.get("additionalInformation") or {}).get("text") or "").strip(),
+        ]
+        return "\n\n".join(p for p in parts if p)
+    except Exception:
+        return ""
+
+
+def _fast_taleo_description(job_url: str) -> str:
+    """Taleo — fetch job detail page and extract via JSON-LD or HTML."""
+    return _html_jd_extract(job_url, extra_selectors=["ATSJobDetailContainer", "requisitionDescriptionInterface"])
+
+
+def _fast_ultipro_description(job_url: str) -> str:
+    """UltiPro/UKG — fetch OpportunityDetail page and extract description.
+
+    UltiPro detail URL: .../JobBoard/{guid}/OpportunityDetail?opportunityId={id}
+    The SPA embeds job data in a <script> or renders it in known CSS classes.
+    Also tries the internal GetJob JSON endpoint.
+    """
+    import re as _re
+    import requests as _req
+
+    # Extract company code and GUID from the URL
+    m = _re.search(
+        r"recruiting\.ultipro\.com/([^/]+)/JobBoard/([0-9a-f-]{36})/OpportunityDetail",
+        job_url, _re.I,
+    )
+    if m:
+        company_code, jobboard_id = m.group(1), m.group(2)
+        opp_id_m = _re.search(r"opportunityId=([^&]+)", job_url, _re.I)
+        if opp_id_m:
+            opp_id = opp_id_m.group(1)
+            # Try the internal JSON endpoint first
+            get_job_url = (
+                f"https://recruiting.ultipro.com/{company_code}/JobBoard/{jobboard_id}"
+                f"/JobBoardView/GetJob?opportunityId={opp_id}"
+            )
+            try:
+                resp = _req.get(get_job_url, headers={"Accept": "application/json"}, timeout=12)
+                if resp.ok:
+                    d = resp.json()
+                    desc = (
+                        d.get("Description") or d.get("description")
+                        or d.get("JobDescription") or d.get("jobDescription")
+                        or d.get("FullDescription") or ""
+                    )
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                pass
+
+    return _html_jd_extract(job_url, extra_selectors=["opportunity-description", "job-description", "oppDetailDescription"])
+
+
+def _fast_dayforce_description(job_url: str) -> str:
+    """Dayforce HCM — extract job description from detail page.
+
+    Dayforce portals are Next.js SPAs; the og:description meta tag and JSON-LD
+    usually have the short description. Full description is in the SPA data.
+    """
+    import re as _re
+    import requests as _req
+
+    # Try Dayforce per-job API (GEO API)
+    # URL: https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL/jobs/{id}
+    m = _re.search(
+        r"jobs\.dayforcehcm\.com/en-US/([^/]+)/[^/]+/jobs/([^/?#]+)", job_url, _re.I
+    )
+    if m:
+        slug, job_id = m.group(1), m.group(2)
+        session = _req.Session()
+        # Warm session for Cloudflare
+        try:
+            session.get(
+                f"https://jobs.dayforcehcm.com/en-US/{slug}/CANDIDATEPORTAL",
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                    "Accept": "text/html,application/xhtml+xml",
+                },
+                timeout=12,
+            )
+        except Exception:
+            pass
+        # Try direct job API
+        for api_path in [
+            f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/{job_id}",
+            f"https://jobs.dayforcehcm.com/api/{slug}/jobs/{job_id}",
+        ]:
+            try:
+                resp = session.get(
+                    api_path,
+                    headers={
+                        "Accept": "application/json",
+                        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+                    },
+                    timeout=12,
+                )
+                if resp.ok:
+                    d = resp.json()
+                    desc = (
+                        d.get("JobDescription") or d.get("FullDescription")
+                        or d.get("description") or d.get("Description") or ""
+                    )
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                pass
+
+    return _html_jd_extract(job_url, extra_selectors=["job-description", "dayforce-job-detail"])
+
+
+def _fast_jobvite_description(job_url: str) -> str:
+    """Jobvite — fetch job detail page and extract via JSON-LD."""
+    return _html_jd_extract(job_url, extra_selectors=["jv-job-detail-description", "jv-job-detail-main"])
+
+
+def _fast_breezy_description(job_url: str) -> str:
+    """Breezy HR — fetch job detail page via public API or HTML."""
+    import re as _re
+    import requests as _req
+
+    # Breezy has a public REST API: GET https://{company}.breezy.hr/p/{job-slug}/json
+    m = _re.search(r"([\w-]+)\.breezy\.hr/p/([^/?#]+)", job_url, _re.I)
+    if m:
+        subdomain, slug = m.group(1), m.group(2)
+        api_url = f"https://{subdomain}.breezy.hr/json"
+        try:
+            resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=12)
+            if resp.ok:
+                data = resp.json()
+                positions = data if isinstance(data, list) else (data.get("positions") or [])
+                # Find matching position by slug
+                for pos in positions:
+                    if pos.get("friendly_id") == slug or slug in (pos.get("friendly_id") or ""):
+                        desc = pos.get("description") or pos.get("jobDescription") or ""
+                        if desc and len(str(desc)) > 80:
+                            return str(desc).strip()
+        except Exception:
+            pass
+
+    return _html_jd_extract(job_url, extra_selectors=["body-description", "job-description"])
+
+
+def _fast_teamtailor_description(job_url: str) -> str:
+    """Teamtailor — fetch job detail via public REST API."""
+    import re as _re
+    import requests as _req
+
+    # Teamtailor has a public API: GET https://{company}.teamtailor.com/api/v1/jobs/{id}
+    m = _re.search(r"([\w-]+)\.teamtailor\.com/jobs/(\d+)", job_url, _re.I)
+    if not m:
+        m = _re.search(r"teamtailor\.com/(?:en/)?jobs/(\d+)", job_url, _re.I)
+
+    # Try HTML extraction which is fast for Teamtailor (server-rendered)
+    return _html_jd_extract(job_url, extra_selectors=["job-body", "body-text", "job-description__description"])
+
+
+def _fast_zoho_description(job_url: str) -> str:
+    """Zoho Recruit — extract description from job detail page."""
+    return _html_jd_extract(job_url, extra_selectors=["jobs-details-description", "job-description", "jobdesc"])
+
+
+def _fast_recruitee_description(job_url: str) -> str:
+    """Recruitee public API — single endpoint returns all fields including description."""
+    import re as _re
+    import requests as _req
+
+    m = _re.search(r"([\w-]+)\.recruitee\.com/o/([^/?#]+)", job_url, _re.I)
+    if not m:
+        return ""
+    slug, offer_slug = m.group(1), m.group(2)
+    api_url = f"https://{slug}.recruitee.com/api/offers/{offer_slug}"
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=10)
+        if resp.ok:
+            d = resp.json()
+            offer = d.get("offer") or d
+            desc = offer.get("description") or offer.get("requirements") or ""
+            return str(desc).strip()
+    except Exception:
+        pass
+    return _html_jd_extract(job_url)
+
+
+# _fast_workday_description_v2 merged into _fast_workday_description (handles locale prefix URLs)
+
+
+# Maps platform_slug → fast-fetch function. Each function returns a description
+# string or "" on failure. Jarvis is the universal fallback for all platforms.
+_FAST_FETCH_REGISTRY: dict = {
+    "workday":         _fast_workday_description,
+    "greenhouse":      _fast_greenhouse_description,
+    "lever":           _fast_lever_description,
+    "ashby":           _fast_ashby_description,
+    "bamboohr":        _fast_bamboohr_description,
+    "workable":        _fast_workable_description,
+    "icims":           _fast_icims_description,
+    "oracle":          _fast_oracle_description,
+    "smartrecruiters": _fast_smartrecruiters_description,
+    "taleo":           _fast_taleo_description,
+    "ultipro":         _fast_ultipro_description,
+    "dayforce":        _fast_dayforce_description,
+    "jobvite":         _fast_jobvite_description,
+    "breezy":          _fast_breezy_description,
+    "teamtailor":      _fast_teamtailor_description,
+    "zoho":            _fast_zoho_description,
+    "recruitee":       _fast_recruitee_description,
+    "html_scrape":     _html_jd_extract,  # generic fallback for any HTML-scrape platform
+}
+
+
+def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     """
     Fetch JD for a single RawJob row that was already claim-locked.
     Clears jd_backfill_locked_at on every exit path.
@@ -2663,23 +3207,49 @@ def _backfill_process_one_job(job, jarvis):
         "url": (fetch_url or "")[:120],
     }
 
-    # Fast path: Workday CXS JSON API — no Jarvis/browser scraping needed.
-    # Falls back to Jarvis only if the CXS call returns nothing.
-    if platform == "workday":
-        cxs_desc = _fast_workday_description(fetch_url)
-        if cxs_desc:
-            data = {"description": cxs_desc, "strategy": "workday_cxs"}
-        else:
-            try:
-                data = jarvis.ingest(fetch_url)
-            except SoftTimeLimitExceeded:
-                raise
-            except Exception as exc:
-                logger.warning("Backfill (Workday fallback) failed for job %s: %s", job.pk, exc)
-                RawJob.objects.filter(pk=job.pk).update(
-                    description=" ", has_description=False, jd_backfill_locked_at=None
-                )
-                return "failed", {**log_base, "status": "failed", "reason": str(exc)[:80]}
+    # Platforms with reliable public JSON APIs — if the fast path returns empty it
+    # means the job is expired/gone (API returned 404/empty). Skip Jarvis for these:
+    # falling through to Jarvis wastes 30-60s per job for no gain.
+    _API_ONLY_PLATFORMS = frozenset({
+        "greenhouse", "lever", "ashby", "workable", "bamboohr",
+        "workday", "smartrecruiters", "recruitee",
+    })
+
+    # Fast path: try platform-native JSON API before falling back to Jarvis scraping.
+    # Platforms like Greenhouse/Lever have public APIs that return structured JSON
+    # 10-50x faster than Jarvis browser-based scraping.
+    fast_fn = _FAST_FETCH_REGISTRY.get(platform)
+    fast_desc = ""
+    fast_strategy = ""
+    if fast_fn and fetch_url and not force_jarvis:
+        try:
+            fast_desc = fast_fn(fetch_url) or ""
+            if fast_desc:
+                fast_strategy = f"{platform}_api"
+        except Exception:
+            fast_desc = ""
+
+    # Cooldown lock: when a job gets no description, set a future lock so it is
+    # not immediately re-queued. This prevents the infinite-retry loop where the
+    # same dead/empty jobs cycle through the backfill every round.
+    _COOLDOWN_HOURS = 12
+
+    if fast_desc:
+        data = {"description": fast_desc, "strategy": fast_strategy}
+    elif not force_jarvis and fast_fn and platform in _API_ONLY_PLATFORMS:
+        # API-only platform: fast path returned "" → job is expired or gone.
+        # Skip Jarvis — it will also fail and waste 30-60s. Apply cooldown lock.
+        future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
+        RawJob.objects.filter(pk=job.pk).update(
+            description=" ", has_description=False, jd_backfill_locked_at=future_lock
+        )
+        log = {
+            **log_base,
+            "status": "skipped",
+            "reason": f"API returned no description — cooldown {_COOLDOWN_HOURS}h",
+            "strategy": f"{platform}_api",
+        }
+        return "skipped", log
     else:
         try:
             data = jarvis.ingest(fetch_url)
@@ -2687,8 +3257,9 @@ def _backfill_process_one_job(job, jarvis):
             raise
         except Exception as exc:
             logger.warning("Backfill failed for job %s: %s", job.pk, exc)
+            future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
             RawJob.objects.filter(pk=job.pk).update(
-                description=" ", has_description=False, jd_backfill_locked_at=None
+                description=" ", has_description=False, jd_backfill_locked_at=future_lock
             )
             log = {**log_base, "status": "failed", "reason": str(exc)[:80]}
             return "failed", log
@@ -2696,7 +3267,8 @@ def _backfill_process_one_job(job, jarvis):
     desc_str = _backfill_str(data.get("description")).strip()
 
     if not desc_str:
-        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": None}
+        future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
+        upd: dict = {"description": " ", "has_description": False, "jd_backfill_locked_at": future_lock}
         pl = {}
         if data.get("raw_payload"):
             # Prefer newest API/Jarvis payload over stale DB rows (fixes SmartRecruiters active flag).
@@ -2784,6 +3356,7 @@ def _backfill_descriptions_chunk_impl(
     progress_hook=None,
     shard_index: int = 0,
     shard_count: int = 1,
+    force_jarvis: bool = False,
 ) -> dict:
     """
     Claim up to *claim_size* rows (SKIP LOCKED on Postgres) and fetch JDs sequentially.
@@ -2824,7 +3397,7 @@ def _backfill_descriptions_chunk_impl(
         if progress_hook:
             progress_hook("job_start", job=job, entry=None, lu=updated, ls=skipped, lf=failed)
         try:
-            outcome, entry = _backfill_process_one_job(job, jarvis)
+            outcome, entry = _backfill_process_one_job(job, jarvis, force_jarvis=force_jarvis)
         except SoftTimeLimitExceeded:
             logger.warning("backfill chunk soft time limit at job %s", job.pk)
             RawJob.objects.filter(pk__in=[j.pk for j in jobs[idx:]]).update(
@@ -2869,6 +3442,7 @@ def backfill_descriptions_chunk_task(
     platform_slug: str | None,
     shard_index: int = 0,
     shard_count: int = 1,
+    force_jarvis: bool = False,
 ):
     """Celery entry point for :func:`_backfill_descriptions_chunk_impl`."""
     return _backfill_descriptions_chunk_impl(
@@ -2876,6 +3450,7 @@ def backfill_descriptions_chunk_task(
         platform_slug,
         shard_index=shard_index,
         shard_count=shard_count,
+        force_jarvis=force_jarvis,
     )
 
 
@@ -2888,6 +3463,8 @@ def backfill_descriptions_task(
     offset: int = 0,
     _chain_depth: int = 0,
     _skip_streak: int = 0,
+    force_jarvis: bool = False,
+    reset_locks: bool = False,
 ):
     """
     Fetch JDs for RawJobs with no description using parallel chunk workers.
@@ -2912,6 +3489,31 @@ def backfill_descriptions_task(
             "backfill_descriptions_task: offset=%s is ignored.",
             offset,
         )
+
+    if reset_locks:
+        from django.utils import timezone as _tz
+        cleared = RawJob.objects.filter(jd_backfill_locked_at__gt=_tz.now()).update(jd_backfill_locked_at=None)
+        logger.info("backfill reset_locks: cleared %s cooldown locks", cleared)
+
+    # Duplicate-run guard: Beat fires every hour; a full backfill can run for hours.
+    # If another instance is already active, skip this firing instead of stacking workers.
+    try:
+        from celery import current_app as _capp
+        _inspect = _capp.control.inspect(timeout=2)
+        _active = _inspect.active() or {}
+        for _worker_tasks in _active.values():
+            for _t in (_worker_tasks or []):
+                if (
+                    _t.get("name") == "harvest.backfill_descriptions"
+                    and _t.get("id") != self.request.id
+                ):
+                    logger.info(
+                        "backfill_descriptions: instance %s already running — skipping this Beat firing.",
+                        _t["id"],
+                    )
+                    return {"message": "Skipped — another backfill instance is already running.", "updated": 0}
+    except Exception:
+        pass  # inspect is best-effort; proceed if it fails
 
     claim_size = max(10, min(int(batch_size), 500))
     workers_requested = max(1, min(int(parallel_workers), BACKFILL_MAX_PARALLEL))
@@ -2992,7 +3594,7 @@ def backfill_descriptions_task(
         return d
 
     start_msg = (
-        f"Starting — {total} jobs — {parallelism} worker(s) × {claim_size} rows/chunk"
+        f"{'[DEEP SCAN] ' if force_jarvis else ''}Starting — {total} jobs — {parallelism} worker(s) × {claim_size} rows/chunk"
     )
     if workers_requested != parallelism:
         start_msg += f" (you asked for {workers_requested})"
@@ -3051,6 +3653,7 @@ def backfill_descriptions_task(
                         progress_hook=_inline_progress,
                         shard_index=0,
                         shard_count=1,
+                        force_jarvis=force_jarvis,
                     )
                 ]
             else:
@@ -3070,6 +3673,7 @@ def backfill_descriptions_task(
                             platform_slug,
                             shard_index=shard_index,
                             shard_count=shard_count,
+                            force_jarvis=force_jarvis,
                         )
                     finally:
                         close_old_connections()

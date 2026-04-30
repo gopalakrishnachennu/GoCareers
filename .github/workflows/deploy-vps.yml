@@ -28,8 +28,8 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
-              echo "Primary migrate failed; attempting safe recovery for harvest.0026"
-              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate harvest 0026 --fake || true
+              echo "Primary migrate failed; attempting safe recovery"
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate harvest 0027 --fake || true
               docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input
             fi
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from django.utils import timezone; from datetime import timedelta; from harvest.models import RawJob; from harvest.tasks import backfill_descriptions_task; freed = RawJob.objects.filter(jd_backfill_locked_at__lt=timezone.now()-timedelta(minutes=5)).update(jd_backfill_locked_at=None); missing = RawJob.objects.filter(has_description=False).exclude(original_url='').exclude(original_url__isnull=True).count(); print(f'JD backfill check: missing={missing}, freed={freed}'); backfill_descriptions_task.delay(batch_size=500, parallel_workers=8) if missing > 0 else None"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from django.utils import timezone; from datetime import timedelta; from harvest.models import RawJob; from harvest.tasks import backfill_descriptions_task; freed = RawJob.objects.filter(jd_backfill_locked_at__lt=timezone.now()-timedelta(minutes=5)).update(jd_backfill_locked_at=None); missing = RawJob.objects.missing_jd().count(); print(f'JD backfill check: missing={missing}, freed={freed}'); backfill_descriptions_task.delay(batch_size=500, parallel_workers=8) if missing > 0 else None"

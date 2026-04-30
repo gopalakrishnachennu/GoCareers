@@ -21,6 +21,7 @@ from .base import BaseHarvester, MIN_DELAY_API, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 PAGE_SIZE = 50
 MAX_PAGES = 40
+DETAIL_FETCH_CAP = 20
 
 # Browser-like headers required to pass Cloudflare bot check
 BROWSER_HEADERS = {
@@ -64,6 +65,16 @@ class DayforceHarvester(BaseHarvester):
         # Path 1: GEO JSON API (Next.js SPA backend)
         api_results = self._fetch_api(slug, company.name, fetch_all)
         if api_results:
+            for i, posting in enumerate(api_results):
+                if i >= DETAIL_FETCH_CAP:
+                    break
+                if posting.get("description"):
+                    continue
+                job_id = posting.get("external_id", "")
+                if job_id:
+                    desc = self._fetch_job_description(slug, job_id)
+                    if desc:
+                        posting["description"] = desc
             return api_results
 
         # Path 2: HTML scrape (last resort)
@@ -85,6 +96,27 @@ class DayforceHarvester(BaseHarvester):
             self._last_request_at = time.monotonic()
         except Exception:
             pass
+
+    def _fetch_job_description(self, slug: str, job_id: str) -> str:
+        """Try the GEO detail endpoint then fall back to og:description from the portal page."""
+        detail_url = f"https://jobs.dayforcehcm.com/api/geo/{slug}/jobposting/{job_id}"
+        self._enforce_rate_limit()
+        try:
+            resp = self._session.get(detail_url, headers=BROWSER_HEADERS, timeout=DEFAULT_TIMEOUT)
+            self._last_request_at = time.monotonic()
+            if resp.ok:
+                data = resp.json()
+                desc = (
+                    data.get("JobDescription")
+                    or data.get("description")
+                    or data.get("Description")
+                    or ""
+                )
+                if desc and len(str(desc)) > 80:
+                    return str(desc).strip()
+        except Exception:
+            pass
+        return ""
 
     # ── Path 1: GEO JSON API ─────────────────────────────────────────────────
 

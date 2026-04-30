@@ -163,17 +163,6 @@ TASKS = [
         "schedule_label": "Daily midnight UTC",
         "kwargs": {},
     },
-
-    # ── PIPELINE HEALTH ────────────────────────────────────────────────────────
-    {
-        "name": "Pipeline — escalate stale VETTED jobs",
-        "task": "jobs.escalate_stale_vetted_jobs",
-        "category": "jobs",
-        "description": "Flags VETTED jobs with no stage progression in 7+ days via PipelineEvent SKIPPED rows — surfaces on the health dashboard for ops triage.",
-        "cron": {"minute": "0", "hour": "5", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"},
-        "schedule_label": "Daily 05:00 UTC",
-        "kwargs": {"stale_days": 7},
-    },
 ]
 
 CATEGORY_ORDER = ["email", "submissions", "jobs", "companies", "reports", "analytics", "harvest"]

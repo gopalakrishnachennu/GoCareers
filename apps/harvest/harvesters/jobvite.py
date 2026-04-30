@@ -19,6 +19,8 @@ from urllib.parse import urljoin
 
 from .base import BaseHarvester, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
+DETAIL_FETCH_CAP = 30
+
 
 def _detect_location_type(location_raw: str) -> tuple[str, bool]:
     loc_lower = (location_raw or "").lower()
@@ -67,7 +69,18 @@ class JobviteHarvester(BaseHarvester):
         if not html:
             return []
 
-        return self._parse_postings(company.name, slug, html)
+        postings = self._parse_postings(company.name, slug, html)
+        for i, posting in enumerate(postings):
+            if i >= DETAIL_FETCH_CAP:
+                break
+            if posting.get("description"):
+                continue
+            url = posting.get("original_url", "")
+            if url:
+                desc = self._fetch_detail_description(url)
+                if desc:
+                    posting["description"] = desc
+        return postings
 
     # ── HTML helpers ──────────────────────────────────────────────────────────
 
@@ -83,6 +96,36 @@ class JobviteHarvester(BaseHarvester):
                 return resp.text
         except Exception:
             pass
+        return ""
+
+    def _fetch_detail_description(self, url: str) -> str:
+        import json as _json
+        html = self._fetch_html(url)
+        if not html:
+            return ""
+        for block in re.findall(
+            r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+            html, re.S | re.I,
+        ):
+            try:
+                schema = _json.loads(block)
+                if isinstance(schema, list):
+                    schema = schema[0]
+                if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
+                    desc = schema.get("description") or ""
+                    if desc and len(str(desc)) > 80:
+                        return str(desc).strip()
+            except Exception:
+                continue
+        m = re.search(
+            r'<div[^>]+class=["\'][^"\']*jv-job-detail-description[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+            html, re.I,
+        )
+        if m:
+            text = re.sub(r"<[^>]+>", " ", m.group(1))
+            text = re.sub(r"\s+", " ", text).strip()
+            if len(text) > 100:
+                return text
         return ""
 
     # ── Parsing ───────────────────────────────────────────────────────────────

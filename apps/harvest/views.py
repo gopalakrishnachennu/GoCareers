@@ -38,6 +38,9 @@ from .enrichments import infer_country_from_location
 logger = logging.getLogger(__name__)
 
 
+_FULL_CRAWL_COOLDOWN_HOURS = 2
+
+
 def _find_existing_live_job_for_rawjob(raw_job):
     """Find existing non-archived Job mapped to a RawJob URL hash/link."""
     from jobs.dedup import find_existing_job_by_url
@@ -228,37 +231,37 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
     return job, True
 
 
-def _raw_jobs_missing_jd_base_qs():
-    """Rows with no real JD text (same rule as Jobs Browser ``has_jd``)."""
-    from .tasks import BACKFILL_LOCK_STALE_MINUTES
-
-    stale_before = timezone.now() - timedelta(minutes=BACKFILL_LOCK_STALE_MINUTES)
-    return (
-        RawJob.objects.annotate(
-            _jd_len=Length(Trim(Coalesce(F("description"), Value("")))),
-        )
-        .filter(_jd_len__lte=1)
-        .exclude(original_url="")
-        .filter(
-            Q(jd_backfill_locked_at__isnull=True)
-            | Q(jd_backfill_locked_at__lt=stale_before),
-        )
+def _full_crawl_cooldown_ctx() -> dict:
+    """Return last_full_batch + cooldown_remaining_sec for any view that shows the Full Crawl button."""
+    last_full_batch = (
+        FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
+        .exclude(name__icontains="PLATFORM CHECK")
+        .exclude(name__icontains="QUICK SYNC")
+        .order_by("-created_at")
+        .first()
     )
+    cooldown_remaining_sec = 0
+    if last_full_batch:
+        elapsed = (timezone.now() - last_full_batch.created_at).total_seconds()
+        cooldown_remaining_sec = max(0, int(_FULL_CRAWL_COOLDOWN_HOURS * 3600 - elapsed))
+    return {"last_full_batch": last_full_batch, "cooldown_remaining_sec": cooldown_remaining_sec}
 
 
 def raw_jobs_missing_description_count() -> int:
     """Count jobs with empty/trivial description that have a URL (backfill candidates)."""
-    return _raw_jobs_missing_jd_base_qs().count()
+    from .tasks import BACKFILL_LOCK_STALE_MINUTES
+    return RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES).count()
 
 
 def raw_jobs_missing_jd_expired_count() -> int:
     """Subset of missing-JD rows that look expired (aligned with RawJob.is_expired_listing)."""
+    from .tasks import BACKFILL_LOCK_STALE_MINUTES
     today = timezone.now().date()
     now = timezone.now()
     stale_days = max(30, int(getattr(settings, "HARVEST_JD_STALE_DAYS", 120)))
     stale_cutoff = today - timedelta(days=stale_days)
     return (
-        _raw_jobs_missing_jd_base_qs()
+        RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
         .filter(
             Q(expires_at__lt=now)
             | Q(closing_date__lt=today)
@@ -1389,6 +1392,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["missing_description_jobs"] = stats["missing_jd"]
         ctx["missing_jd_expired_jobs"] = stats["expired_missing"]
 
+
         # Platform breakdown
         ctx["platform_stats"] = (
             RawJob.objects.values("platform_slug")
@@ -1468,22 +1472,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
 
-        # Cooldown for Full Crawl button (2hr from last full batch)
-        COOLDOWN_HOURS = 2
-        last_full_batch = (
-            FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
-            .exclude(name__icontains="PLATFORM CHECK")
-            .exclude(name__icontains="QUICK SYNC")
-            .order_by("-created_at")
-            .first()
-        )
-        ctx["last_full_batch"] = last_full_batch
-        if last_full_batch:
-            elapsed_sec = (timezone.now() - last_full_batch.created_at).total_seconds()
-            ctx["cooldown_remaining_sec"] = max(0, int(COOLDOWN_HOURS * 3600 - elapsed_sec))
-        else:
-            ctx["cooldown_remaining_sec"] = 0
-
+        ctx.update(_full_crawl_cooldown_ctx())
         return ctx
 
 
@@ -1681,22 +1670,11 @@ class TriggerCompanyFetchView(SuperuserRequiredMixin, View):
 class FetchCooldownStatusView(SuperuserRequiredMixin, View):
     """GET — JSON: cooldown status for the Full Crawl button."""
     def get(self, request):
-        COOLDOWN_HOURS = 2
-        last_full = (
-            FetchBatch.objects.filter(
-                status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"],
-            )
-            .exclude(name__icontains="PLATFORM CHECK")
-            .exclude(name__icontains="QUICK SYNC")
-            .order_by("-created_at")
-            .first()
-        )
+        cd = _full_crawl_cooldown_ctx()
+        last_full = cd["last_full_batch"]
+        remaining = cd["cooldown_remaining_sec"]
         if not last_full:
             return JsonResponse({"on_cooldown": False, "remaining_sec": 0, "last_batch_at": None})
-
-        elapsed = (timezone.now() - last_full.created_at).total_seconds()
-        cooldown_sec = COOLDOWN_HOURS * 3600
-        remaining = max(0, int(cooldown_sec - elapsed))
         return JsonResponse({
             "on_cooldown": remaining > 0,
             "remaining_sec": remaining,
@@ -1715,7 +1693,6 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
       "test"   → test mode (test_mode=1, companies_per_platform, test_max_jobs)
       ""       → filtered batch (platform_slug selector form)
     """
-    COOLDOWN_HOURS = 2
 
     def post(self, request):
         from .tasks import fetch_raw_jobs_batch_task
@@ -1750,18 +1727,10 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
 
         # ── Mode: Full Crawl — enforce 2-hour cooldown ────────────────────────
         if fetch_mode == "full":
-            last_full = (
-                FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
-                .exclude(name__icontains="PLATFORM CHECK")
-                .exclude(name__icontains="QUICK SYNC")
-                .order_by("-created_at")
-                .first()
-            )
-            if last_full:
-                elapsed = (timezone.now() - last_full.created_at).total_seconds()
-                cooldown_sec = self.COOLDOWN_HOURS * 3600
-                remaining = max(0, int(cooldown_sec - elapsed))
-                if remaining > 0:
+            cd = _full_crawl_cooldown_ctx()
+            last_full = cd["last_full_batch"]
+            remaining = cd["cooldown_remaining_sec"]
+            if last_full and remaining > 0:
                     mins = remaining // 60
                     secs = remaining % 60
                     messages.error(
@@ -1941,19 +1910,46 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
         batch_size = int(request.POST.get("batch_size", "200") or "200")
         parallel_workers = int(request.POST.get("parallel_workers", "4") or "4")
         offset = int(request.POST.get("offset", "0") or "0")
+        force_jarvis = request.POST.get("force_jarvis", "") in ("1", "true", "True")
+        reset_locks = request.POST.get("reset_locks", "") in ("1", "true", "True")
 
         task = backfill_descriptions_task.delay(
             batch_size=batch_size,
             parallel_workers=parallel_workers,
             platform_slug=platform_slug,
             offset=offset,
+            force_jarvis=force_jarvis,
+            reset_locks=reset_locks,
         )
         label = f"platform={platform_slug}" if platform_slug else "all platforms"
+        mode = "Deep Scan (Jarvis)" if force_jarvis else "backfill"
         messages.success(
             request,
-            f"Description backfill started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
+            f"Description {mode} started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, f"Backfill descriptions ({label})")
+        return redirect_with_task_progress("harvest-rawjobs", task.id, f"{'Deep Scan' if force_jarvis else 'Backfill'} descriptions ({label})")
+
+
+class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
+    """GET ?filter=pending|missing_jd — company-level breakdown for a stat filter."""
+
+    def get(self, request):
+        filter_type = request.GET.get("filter", "").strip()
+
+        if filter_type == "pending":
+            qs = RawJob.objects.filter(sync_status="PENDING")
+        elif filter_type == "missing_jd":
+            from .tasks import BACKFILL_LOCK_STALE_MINUTES
+            qs = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
+        else:
+            return JsonResponse({"error": "Invalid filter. Use pending or missing_jd."}, status=400)
+
+        companies = list(
+            qs.values("company_name", "platform_slug")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:200]
+        )
+        return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
 
 
 class TaskMonitorView(SuperuserRequiredMixin, TemplateView):
@@ -2238,25 +2234,14 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
         week_start = today - timezone.timedelta(days=today.weekday())
         ctx["jarvis_this_week"] = jarvis_qs.filter(fetched_at__date__gte=week_start).count()
 
-        # Platform breakdown from detected_ats stored in raw_payload
-        # Fall back to grouping by job_platform name for those with a matched platform
-        recent_all = (
-            jarvis_qs
-            .select_related("company", "job_platform")
-            .order_by("-fetched_at")[:200]
-        )
-        platform_counts: dict[str, int] = {}
-        for rj in recent_all:
-            detected = (
-                (rj.raw_payload or {}).get("jarvis_detected_ats")
-                or (rj.job_platform.name if rj.job_platform else None)
-                or "Unknown"
-            )
-            key = detected.strip().title() if detected else "Unknown"
-            platform_counts[key] = platform_counts.get(key, 0) + 1
-        ctx["jarvis_platform_breakdown"] = sorted(
-            platform_counts.items(), key=lambda x: x[1], reverse=True
-        )[:6]
+        # Platform breakdown — single aggregation query, no Python loop over model instances
+        ctx["jarvis_platform_breakdown"] = [
+            (row["job_platform__name"] or "Unknown", row["count"])
+            for row in jarvis_qs
+            .values("job_platform__name")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:6]
+        ]
 
         # Recent imports (more items for the new sidebar)
         ctx["recent_jarvis"] = list(
@@ -2961,20 +2946,6 @@ class EngineConfigView(SuperuserRequiredMixin, View):
         except Exception:
             pass
 
-        # Cooldown info for rawjobs page (also useful on engine page)
-        COOLDOWN_HOURS = 2
-        last_full_batch = (
-            FetchBatch.objects.filter(status__in=["COMPLETED", "PARTIAL", "RUNNING", "CANCELLED"])
-            .exclude(name__icontains="PLATFORM CHECK")
-            .exclude(name__icontains="QUICK SYNC")
-            .order_by("-created_at")
-            .first()
-        )
-        cooldown_remaining_sec = 0
-        if last_full_batch:
-            elapsed = (timezone.now() - last_full_batch.created_at).total_seconds()
-            cooldown_remaining_sec = max(0, int(COOLDOWN_HOURS * 3600 - elapsed))
-
         ctx = {
             "cfg": cfg,
             "cpu_count": cpu_count,
@@ -2982,8 +2953,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "worker_stats": worker_stats,
             "active_tab": "engine",
             "concurrency_presets": [1, 2, 3, 4, 6, 8],
-            "last_full_batch": last_full_batch,
-            "cooldown_remaining_sec": cooldown_remaining_sec,
+            **_full_crawl_cooldown_ctx(),
         }
         return TemplateResponse(request, self.template_name, ctx)
 

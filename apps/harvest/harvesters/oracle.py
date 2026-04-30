@@ -135,8 +135,11 @@ class OracleHCMHarvester(BaseHarvester):
             "salary_currency": "USD",
             "salary_period": "",
             "salary_raw": "",
-            "description": "",
-            "requirements": "",
+            # ShortDescriptionStr is a summary (~1-2 sentences) included in the
+            # list API response. Use it as a seed description; the backfill engine
+            # will later fetch the full description via the job detail page.
+            "description": str(req.get("ShortDescriptionStr") or "").strip(),
+            "requirements": str(req.get("ExternalQualificationsStr") or "").strip(),
             "benefits": "",
             "posted_date_raw": posted_raw,
             "closing_date": "",
