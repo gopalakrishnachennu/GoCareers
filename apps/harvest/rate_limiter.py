@@ -1,6 +1,6 @@
 """Phase 3: Redis-backed per-platform rate limiter.
 
-Honors PlatformConfig.inter_request_delay_ms. One key per platform slug.
+Honors PlatformEngineConfig.inter_request_delay_ms. One key per platform slug.
 Fall-through to in-process sleep if Redis isn't reachable (never blocks deploys).
 
 Usage:
@@ -25,15 +25,15 @@ def _delay_ms_for(platform_slug: str) -> int:
     if not platform_slug:
         return _DEFAULT_DELAY_MS
     try:
-        from .models import JobBoardPlatform, PlatformConfig
-        cfg = PlatformConfig.objects.filter(
+        from .models import JobBoardPlatform, PlatformEngineConfig
+        cfg = PlatformEngineConfig.objects.filter(
             platform__slug=platform_slug, is_active=True
         ).only('inter_request_delay_ms').first()
         if cfg:
             return max(0, int(cfg.inter_request_delay_ms or 0))
         JobBoardPlatform.objects  # touch for import clarity
     except Exception:
-        log.debug("rate_limiter: PlatformConfig lookup failed; using default", exc_info=True)
+        log.debug("rate_limiter: PlatformEngineConfig lookup failed; using default", exc_info=True)
     return _DEFAULT_DELAY_MS
 
 

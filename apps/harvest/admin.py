@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db.models import Count
 
-from .models import CompanyPlatformLabel, JobBoardPlatform, RawJob, PlatformConfig
+from .models import CompanyPlatformLabel, JobBoardPlatform, RawJob, PlatformEngineConfig
 
 
 @admin.register(JobBoardPlatform)
@@ -37,7 +37,7 @@ class RawJobAdmin(admin.ModelAdmin):
     readonly_fields = ["url_hash", "fetched_at", "updated_at"]
 
 
-@admin.register(PlatformConfig)
-class PlatformConfigAdmin(admin.ModelAdmin):
+@admin.register(PlatformEngineConfig)
+class PlatformEngineConfigAdmin(admin.ModelAdmin):
     list_display = ["platform", "auto_backfill", "backfill_priority", "fetch_cadence_hours", "inter_request_delay_ms", "is_active"]
     list_filter = ["auto_backfill", "is_active"]

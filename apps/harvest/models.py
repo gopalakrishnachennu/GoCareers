@@ -726,7 +726,7 @@ class RawJob(models.Model):
         return f"{self.title} @ {self.company_name}"
 
 
-class PlatformConfig(models.Model):
+class PlatformEngineConfig(models.Model):
     """Per-platform runtime config — replaces hardcoded `_NEEDS_BACKFILL` list and sleep delays.
 
     One row per JobBoardPlatform. Edits take effect on next task run, no deploy needed.
