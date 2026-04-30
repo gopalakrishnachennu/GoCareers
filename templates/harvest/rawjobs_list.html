@@ -15,7 +15,7 @@
       Tasks
     </a>
     <a href="{% url 'harvest-rawjobs-batches' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Batch History</a>
-    <a href="{% url 'harvest-rawjobs-stats' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
+    <a href="#pipeline-funnel-strip" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
     <form method="post" action="{% url 'harvest-run-validate-urls' %}">{% csrf_token %}
       <input type="hidden" name="pending_only" value="1">
       <input type="hidden" name="recent_hours" value="168">

@@ -60,8 +60,8 @@ urlpatterns = [
     path("platforms/<int:pk>/toggle/", PlatformToggleView.as_view(), name="harvest-platform-toggle"),
     # Schedule
     path("schedule/", ScheduleConfigView.as_view(), name="harvest-schedule"),
-    # Monitor
-    path("monitor/", RunMonitorView.as_view(), name="harvest-monitor"),
+    # Monitor (canonicalized to Ops Center)
+    path("monitor/", RedirectView.as_view(pattern_name="ops-center", permanent=False), name="harvest-monitor"),
     path("tasks/", RedirectView.as_view(pattern_name="ops-center", permanent=False), name="harvest-tasks"),
     path("tasks/api/", RedirectView.as_view(pattern_name="ops-center-api", permanent=False), name="harvest-tasks-api"),
     # Labels

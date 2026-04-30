@@ -1,4 +1,3 @@
-import json
 import logging
 from urllib.parse import urlencode
 
@@ -6,7 +5,6 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
-from django.core.serializers.json import DjangoJSONEncoder
 from django.db import transaction
 from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
 from django.db.models.functions import Coalesce, Length, Trim
@@ -1949,28 +1947,6 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
         return redirect_with_task_progress("harvest-rawjobs", task.id, f"{'Deep Scan' if force_jarvis else 'Backfill'} descriptions ({label})")
 
 
-class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
-    """GET ?filter=pending|missing_jd — company-level breakdown for a stat filter."""
-
-    def get(self, request):
-        filter_type = request.GET.get("filter", "").strip()
-
-        if filter_type == "pending":
-            qs = RawJob.objects.filter(sync_status="PENDING")
-        elif filter_type == "missing_jd":
-            from .tasks import BACKFILL_LOCK_STALE_MINUTES
-            qs = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
-        else:
-            return JsonResponse({"error": "Invalid filter. Use pending or missing_jd."}, status=400)
-
-        companies = list(
-            qs.values("company_name", "platform_slug")
-            .annotate(count=Count("id"))
-            .order_by("-count")[:200]
-        )
-        return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
-
-
 class TaskMonitorView(SuperuserRequiredMixin, TemplateView):
     template_name = "harvest/task_monitor.html"
 
@@ -2193,15 +2169,8 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
         if wants_json:
             return JsonResponse(payload)
 
-        context = {
-            "active_tab": "rawjobs",
-            "stats_payload": payload,
-            "running_batch": payload.get("running_batch"),
-            "platform_stats": payload.get("platform_stats", []),
-            "insights": payload.get("insights", {}),
-            "stats_pretty_json": json.dumps(payload, indent=2, cls=DjangoJSONEncoder),
-        }
-        return render(request, "harvest/rawjobs_stats.html", context)
+        # HTML stats view is now consolidated into the Raw Jobs command center.
+        return redirect("harvest-rawjobs")
 
 
 @method_decorator(never_cache, name="dispatch")
