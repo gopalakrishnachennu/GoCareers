@@ -9,10 +9,24 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: consulting_ci
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d consulting_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DJANGO_SETTINGS_MODULE: config.settings
       SECRET_KEY: ci-not-for-production-use-only-testing
-      DATABASE_URL: "sqlite://:memory:"
+      DATABASE_URL: "postgresql://postgres:postgres@localhost:5432/consulting_ci"
       CELERY_TASK_ALWAYS_EAGER: "1"
     steps:
       - uses: actions/checkout@v4
