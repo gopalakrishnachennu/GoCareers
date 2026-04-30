@@ -10,11 +10,27 @@
     <p class="text-sm text-gray-500 mt-0.5">Harvested job listings — track sync status, browse by company, inspect batches.</p>
   </div>
   <div class="flex gap-2">
+    <a href="{% url 'harvest-tasks' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition flex items-center gap-1.5" title="Live task monitor">
+      <span style="width:7px;height:7px;border-radius:50%;background:#22c55e;display:inline-block;animation:pulse 1.5s infinite;"></span>
+      Tasks
+    </a>
     <a href="{% url 'harvest-rawjobs-batches' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Batch History</a>
     <a href="{% url 'harvest-rawjobs-stats' %}" class="px-3 py-2 bg-white border border-gray-200 text-gray-600 text-sm font-medium rounded-lg hover:border-gray-300 transition">Stats</a>
+    <form method="post" action="{% url 'harvest-run-validate-urls' %}">{% csrf_token %}
+      <input type="hidden" name="pending_only" value="1">
+      <input type="hidden" name="recent_hours" value="168">
+      <input type="hidden" name="max_jobs" value="0">
+      <button type="submit" class="px-3 py-2 bg-white border border-amber-200 text-amber-700 text-sm font-semibold rounded-lg hover:border-amber-300 transition">
+        Validate Live Links
+      </button>
+    </form>
     <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
-      <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm">
-        Sync to Vet Queue
+      <input type="hidden" name="qualified_only" value="1">
+      <input type="hidden" name="max_jobs" value="0">
+      <input type="hidden" name="chunk_size" value="500">
+      <input type="hidden" name="return_to" value="harvest-rawjobs">
+      <button type="submit" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold rounded-lg transition flex items-center gap-1.5 shadow-sm" title="Sync only jobs that pass vet eligibility checks">
+        Sync Qualified to Vet Queue
       </button>
     </form>
   </div>
@@ -34,10 +50,10 @@
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-total">{{ total_jobs }}</p>
         </div>
 
-        <div onclick="applyStatFilter({date_range:'today'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs fetched today" onmouseover="this.style.borderColor='#f59e0b'" onmouseout="this.style.borderColor='#334155'">
+        <div onclick="applyStatFilter({last_hours:'24'})" style="cursor:pointer;background:#1e293b;border:1px solid #334155;border-top:3px solid #f59e0b;border-radius:10px;padding:12px 14px;transition:border-color .15s;" title="Show jobs fetched in the last 24 hours" onmouseover="this.style.borderColor='#f59e0b'" onmouseout="this.style.borderColor='#334155'">
           <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
             <span style="font-size:12px;">🆕</span>
-            <span style="color:#fcd34d;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Today</span>
+            <span style="color:#fcd34d;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;">Last 24h</span>
           </div>
           <p style="color:#f1f5f9;font-size:22px;font-weight:800;margin:0;letter-spacing:-1px;" id="stat-today">{{ new_today }}</p>
         </div>
@@ -99,6 +115,20 @@
         </div>
 
       </div>
+      <div style="background:#ffffff;border:1px solid #e2e8f0;border-radius:12px;padding:16px 18px;margin:0 0 14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+          <h2 style="font-size:13px;font-weight:700;color:#1e293b;margin:0;">Pipeline Funnel</h2>
+          <span style="font-size:11px;color:#64748b;">Fetched → Parsed → Enriched → Classified → Ready → Synced</span>
+        </div>
+        <div id="pipeline-funnel-strip" style="display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;">
+          <div onclick="applyStatFilter({stage:'FETCHED'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Fetched jobs in Jobs Browser" onmouseover="this.style.borderColor='#334155';this.style.boxShadow='0 3px 8px rgba(15,23,42,.08)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Fetched</div><div id="funnel-fetched" style="font-size:20px;font-weight:800;color:#0f172a;">{{ total_jobs }}</div><div style="font-size:10px;color:#94a3b8;">100%</div></div>
+          <div onclick="applyStatFilter({stage:'PARSED'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Parsed jobs in Jobs Browser" onmouseover="this.style.borderColor='#0ea5e9';this.style.boxShadow='0 3px 8px rgba(14,165,233,.16)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Parsed</div><div id="funnel-parsed" style="font-size:20px;font-weight:800;color:#0ea5e9;">0</div><div id="funnel-parsed-pct" style="font-size:10px;color:#94a3b8;">0%</div></div>
+          <div onclick="applyStatFilter({stage:'ENRICHED'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Enriched jobs in Jobs Browser" onmouseover="this.style.borderColor='#8b5cf6';this.style.boxShadow='0 3px 8px rgba(139,92,246,.16)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Enriched</div><div id="funnel-enriched" style="font-size:20px;font-weight:800;color:#8b5cf6;">0</div><div id="funnel-enriched-pct" style="font-size:10px;color:#94a3b8;">0%</div></div>
+          <div onclick="applyStatFilter({stage:'CLASSIFIED'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Classified jobs in Jobs Browser" onmouseover="this.style.borderColor='#f59e0b';this.style.boxShadow='0 3px 8px rgba(245,158,11,.16)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Classified</div><div id="funnel-classified" style="font-size:20px;font-weight:800;color:#f59e0b;">0</div><div id="funnel-classified-pct" style="font-size:10px;color:#94a3b8;">0%</div></div>
+          <div onclick="applyStatFilter({stage:'READY'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Ready jobs in Jobs Browser" onmouseover="this.style.borderColor='#10b981';this.style.boxShadow='0 3px 8px rgba(16,185,129,.16)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Ready</div><div id="funnel-ready" style="font-size:20px;font-weight:800;color:#10b981;">0</div><div id="funnel-ready-pct" style="font-size:10px;color:#94a3b8;">0%</div></div>
+          <div onclick="applyStatFilter({stage:'SYNCED'})" style="cursor:pointer;background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px;transition:border-color .15s,box-shadow .15s;" title="Open Synced jobs in Jobs Browser" onmouseover="this.style.borderColor='#059669';this.style.boxShadow='0 3px 8px rgba(5,150,105,.16)'" onmouseout="this.style.borderColor='#e2e8f0';this.style.boxShadow='none'"><div style="font-size:10px;color:#64748b;font-weight:700;text-transform:uppercase;">Synced</div><div id="funnel-synced" style="font-size:20px;font-weight:800;color:#059669;">{{ synced_jobs }}</div><div id="funnel-synced-pct" style="font-size:10px;color:#94a3b8;">0%</div></div>
+        </div>
+      </div>
       <p style="margin:0;padding:0 0 20px;color:#64748b;font-size:11px;line-height:1.5;max-width:960px;">
         <strong style="color:#374151;">Pool sync:</strong>
         Synced, Pending, and Failed track promotion into the internal job pool. When
@@ -115,9 +145,14 @@
     {% endif %}
 
     <!-- ── Sub-tab switcher ──────────────────────────────────────────────── -->
-    <div style="display:flex;gap:8px;margin-bottom:20px;" id="subtab-nav">
+    <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap;" id="subtab-nav">
       <button onclick="showTab('overview')" id="tab-overview" class="subtab-btn active-subtab" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;border:1px solid #e2e8f0;cursor:pointer;background:#0f172a;color:#f8fafc;">Overview</button>
+      <button onclick="showTab('queue')" id="tab-queue" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Queue</button>
+      <button onclick="showTab('quality')" id="tab-quality" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Quality</button>
+      <button onclick="showTab('failures')" id="tab-failures" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Failures</button>
+      <button onclick="showTab('duplicates')" id="tab-duplicates" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Duplicates</button>
       <button onclick="showTab('companies')" id="tab-companies" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Companies</button>
+      <button onclick="showTab('platform-health')" id="tab-platform-health" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Platform Health</button>
       <button onclick="showTab('jobs')" id="tab-jobs" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Jobs Browser</button>
       <button onclick="showTab('batches')" id="tab-batches" class="subtab-btn" style="padding:8px 18px;border-radius:8px;font-size:13px;font-weight:500;border:1px solid #e2e8f0;cursor:pointer;background:#fff;color:#374151;">Batch History</button>
     </div>
@@ -406,11 +441,22 @@
             <form method="POST" action="{% url 'harvest-run-enrich-existing' %}" id="enrich-existing-form" style="margin-bottom:6px;">
               {% csrf_token %}
               <input type="hidden" name="batch_size" value="2000">
-              <input type="hidden" name="only_unenriched" value="1">
+              <input type="hidden" name="only_unenriched" value="0">
               <button type="button" onclick="confirmEnrichExisting()"
                 style="width:100%;padding:9px;background:linear-gradient(135deg,#7c3aed,#6d28d9);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
                 onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
                 <span>🧠</span><span>Enrich Existing — Skills, Visa, Salary…</span>
+              </button>
+            </form>
+
+            <form method="POST" action="{% url 'harvest-run-backfill-resume-contract' %}" id="backfill-resume-contract-form" style="margin-bottom:6px;">
+              {% csrf_token %}
+              <input type="hidden" name="batch_size" value="1500">
+              <input type="hidden" name="offset" value="0">
+              <button type="submit"
+                style="width:100%;padding:9px;background:linear-gradient(135deg,#4f46e5,#3730a3);color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:all .2s;"
+                onmouseover="this.style.opacity='.9';" onmouseout="this.style.opacity='1';">
+                <span>🧩</span><span>Backfill Resume Contract Fields</span>
               </button>
             </form>
 
@@ -462,6 +508,144 @@
             </form>
           </div>
 
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB: QUEUE
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="panel-queue" style="display:none;">
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Pending &lt; 1h</div><div id="age-lt-1h" style="font-size:24px;font-weight:800;color:#0f172a;">0</div></div>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Pending 1-6h</div><div id="age-1-6h" style="font-size:24px;font-weight:800;color:#0284c7;">0</div></div>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Pending 6-24h</div><div id="age-6-24h" style="font-size:24px;font-weight:800;color:#d97706;">0</div></div>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Pending &gt; 24h</div><div id="age-gt-24h" style="font-size:24px;font-weight:800;color:#dc2626;">0</div></div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:14px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+          <h2 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;">Queue Health</h2>
+          <span id="queue-health-meta" style="font-size:11px;color:#64748b;">Drain 0/h · ETA —</span>
+        </div>
+        <div style="margin-top:10px;background:#f1f5f9;border-radius:8px;height:10px;overflow:hidden;">
+          <div id="queue-stale-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#ef4444);"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#64748b;margin-top:6px;">
+          <span id="queue-stale-label">Stale pending: 0</span>
+          <span id="queue-total-label">Total pending: 0</span>
+        </div>
+      </div>
+
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;">
+          <h2 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;">Stuck Queue (Pending &gt; 6h)</h2>
+          <span style="font-size:11px;color:#64748b;">One-click reprocess by company label</span>
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead><tr style="background:#0f172a;"><th style="padding:10px 12px;text-align:left;color:#94a3b8;font-size:11px;text-transform:uppercase;">Company</th><th style="padding:10px 12px;text-align:left;color:#94a3b8;font-size:11px;text-transform:uppercase;">Platform</th><th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Pending</th><th style="padding:10px 12px;text-align:left;color:#94a3b8;font-size:11px;text-transform:uppercase;">Oldest</th><th style="padding:10px 12px;text-align:center;color:#94a3b8;font-size:11px;text-transform:uppercase;">Action</th></tr></thead>
+            <tbody id="stuck-queue-body"><tr><td colspan="5" style="padding:24px;text-align:center;color:#94a3b8;">Loading queue…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB: QUALITY
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="panel-quality" style="display:none;">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px;">
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Missing JD</div><div id="quality-missing-jd" style="font-size:24px;font-weight:800;color:#dc2626;">0</div></div>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Low Confidence</div><div id="quality-low-confidence" style="font-size:24px;font-weight:800;color:#d97706;">0</div></div>
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:12px;"><div style="font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">HTML-heavy JD</div><div id="quality-html-heavy" style="font-size:24px;font-weight:800;color:#7c3aed;">0</div></div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;margin-bottom:12px;">
+        <h2 style="margin:0 0 10px;font-size:14px;font-weight:800;color:#0f172a;">Quality Debt</h2>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;font-size:12px;">
+          <div style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;background:#fafafa;">Missing salary: <strong id="quality-missing-salary">0</strong></div>
+          <div style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;background:#fafafa;">Missing location: <strong id="quality-missing-location">0</strong></div>
+          <div style="padding:10px;border:1px solid #f1f5f9;border-radius:8px;background:#fafafa;">Missing experience: <strong id="quality-missing-experience">0</strong></div>
+        </div>
+      </div>
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:14px;">
+        <h2 style="margin:0 0 10px;font-size:14px;font-weight:800;color:#0f172a;">Bulk Remediation Actions</h2>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button type="button" onclick="confirmBackfillDesc()" style="padding:8px 12px;background:#0d9488;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Re-clean / Backfill JDs</button>
+          <button type="button" onclick="confirmEnrichExisting()" style="padding:8px 12px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Reclassify Low Confidence</button>
+          <form method="POST" action="{% url 'harvest-run-backfill-resume-contract' %}" style="margin:0;">{% csrf_token %}<input type="hidden" name="batch_size" value="2000"><input type="hidden" name="offset" value="0"><button type="submit" style="padding:8px 12px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Re-clean Existing HTML</button></form>
+          <form method="POST" action="{% url 'harvest-run-retry-failed-fetches' %}" style="margin:0;">{% csrf_token %}<button type="submit" style="padding:8px 12px;background:#dc2626;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">Retry Failed Fetches</button></form>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB: FAILURES
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="panel-failures" style="display:none;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;justify-content:space-between;">
+          <h2 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;">Top Blocked Companies / Platforms</h2>
+          <span style="font-size:11px;color:#64748b;">Based on stale pending queue (&gt;6h)</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:0;">
+          <div style="border-right:1px solid #f1f5f9;">
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead><tr style="background:#f8fafc;"><th style="padding:9px 12px;text-align:left;color:#64748b;font-size:11px;">Company</th><th style="padding:9px 12px;text-align:right;color:#64748b;font-size:11px;">Count</th></tr></thead>
+              <tbody id="blocked-company-body"><tr><td colspan="2" style="padding:20px;text-align:center;color:#94a3b8;">Loading…</td></tr></tbody>
+            </table>
+          </div>
+          <div>
+            <table style="width:100%;border-collapse:collapse;font-size:12px;">
+              <thead><tr style="background:#f8fafc;"><th style="padding:9px 12px;text-align:left;color:#64748b;font-size:11px;">Platform</th><th style="padding:9px 12px;text-align:right;color:#64748b;font-size:11px;">Count</th></tr></thead>
+              <tbody id="blocked-platform-body"><tr><td colspan="2" style="padding:20px;text-align:center;color:#94a3b8;">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB: DUPLICATES
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="panel-duplicates" style="display:none;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:16px;">
+        <h2 style="margin:0 0 10px;font-size:14px;font-weight:800;color:#0f172a;">Duplicate Controls</h2>
+        <p style="font-size:12px;color:#64748b;margin:0 0 12px;">Duplicates are represented by <strong>SKIPPED</strong> sync status in this pipeline.</p>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px;">
+          <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#fafafa;">Total duplicates (SKIPPED): <strong id="dup-total">0</strong></div>
+          <div style="border:1px solid #e2e8f0;border-radius:10px;padding:12px;background:#fafafa;">Duplicates in 24h: <strong id="dup-24h">0</strong></div>
+        </div>
+        <div style="margin-top:12px;">
+          <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&stage=DUPLICATE" style="display:inline-block;padding:8px 12px;background:#0f172a;color:#fff;border-radius:8px;font-size:12px;text-decoration:none;font-weight:700;">Open Duplicate Jobs</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════════════════════════════════════════════════════════
+         TAB: PLATFORM HEALTH
+    ══════════════════════════════════════════════════════════════════ -->
+    <div id="panel-platform-health" style="display:none;">
+      <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+        <div style="padding:14px 16px;border-bottom:1px solid #f1f5f9;">
+          <h2 style="margin:0;font-size:14px;font-weight:800;color:#0f172a;">Platform Reliability (Last 24h)</h2>
+        </div>
+        <div style="overflow-x:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="background:#0f172a;">
+                <th style="padding:10px 12px;text-align:left;color:#94a3b8;font-size:11px;text-transform:uppercase;">Platform</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Runs</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Success</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Partial</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Failed</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Success %</th>
+                <th style="padding:10px 12px;text-align:right;color:#94a3b8;font-size:11px;text-transform:uppercase;">Avg New</th>
+                <th style="padding:10px 12px;text-align:left;color:#94a3b8;font-size:11px;text-transform:uppercase;">Last Run</th>
+              </tr>
+            </thead>
+            <tbody id="platform-health-body"><tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8;">Loading platform health…</td></tr></tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -520,19 +704,52 @@
     <div id="panel-jobs" style="display:none;">
 
       <!-- Active filter banner -->
-      {% if selected_sync_status or selected_has_jd or selected_is_remote or selected_is_active or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level %}
+      {% if selected_sync_status or selected_stage or selected_pending_age_bucket or selected_has_jd or selected_is_remote or selected_is_active or selected_fetched_from or selected_fetched_to or selected_date_from or selected_date_to or q or selected_platform or selected_employment_type or selected_location_type or selected_experience_level or selected_company_id or selected_label_pk or selected_department or selected_country or selected_state or selected_education_required or selected_years_min or selected_years_max or selected_salary_min_from or selected_salary_max_to or selected_clearance_required or selected_language or selected_shift_schedule or selected_company_industry or selected_company_stage or selected_company_funding or selected_company_size or selected_founded_from or selected_founded_to or selected_certification or selected_benefit %}
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 16px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
           <span style="font-size:12px;font-weight:700;color:#1d4ed8;">Filtered:</span>
           {% if selected_sync_status %}<span style="padding:2px 10px;background:#dbeafe;color:#1d4ed8;border-radius:20px;font-size:11px;font-weight:600;">Sync: {{ selected_sync_status }}</span>{% endif %}
+          {% if selected_stage %}<span style="padding:2px 10px;background:#ede9fe;color:#5b21b6;border-radius:20px;font-size:11px;font-weight:600;">Stage: {{ selected_stage }}</span>{% endif %}
+          {% if selected_pending_age_bucket %}<span style="padding:2px 10px;background:#fff7ed;color:#9a3412;border-radius:20px;font-size:11px;font-weight:600;">Pending age: {{ selected_pending_age_bucket }}</span>{% endif %}
           {% if selected_has_jd == '0' %}<span style="padding:2px 10px;background:#fef3c7;color:#92400e;border-radius:20px;font-size:11px;font-weight:600;">No JD</span>{% endif %}
           {% if selected_has_jd == '1' %}<span style="padding:2px 10px;background:#d1fae5;color:#065f46;border-radius:20px;font-size:11px;font-weight:600;">Has JD</span>{% endif %}
           {% if selected_is_remote == '1' %}<span style="padding:2px 10px;background:#e0f2fe;color:#0369a1;border-radius:20px;font-size:11px;font-weight:600;">Remote only</span>{% endif %}
           {% if selected_is_active == '1' %}<span style="padding:2px 10px;background:#dcfce7;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Active only</span>{% endif %}
           {% if selected_is_active == '0' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Inactive only</span>{% endif %}
-          {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Date: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
+          {% if selected_fetched_from or selected_fetched_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Fetched: {{ selected_fetched_from|default:"…" }} → {{ selected_fetched_to|default:"…" }}</span>{% endif %}
+          {% if selected_date_from or selected_date_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Posted: {{ selected_date_from|default:"…" }} → {{ selected_date_to|default:"…" }}</span>{% endif %}
           {% if q %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Search: "{{ q }}"</span>{% endif %}
           {% if selected_platform %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Platform: {{ selected_platform }}</span>{% endif %}
+          {% if selected_department %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Dept: {{ selected_department }}</span>{% endif %}
+          {% if selected_country %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Country: {{ selected_country }}</span>{% endif %}
+          {% if selected_state %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">State: {{ selected_state }}</span>{% endif %}
+          {% if selected_education_required %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Education: {{ selected_education_required }}</span>{% endif %}
+          {% if selected_years_min or selected_years_max %}<span style="padding:2px 10px;background:#f8fafc;color:#334155;border-radius:20px;font-size:11px;font-weight:600;">Years: {{ selected_years_min|default:"…" }} → {{ selected_years_max|default:"…" }}</span>{% endif %}
+          {% if selected_salary_min_from or selected_salary_max_to %}<span style="padding:2px 10px;background:#fff7ed;color:#9a3412;border-radius:20px;font-size:11px;font-weight:600;">Salary: {{ selected_salary_min_from|default:"…" }} → {{ selected_salary_max_to|default:"…" }}</span>{% endif %}
+          {% if selected_clearance_required == '1' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Clearance required</span>{% endif %}
+          {% if selected_clearance_required == '0' %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">No clearance</span>{% endif %}
+          {% if selected_clearance_level %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Clearance level: {{ selected_clearance_level }}</span>{% endif %}
+          {% if selected_language %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Language: {{ selected_language }}</span>{% endif %}
+          {% if selected_license %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">License: {{ selected_license }}</span>{% endif %}
+          {% if selected_certification %}<span style="padding:2px 10px;background:#fef3c7;color:#92400e;border-radius:20px;font-size:11px;font-weight:600;">Certification: {{ selected_certification }}</span>{% endif %}
+          {% if selected_benefit %}<span style="padding:2px 10px;background:#dcfce7;color:#166534;border-radius:20px;font-size:11px;font-weight:600;">Benefit: {{ selected_benefit }}</span>{% endif %}
+          {% if selected_encouraged %}<span style="padding:2px 10px;background:#f0fdf4;color:#15803d;border-radius:20px;font-size:11px;font-weight:600;">Encouraged: {{ selected_encouraged }}</span>{% endif %}
+          {% if selected_shift_schedule %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Shift: {{ selected_shift_schedule }}</span>{% endif %}
+          {% if selected_schedule_type %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Schedule: {{ selected_schedule_type }}</span>{% endif %}
+          {% if selected_weekend_required == '1' %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Weekend required</span>{% endif %}
+          {% if selected_weekend_required == '0' %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">No weekend</span>{% endif %}
+          {% if selected_travel_min or selected_travel_max %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Travel %: {{ selected_travel_min|default:"…" }} → {{ selected_travel_max|default:"…" }}</span>{% endif %}
+          {% if selected_company_industry %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Industry: {{ selected_company_industry }}</span>{% endif %}
+          {% if selected_company_stage %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Stage: {{ selected_company_stage }}</span>{% endif %}
+          {% if selected_company_funding %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Funding: {{ selected_company_funding }}</span>{% endif %}
+          {% if selected_company_size %}<span style="padding:2px 10px;background:#f1f5f9;color:#475569;border-radius:20px;font-size:11px;font-weight:600;">Size: {{ selected_company_size }}</span>{% endif %}
+          {% if selected_resume_ready_min %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Resume score ≥ {{ selected_resume_ready_min }}</span>{% endif %}
+          {% if selected_resume_jd == 'ready' %}<span style="padding:2px 10px;background:#dcfce7;color:#166534;border-radius:20px;font-size:11px;font-weight:600;">Resume JD: Ready</span>{% endif %}
+          {% if selected_resume_jd == 'blocked' %}<span style="padding:2px 10px;background:#fee2e2;color:#991b1b;border-radius:20px;font-size:11px;font-weight:600;">Resume JD: Blocked</span>{% endif %}
+          {% if selected_classification_min_conf %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Classify conf ≥ {{ selected_classification_min_conf }}</span>{% endif %}
+          {% if selected_founded_from or selected_founded_to %}<span style="padding:2px 10px;background:#faf5ff;color:#7c3aed;border-radius:20px;font-size:11px;font-weight:600;">Founded: {{ selected_founded_from|default:"…" }} → {{ selected_founded_to|default:"…" }}</span>{% endif %}
+          {% if selected_company_id %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Company ID: {{ selected_company_id }}</span>{% endif %}
+          {% if selected_label_pk %}<span style="padding:2px 10px;background:#ecfeff;color:#155e75;border-radius:20px;font-size:11px;font-weight:600;">Label: {{ selected_label_pk }}</span>{% endif %}
         </div>
         <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="font-size:11px;color:#64748b;text-decoration:none;padding:3px 10px;background:#f1f5f9;border-radius:6px;border:1px solid #e2e8f0;font-weight:600;">✕ Clear filters</a>
       </div>
@@ -541,6 +758,8 @@
       <!-- Filter bar -->
       <form method="GET" action="{% url 'harvest-rawjobs' %}" id="jobs-filter-form" style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:14px 16px;margin-bottom:16px;">
         <input type="hidden" name="_subtab" value="jobs">
+        {% if selected_company_id %}<input type="hidden" name="company_id" value="{{ selected_company_id }}">{% endif %}
+        {% if selected_label_pk %}<input type="hidden" name="label_pk" value="{{ selected_label_pk }}">{% endif %}
         <!-- Row 1: search + main dropdowns -->
         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px;">
           <input type="text" name="q" id="jf-q" value="{{ q }}" placeholder="Search title / company…" style="flex:1;min-width:160px;padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
@@ -552,10 +771,33 @@
             <option value="">All sync status</option>
             {% for val, label in sync_status_choices %}<option value="{{ val }}" {% if selected_sync_status == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
+          <select name="stage" id="jf-stage" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">All stages</option>
+            <option value="FETCHED" {% if selected_stage == 'FETCHED' %}selected{% endif %}>Fetched</option>
+            <option value="PARSED" {% if selected_stage == 'PARSED' %}selected{% endif %}>Parsed</option>
+            <option value="ENRICHED" {% if selected_stage == 'ENRICHED' %}selected{% endif %}>Enriched</option>
+            <option value="CLASSIFIED" {% if selected_stage == 'CLASSIFIED' %}selected{% endif %}>Classified</option>
+            <option value="READY" {% if selected_stage == 'READY' %}selected{% endif %}>Ready</option>
+            <option value="SYNCED" {% if selected_stage == 'SYNCED' %}selected{% endif %}>Synced</option>
+            <option value="FAILED" {% if selected_stage == 'FAILED' %}selected{% endif %}>Failed</option>
+            <option value="DUPLICATE" {% if selected_stage == 'DUPLICATE' %}selected{% endif %}>Duplicate</option>
+          </select>
+          <select name="pending_age_bucket" id="jf-pending-age" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Pending age</option>
+            <option value="lt_1h" {% if selected_pending_age_bucket == 'lt_1h' %}selected{% endif %}>Pending &lt; 1h</option>
+            <option value="h_1_6" {% if selected_pending_age_bucket == 'h_1_6' %}selected{% endif %}>Pending 1-6h</option>
+            <option value="h_6_24" {% if selected_pending_age_bucket == 'h_6_24' %}selected{% endif %}>Pending 6-24h</option>
+            <option value="gt_24h" {% if selected_pending_age_bucket == 'gt_24h' %}selected{% endif %}>Pending &gt; 24h</option>
+          </select>
           <select name="has_jd" id="jf-has-jd" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">JD status</option>
             <option value="1" {% if selected_has_jd == '1' %}selected{% endif %}>Has JD</option>
             <option value="0" {% if selected_has_jd == '0' %}selected{% endif %}>Missing JD</option>
+          </select>
+          <select name="resume_jd" id="jf-resume-jd" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Resume JD gate</option>
+            <option value="ready" {% if selected_resume_jd == 'ready' %}selected{% endif %}>Ready for resume</option>
+            <option value="blocked" {% if selected_resume_jd == 'blocked' %}selected{% endif %}>Blocked for resume</option>
           </select>
           <select name="is_active" id="jf-is-active" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
             <option value="">Active status</option>
@@ -582,12 +824,77 @@
             <option value="">All levels</option>
             {% for val, label in experience_level_choices %}<option value="{{ val }}" {% if selected_experience_level == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
           </select>
-          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
-          <input type="date" name="date_from" id="jf-date-from" value="{{ selected_date_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
+          <input type="text" name="department" id="jf-department" value="{{ selected_department }}" placeholder="Department…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="country" id="jf-country" value="{{ selected_country }}" placeholder="Country…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="state" id="jf-state" value="{{ selected_state }}" placeholder="State…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+        </div>
+        <!-- Row 3: classification filters -->
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+          <select name="education_required" id="jf-education" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Education</option>
+            {% for val, label in education_required_choices %}<option value="{{ val }}" {% if selected_education_required == val %}selected{% endif %}>{{ label }}</option>{% endfor %}
+          </select>
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Years:</span>
+          <input type="number" min="0" max="60" name="years_min" id="jf-years-min" value="{{ selected_years_min }}" placeholder="Min" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
           <span style="font-size:11px;color:#94a3b8;">→</span>
-          <input type="date" name="date_to" id="jf-date-to" value="{{ selected_date_to }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched to">
+          <input type="number" min="0" max="60" name="years_max" id="jf-years-max" value="{{ selected_years_max }}" placeholder="Max" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Salary:</span>
+          <input type="number" min="0" name="salary_min_from" id="jf-salary-min-from" value="{{ selected_salary_min_from }}" placeholder="Min $" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:88px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="0" name="salary_max_to" id="jf-salary-max-to" value="{{ selected_salary_max_to }}" placeholder="Max $" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:88px;">
+          <select name="clearance_required" id="jf-clearance" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Clearance?</option>
+            <option value="1" {% if selected_clearance_required == '1' %}selected{% endif %}>Required</option>
+            <option value="0" {% if selected_clearance_required == '0' %}selected{% endif %}>Not required</option>
+          </select>
+          <input type="text" name="clearance_level" id="jf-clearance-level" value="{{ selected_clearance_level }}" placeholder="Clearance level…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="language" id="jf-language" value="{{ selected_language }}" placeholder="Language…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="license" id="jf-license" value="{{ selected_license }}" placeholder="License…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="certification" id="jf-certification" value="{{ selected_certification }}" placeholder="Certification…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <input type="text" name="benefit" id="jf-benefit" value="{{ selected_benefit }}" placeholder="Benefit…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:120px;">
+          <input type="text" name="encouraged" id="jf-encouraged" value="{{ selected_encouraged }}" placeholder="Encouraged group…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="schedule_type" id="jf-schedule" value="{{ selected_schedule_type }}" placeholder="Schedule type…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <select name="weekend_required" id="jf-weekend-required" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;">
+            <option value="">Weekend?</option>
+            <option value="1" {% if selected_weekend_required == '1' %}selected{% endif %}>Required</option>
+            <option value="0" {% if selected_weekend_required == '0' %}selected{% endif %}>Not required</option>
+          </select>
+          <input type="text" name="shift_schedule" id="jf-shift" value="{{ selected_shift_schedule }}" placeholder="Shift / schedule…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="company_industry" id="jf-company-industry" value="{{ selected_company_industry }}" placeholder="Industry…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:140px;">
+          <input type="text" name="company_stage" id="jf-company-stage" value="{{ selected_company_stage }}" placeholder="Company stage…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <input type="text" name="company_funding" id="jf-company-funding" value="{{ selected_company_funding }}" placeholder="Funding…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <input type="text" name="company_size" id="jf-company-size" value="{{ selected_company_size }}" placeholder="Company size…" style="padding:7px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;min-width:130px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Travel %:</span>
+          <input type="number" min="0" max="100" name="travel_min" id="jf-travel-min" value="{{ selected_travel_min }}" placeholder="Min" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="0" max="100" name="travel_max" id="jf-travel-max" value="{{ selected_travel_max }}" placeholder="Max" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:74px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Founded:</span>
+          <input type="number" min="1800" max="2100" name="founded_from" id="jf-founded-from" value="{{ selected_founded_from }}" placeholder="From" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="number" min="1800" max="2100" name="founded_to" id="jf-founded-to" value="{{ selected_founded_to }}" placeholder="To" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:84px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Resume score ≥</span>
+          <input type="number" min="0" max="1" step="0.05" name="resume_ready_min" id="jf-resume-ready-min" value="{{ selected_resume_ready_min }}" placeholder="0.60" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:80px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Conf ≥</span>
+          <input type="number" min="0" max="1" step="0.05" name="classification_min_conf" id="jf-class-min-conf" value="{{ selected_classification_min_conf }}" placeholder="0.60" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;width:80px;">
+          <span style="font-size:11px;color:#94a3b8;white-space:nowrap;">Fetched:</span>
+          <input type="date" name="fetched_from" id="jf-fetched-from" value="{{ selected_fetched_from }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched from">
+          <span style="font-size:11px;color:#94a3b8;">→</span>
+          <input type="date" name="fetched_to" id="jf-fetched-to" value="{{ selected_fetched_to }}" style="padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;font-size:12px;" title="Fetched to">
           <button type="submit" style="padding:7px 16px;background:#0f172a;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Search</button>
           <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs" style="padding:7px 12px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:6px;font-size:12px;text-decoration:none;">Clear</a>
+        </div>
+      </form>
+
+      <form id="sync-selected-form" method="POST" action="{% url 'harvest-run-sync-selected' %}" style="margin:0 0 10px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:10px 12px;">
+        {% csrf_token %}
+        <input type="hidden" name="raw_job_ids" id="selected-raw-job-ids" value="">
+        <div style="font-size:12px;color:#334155;">
+          Selected rows: <strong id="selected-rows-count">0</strong>
+          <span style="color:#94a3b8;">(max 500 sync at once)</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" onclick="toggleSelectAllVisible()" style="padding:7px 10px;background:#f8fafc;border:1px solid #dbe4ee;border-radius:6px;font-size:12px;color:#334155;font-weight:600;cursor:pointer;">Select visible</button>
+          <button type="submit" onclick="return submitSyncSelected()" style="padding:7px 12px;background:#059669;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">Re-sync selected</button>
         </div>
       </form>
 
@@ -597,16 +904,33 @@
           <table style="width:100%;border-collapse:collapse;font-size:12px;">
             <thead>
               <tr style="background:#0f172a;position:sticky;top:0;z-index:2;">
+                <th style="padding:10px 8px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;"><input type="checkbox" id="select-all-head" onclick="toggleSelectAllVisible()" title="Select visible"></th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;position:sticky;left:0;background:#0f172a;z-index:3;">Company</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Platform</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Stage</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Age</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;min-width:200px;">Title</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Location</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Type</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Level</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Dept</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Geo</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Education</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Clearance</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Schedule</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Keywords</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Company Profile</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Resume Score</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">JD Quality</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Classify Conf</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Salary</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Posted</th>
                 <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Fetched</th>
+                <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Retries</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Last Error</th>
+                <th style="padding:10px 14px;text-align:left;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Pipeline</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">JD</th>
+                <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Resume JD</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Sync</th>
                 <th style="padding:10px 14px;text-align:center;color:#94a3b8;font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.5px;">Action</th>
               </tr>
@@ -614,12 +938,15 @@
             <tbody>
               {% for job in jobs %}
               <tr style="border-bottom:1px solid #f1f5f9;transition:background .1s;" onmouseover="this.style.background='#f8fafc';" onmouseout="this.style.background='';">
+                <td style="padding:9px 8px;text-align:center;"><input type="checkbox" class="row-select-cb" value="{{ job.pk }}" onchange="updateSelectedRows()"></td>
                 <td style="padding:9px 14px;position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;font-weight:600;color:#0f172a;max-width:160px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.company_name }}">{{ job.company_name|truncatechars:22 }}</td>
                 <td style="padding:9px 14px;">
                   {% if job.platform_slug %}
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;white-space:nowrap;">{{ job.platform_slug }}</span>
                   {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
+                <td style="padding:9px 14px;white-space:nowrap;"><span style="padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;background:#eef2ff;color:#4338ca;">{{ job.pipeline_stage_label }}</span></td>
+                <td style="padding:9px 14px;white-space:nowrap;color:#64748b;font-size:11px;">{{ job.fetched_at|timesince }}</td>
                 <td style="padding:9px 14px;color:#374151;max-width:220px;">
                   <a href="{% url 'harvest-rawjob-detail' job.pk %}" style="color:#1d4ed8;text-decoration:none;font-weight:500;" title="{{ job.title }}">{{ job.title|truncatechars:40 }}</a>
                   {% if job.is_remote %}<span style="margin-left:4px;padding:1px 5px;background:#d1fae5;color:#065f46;border-radius:10px;font-size:9px;font-weight:700;">REMOTE</span>{% endif %}
@@ -642,6 +969,40 @@
                   <span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">{{ job.experience_level }}</span>
                   {% else %}<span style="color:#94a3b8;">—</span>{% endif %}
                 </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.department_normalized|default:job.department }}">{{ job.department_normalized|default:job.department|truncatechars:20|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
+                  {% if job.state or job.country %}
+                    {{ job.state|default:"" }}{% if job.state and job.country %}, {% endif %}{{ job.country|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{{ job.education_required|default:"—" }}</td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.clearance_level|default:'' }}">
+                  {% if job.clearance_level %}{{ job.clearance_level|truncatechars:18 }}{% elif job.clearance_required %}Required{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;" title="{{ job.schedule_type }} {{ job.shift_schedule }}">
+                  {% if job.schedule_type or job.shift_schedule %}
+                    {{ job.schedule_type|default:"" }}{% if job.schedule_type and job.shift_schedule %} · {% endif %}{{ job.shift_schedule|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{% if job.title_keywords %}{{ job.title_keywords|join:', ' }}{% else %}{{ job.job_keywords|join:', ' }}{% endif %}">
+                  {% if job.title_keywords %}{{ job.title_keywords|slice:":4"|join:", " }}{% elif job.job_keywords %}{{ job.job_keywords|slice:":4"|join:", " }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.company_industry }} {{ job.company_size }}">
+                  {% if job.company_industry or job.company_size %}
+                    {{ job.company_industry|default:"" }}{% if job.company_industry and job.company_size %} · {% endif %}{{ job.company_size|default:"" }}
+                  {% else %}
+                    <span style="color:#94a3b8;">—</span>
+                  {% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
+                  {% if job.resume_ready_score %}{{ job.resume_ready_score|floatformat:2 }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}
+                </td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{% if job.jd_quality_score %}{{ job.jd_quality_score|floatformat:2 }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}</td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{% if job.classification_confidence %}{{ job.classification_confidence|floatformat:2 }}{% else %}<span style="color:#94a3b8;">—</span>{% endif %}</td>
                 <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">
                   {% if job.salary_min %}
                   ${{ job.salary_min|floatformat:0 }}{% if job.salary_max and job.salary_max != job.salary_min %}–${{ job.salary_max|floatformat:0 }}{% endif %}
@@ -650,6 +1011,9 @@
                 </td>
                 <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;font-size:11px;">{{ job.posted_date|default:"—" }}</td>
                 <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;font-size:11px;" title="{{ job.fetched_at|date:'Y-m-d H:i:s' }}">{{ job.fetched_at|date:"M d, H:i" }}</td>
+                <td style="padding:9px 14px;text-align:center;color:#64748b;">{{ job.retry_count_estimate }}</td>
+                <td style="padding:9px 14px;color:#64748b;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{{ job.last_error_text }}">{{ job.last_error_text|default:"—"|truncatechars:42 }}</td>
+                <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">{{ job.owner_pipeline_label }}</td>
                 <td style="padding:9px 14px;text-align:center;">
                   {% if job.jd_browser_label == 'yes' %}
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;">✓ Yes</span>
@@ -659,6 +1023,15 @@
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">✗ No</span>
                   {% endif %}
                 </td>
+                {% with rg=job.resume_jd_gate %}
+                <td style="padding:9px 14px;text-align:center;white-space:nowrap;" title="{{ rg.reason_text }}">
+                  {% if rg.usable %}
+                  <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;">READY • {{ rg.word_count }}w</span>
+                  {% else %}
+                  <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">BLOCK • {{ rg.word_count }}w</span>
+                  {% endif %}
+                </td>
+                {% endwith %}
                 <td style="padding:9px 14px;text-align:center;">
                   <span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;
                     {% if job.sync_status == 'SYNCED' %}background:#d1fae5;color:#065f46;
@@ -674,7 +1047,7 @@
               </tr>
               {% empty %}
               <tr>
-                <td colspan="12" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
+                <td colspan="29" style="padding:40px;text-align:center;color:#94a3b8;font-size:13px;">
                   No jobs found. <a href="{% url 'harvest-rawjobs' %}" style="color:#3b82f6;">Clear filters</a> or start a batch fetch above.
                 </td>
               </tr>
@@ -688,7 +1061,7 @@
       <!-- Counter bar: shows how many rows are loaded vs total -->
       <div id="scroll-status" style="display:flex;align-items:center;justify-content:space-between;padding:10px 4px;margin-top:4px;">
         <span style="font-size:12px;color:#64748b;" id="scroll-count">
-          Showing <strong id="loaded-count">{{ jobs|length }}</strong> of <strong>{{ total_jobs }}</strong> jobs
+          Showing <strong id="loaded-count">{{ jobs|length }}</strong> of <strong>{{ jobs_total_filtered }}</strong> jobs
         </span>
         <span id="scroll-spinner" style="display:none;font-size:12px;color:#94a3b8;display:flex;align-items:center;gap:6px;">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" stroke-width="2" style="animation:spin .8s linear infinite;"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
@@ -756,8 +1129,9 @@
 const _URL_COMPANY_STATUS    = "{% url 'harvest-rawjobs-company-status' %}";
 const _URL_BATCHES           = "{% url 'harvest-rawjobs-batches' %}";
 const _URL_COMPANY_BREAKDOWN = "{% url 'harvest-rawjobs-company-breakdown' %}";
+const _URL_WORKFLOW_INSIGHTS = "{% url 'harvest-rawjobs-insights' %}";
 // ─── Sub-tab switching ─────────────────────────────────────────────────────
-const PANELS = ['overview','companies','jobs','batches'];
+const PANELS = ['overview','queue','quality','failures','duplicates','companies','platform-health','jobs','batches'];
 
 function showTab(name) {
   PANELS.forEach(p => {
@@ -776,6 +1150,7 @@ function showTab(name) {
   // If switching to companies, load data
   if (name === 'companies') loadCompanyData();
   if (name === 'batches') loadBatchHistory();
+  if (['overview','queue','quality','failures','duplicates','platform-health'].includes(name)) loadWorkflowInsights();
   // Persist subtab in URL hash
   history.replaceState(null, '', '#' + name);
 }
@@ -904,6 +1279,7 @@ let pollingInterval = null;
 
 function startPolling() {
   if (pollingInterval) return;
+  pollStats(); // immediate refresh on page open/tab switch
   pollingInterval = setInterval(pollStats, 10000);
 }
 
@@ -912,7 +1288,8 @@ function stopPolling() {
 }
 
 function pollStats() {
-  fetch('{% url "harvest-rawjobs-stats" %}')
+  const statsUrl = `{% url "harvest-rawjobs-stats" %}?format=json&_ts=${Date.now()}`;
+  fetch(statsUrl, { cache: 'no-store' })
     .then(r => r.json())
     .then(data => {
       // Update stat cards
@@ -942,7 +1319,10 @@ function pollStats() {
         if (stopIdEl) stopIdEl.value = b.id || '';
       } else {
         card.style.display = 'none';
-        stopPolling();
+      }
+
+      if (data.insights) {
+        renderWorkflowInsights(data.insights);
       }
     })
     .catch(() => {});
@@ -953,8 +1333,131 @@ function setText(id, val) {
   if (el) el.textContent = val;
 }
 
-// Start polling if a batch is running on page load
-{% if has_running_batch %}startPolling();{% endif %}
+function pct(part, total) {
+  const p = total > 0 ? (part / total) * 100 : 0;
+  return Math.max(0, Math.min(100, p));
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString();
+}
+
+function renderWorkflowInsights(insights) {
+  const funnel = insights.funnel || {};
+  const fetched = Number(funnel.fetched || 0);
+  const parsed = Number(funnel.parsed || 0);
+  const enriched = Number(funnel.enriched || 0);
+  const classified = Number(funnel.classified || 0);
+  const ready = Number(funnel.ready || 0);
+  const synced = Number(funnel.synced || 0);
+
+  setText('funnel-fetched', fetched.toLocaleString());
+  setText('funnel-parsed', parsed.toLocaleString());
+  setText('funnel-enriched', enriched.toLocaleString());
+  setText('funnel-classified', classified.toLocaleString());
+  setText('funnel-ready', ready.toLocaleString());
+  setText('funnel-synced', synced.toLocaleString());
+  setText('funnel-parsed-pct', pct(parsed, fetched).toFixed(1) + '%');
+  setText('funnel-enriched-pct', pct(enriched, fetched).toFixed(1) + '%');
+  setText('funnel-classified-pct', pct(classified, fetched).toFixed(1) + '%');
+  setText('funnel-ready-pct', pct(ready, fetched).toFixed(1) + '%');
+  setText('funnel-synced-pct', pct(synced, fetched).toFixed(1) + '%');
+
+  const queue = insights.queue || {};
+  const aging = queue.aging || {};
+  setText('age-lt-1h', Number(aging.lt_1h || 0).toLocaleString());
+  setText('age-1-6h', Number(aging.h_1_6 || 0).toLocaleString());
+  setText('age-6-24h', Number(aging.h_6_24 || 0).toLocaleString());
+  setText('age-gt-24h', Number(aging.gt_24h || 0).toLocaleString());
+
+  const pendingTotal = Number(queue.pending_total || 0);
+  const pendingStale = Number(queue.pending_stale || 0);
+  const stalePct = pct(pendingStale, Math.max(1, pendingTotal));
+  const staleBar = document.getElementById('queue-stale-bar');
+  if (staleBar) staleBar.style.width = stalePct.toFixed(1) + '%';
+  setText('queue-stale-label', `Stale pending: ${pendingStale.toLocaleString()} (>${Number(queue.stale_pending_hours || 6)}h)`);
+  setText('queue-total-label', `Total pending: ${pendingTotal.toLocaleString()}`);
+  setText('queue-health-meta', `Drain ${Number(queue.drain_per_hour || 0).toLocaleString()}/h · ETA ${queue.eta_hours == null ? '—' : queue.eta_hours + 'h'}`);
+
+  const stuckBody = document.getElementById('stuck-queue-body');
+  if (stuckBody) {
+    const rows = insights.stuck_queue || [];
+    if (!rows.length) {
+      stuckBody.innerHTML = '<tr><td colspan="5" style="padding:24px;text-align:center;color:#94a3b8;">No stale pending rows.</td></tr>';
+    } else {
+      stuckBody.innerHTML = rows.slice(0, 40).map((r) => `
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:9px 12px;color:#0f172a;font-weight:600;">${escHtml(r.company_name || '—')}</td>
+          <td style="padding:9px 12px;color:#334155;text-transform:capitalize;">${escHtml(r.platform_slug || '—')}</td>
+          <td style="padding:9px 12px;text-align:right;font-weight:700;color:#b45309;">${Number(r.count || 0).toLocaleString()}</td>
+          <td style="padding:9px 12px;color:#64748b;">${fmtDateTime(r.oldest)}</td>
+          <td style="padding:9px 12px;text-align:center;">${r.platform_label_id ? `<button onclick="fetchCompany(${r.platform_label_id})" style="padding:4px 10px;background:#0f172a;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">Reprocess</button>` : '<span style="color:#94a3b8;">n/a</span>'}</td>
+        </tr>
+      `).join('');
+    }
+  }
+
+  const debt = insights.quality_debt || {};
+  setText('quality-missing-jd', Number(debt.missing_jd || 0).toLocaleString());
+  setText('quality-low-confidence', Number(debt.low_confidence || 0).toLocaleString());
+  setText('quality-html-heavy', Number(debt.html_heavy || 0).toLocaleString());
+  setText('quality-missing-salary', Number(debt.missing_salary || 0).toLocaleString());
+  setText('quality-missing-location', Number(debt.missing_location || 0).toLocaleString());
+  setText('quality-missing-experience', Number(debt.missing_experience || 0).toLocaleString());
+
+  const blockedCompanies = (insights.top_blocked && insights.top_blocked.companies) || [];
+  const blockedPlatforms = (insights.top_blocked && insights.top_blocked.platforms) || [];
+  const blockedCompanyBody = document.getElementById('blocked-company-body');
+  if (blockedCompanyBody) {
+    blockedCompanyBody.innerHTML = blockedCompanies.length
+      ? blockedCompanies.map((r) => `<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;color:#0f172a;">${escHtml(r.company_name || '—')}</td><td style="padding:8px 12px;text-align:right;color:#b45309;font-weight:700;">${Number(r.count || 0).toLocaleString()}</td></tr>`).join('')
+      : '<tr><td colspan="2" style="padding:20px;text-align:center;color:#94a3b8;">No blocked companies</td></tr>';
+  }
+  const blockedPlatformBody = document.getElementById('blocked-platform-body');
+  if (blockedPlatformBody) {
+    blockedPlatformBody.innerHTML = blockedPlatforms.length
+      ? blockedPlatforms.map((r) => `<tr style="border-bottom:1px solid #f1f5f9;"><td style="padding:8px 12px;color:#0f172a;text-transform:capitalize;">${escHtml(r.platform_slug || '—')}</td><td style="padding:8px 12px;text-align:right;color:#b45309;font-weight:700;">${Number(r.count || 0).toLocaleString()}</td></tr>`).join('')
+      : '<tr><td colspan="2" style="padding:20px;text-align:center;color:#94a3b8;">No blocked platforms</td></tr>';
+  }
+
+  const dup = insights.duplicates || {};
+  setText('dup-total', Number(dup.total || 0).toLocaleString());
+  setText('dup-24h', Number(dup.recent_24h || 0).toLocaleString());
+
+  const platformHealthBody = document.getElementById('platform-health-body');
+  if (platformHealthBody) {
+    const rows = insights.platform_health || [];
+    if (!rows.length) {
+      platformHealthBody.innerHTML = '<tr><td colspan="8" style="padding:24px;text-align:center;color:#94a3b8;">No recent platform runs.</td></tr>';
+    } else {
+      platformHealthBody.innerHTML = rows.map((r) => `
+        <tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:9px 12px;color:#0f172a;font-weight:600;text-transform:capitalize;">${escHtml(r.platform_slug || 'unknown')}</td>
+          <td style="padding:9px 12px;text-align:right;">${Number(r.runs || 0).toLocaleString()}</td>
+          <td style="padding:9px 12px;text-align:right;color:#059669;">${Number(r.success || 0).toLocaleString()}</td>
+          <td style="padding:9px 12px;text-align:right;color:#d97706;">${Number(r.partial || 0).toLocaleString()}</td>
+          <td style="padding:9px 12px;text-align:right;color:#dc2626;">${Number(r.failed || 0).toLocaleString()}</td>
+          <td style="padding:9px 12px;text-align:right;font-weight:700;">${Number(r.success_rate || 0).toFixed(1)}%</td>
+          <td style="padding:9px 12px;text-align:right;">${Number(r.avg_jobs_new || 0).toFixed(1)}</td>
+          <td style="padding:9px 12px;color:#64748b;">${fmtDateTime(r.last_run)}</td>
+        </tr>
+      `).join('');
+    }
+  }
+}
+
+function loadWorkflowInsights() {
+  fetch(`${_URL_WORKFLOW_INSIGHTS}?_ts=${Date.now()}`, { cache: 'no-store' })
+    .then(r => r.json())
+    .then(d => { if (d && d.ok && d.insights) renderWorkflowInsights(d.insights); })
+    .catch(() => {});
+}
+
+// Keep KPI cards fresh regardless of batch state.
+startPolling();
 
 // ─── Full Crawl cooldown countdown ────────────────────────────────────────────
 (function() {
@@ -1354,6 +1857,16 @@ function showToast(msg, type='success') {
     FAILED:  'background:#fee2e2;color:#991b1b;',
     PENDING: 'background:#dbeafe;color:#1d4ed8;',
   };
+  const STAGE_COLORS = {
+    FETCHED: 'background:#f1f5f9;color:#334155;',
+    PARSED: 'background:#e0f2fe;color:#075985;',
+    ENRICHED: 'background:#ede9fe;color:#5b21b6;',
+    CLASSIFIED: 'background:#fef3c7;color:#92400e;',
+    READY: 'background:#d1fae5;color:#065f46;',
+    SYNCED: 'background:#bbf7d0;color:#065f46;',
+    FAILED: 'background:#fee2e2;color:#991b1b;',
+    DUPLICATE: 'background:#e2e8f0;color:#475569;',
+  };
   const EMP_COLORS = {
     FULL_TIME: 'background:#dbeafe;color:#1e40af;',
     PART_TIME: 'background:#f3e8ff;color:#6b21a8;',
@@ -1363,6 +1876,8 @@ function showToast(msg, type='success') {
 
   function buildRow(j) {
     const sync  = SYNC_COLORS[j.sync_status]  || 'background:#f1f5f9;color:#475569;';
+    const stage = (j.stage || 'FETCHED').toUpperCase();
+    const stageColor = STAGE_COLORS[stage] || 'background:#f1f5f9;color:#334155;';
     const emp   = EMP_COLORS[j.employment_type] || 'background:#f1f5f9;color:#374151;';
     const remBadge = j.is_remote
       ? '<span style="margin-left:4px;padding:1px 5px;background:#d1fae5;color:#065f46;border-radius:10px;font-size:9px;font-weight:700;">REMOTE</span>'
@@ -1374,22 +1889,67 @@ function showToast(msg, type='success') {
     const extLink = j.original_url
       ? `<a href="${j.original_url}" target="_blank" rel="noopener" style="color:#3b82f6;font-size:11px;text-decoration:none;" title="Open original">↗</a>`
       : '';
+    const geo = [j.state || '', j.country || ''].filter(Boolean).join(', ');
+    const edu = j.education_required || '—';
+    const clearance = j.clearance_level || (j.clearance_required ? 'Required' : '—');
+    const schedule = [j.schedule_type || '', j.shift_schedule || ''].filter(Boolean).join(' · ') || '—';
+    const dept = j.department || '—';
+    const keywords = (j.keywords || []).join(', ') || '—';
+    const companyProfile = [j.company_industry || '', j.company_size || ''].filter(Boolean).join(' · ') || '—';
+    const resumeScore = (j.resume_ready_score != null && j.resume_ready_score !== '') ? Number(j.resume_ready_score).toFixed(2) : '—';
+    const jdQuality = (j.jd_quality_score != null && j.jd_quality_score !== '') ? Number(j.jd_quality_score).toFixed(2) : '—';
+    const classifyConf = (j.classification_confidence != null && j.classification_confidence !== '') ? Number(j.classification_confidence).toFixed(2) : '—';
+    const retryCount = Number(j.retry_count || 0);
+    const lastError = (j.last_error || '').trim() || '—';
+    const ownerPipeline = j.owner_pipeline || '—';
+    const resumeJdUsable = !!j.resume_jd_usable;
+    const resumeJdWords = Number(j.word_count || 0);
+    const resumeJdTitle = escHtml(j.resume_jd_reason_text || '');
+    const age = (() => {
+      if (!j.fetched_at_iso) return '—';
+      const ts = new Date(j.fetched_at_iso).getTime();
+      if (Number.isNaN(ts)) return '—';
+      const mins = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+      if (mins < 60) return `${mins}m`;
+      const h = Math.floor(mins / 60);
+      if (h < 24) return `${h}h ${mins % 60}m`;
+      const d = Math.floor(h / 24);
+      return `${d}d ${h % 24}h`;
+    })();
     const tr = document.createElement('tr');
     tr.style.cssText = 'border-bottom:1px solid #f1f5f9;transition:background .1s;';
     tr.onmouseover = () => { tr.style.background = '#f8fafc'; };
     tr.onmouseout  = () => { tr.style.background = ''; };
     tr.innerHTML = `
+      <td style="padding:9px 8px;text-align:center;"><input type="checkbox" class="row-select-cb" value="${j.id}" onchange="updateSelectedRows()"></td>
       <td style="padding:9px 14px;position:sticky;left:0;background:inherit;z-index:1;white-space:nowrap;font-weight:600;color:#0f172a;max-width:160px;overflow:hidden;text-overflow:ellipsis;" title="${j.company_name}">${j.company_name.substring(0,22)}</td>
       <td style="padding:9px 14px;">${j.platform_slug ? `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eff6ff;color:#1d4ed8;white-space:nowrap;">${j.platform_slug}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;white-space:nowrap;"><span style="padding:2px 7px;border-radius:5px;font-size:10px;font-weight:700;${stageColor}">${stage}</span></td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;font-size:11px;">${age}</td>
       <td style="padding:9px 14px;color:#374151;max-width:220px;">
         <a href="${j.detail_url}" style="color:#1d4ed8;text-decoration:none;font-weight:500;" title="${j.title}">${j.title.substring(0,40)}</a>${remBadge}
       </td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${j.location_raw}">${j.location_raw.substring(0,20) || '—'}</td>
       <td style="padding:9px 14px;white-space:nowrap;">${j.employment_type && j.employment_type !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;${emp}">${j.employment_type}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
       <td style="padding:9px 14px;white-space:nowrap;">${j.experience_level && j.experience_level !== 'UNKNOWN' ? `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;background:#f1f5f9;color:#374151;">${j.experience_level}</span>` : '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:140px;overflow:hidden;text-overflow:ellipsis;" title="${dept}">${dept.substring(0,20)}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${geo || '<span style="color:#94a3b8;">—</span>'}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${edu}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:120px;overflow:hidden;text-overflow:ellipsis;" title="${clearance}">${clearance}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;max-width:130px;overflow:hidden;text-overflow:ellipsis;" title="${schedule}">${schedule}</td>
+      <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${keywords}">${keywords}</td>
+      <td style="padding:9px 14px;color:#64748b;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${companyProfile}">${companyProfile}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${resumeScore}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${jdQuality}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${classifyConf}</td>
       <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${salary}</td>
       <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.posted_date || '—'}</td>
+      <td style="padding:9px 14px;color:#94a3b8;white-space:nowrap;">${j.fetched_at || '—'}</td>
+      <td style="padding:9px 14px;text-align:center;color:#64748b;">${retryCount}</td>
+      <td style="padding:9px 14px;color:#64748b;max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escHtml(lastError)}">${escHtml(lastError).substring(0,42)}</td>
+      <td style="padding:9px 14px;color:#64748b;white-space:nowrap;">${escHtml(ownerPipeline)}</td>
       <td style="padding:9px 14px;text-align:center;">${(() => { const lb = j.jd_label || (j.has_jd ? 'yes' : 'no'); if (lb === 'yes') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;">✓ Yes</span>'; if (lb === 'expired') return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;" title="Listing appears closed / expired">expireddd</span>'; return '<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">✗ No</span>'; })()}</td>
+      <td style="padding:9px 14px;text-align:center;white-space:nowrap;" title="${resumeJdTitle}">${resumeJdUsable ? `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#dcfce7;color:#166534;">READY • ${resumeJdWords}w</span>` : `<span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;">BLOCK • ${resumeJdWords}w</span>`}</td>
       <td style="padding:9px 14px;text-align:center;"><span style="padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;${sync}">${j.sync_status}</span></td>
       <td style="padding:9px 14px;text-align:center;">${extLink}</td>`;
     return tr;
@@ -1611,8 +2171,8 @@ function applyStatFilter(filters) {
 
   for (const [k, v] of Object.entries(filters)) {
     if (k === 'date_range' && v === 'today') {
-      params.set('date_from', today);
-      params.set('date_to', today);
+      params.set('fetched_from', today);
+      params.set('fetched_to', today);
     } else {
       params.set(k, v);
     }
@@ -1620,6 +2180,47 @@ function applyStatFilter(filters) {
 
   window.location.href = base + '?' + params.toString();
 }
+
+function updateSelectedRows() {
+  const boxes = Array.from(document.querySelectorAll('.row-select-cb'));
+  const selected = boxes.filter((b) => b.checked).map((b) => b.value);
+  const countEl = document.getElementById('selected-rows-count');
+  const hidden = document.getElementById('selected-raw-job-ids');
+  if (countEl) countEl.textContent = selected.length.toLocaleString();
+  if (hidden) hidden.value = selected.join(',');
+  const head = document.getElementById('select-all-head');
+  if (head) {
+    const visible = boxes.length;
+    const checked = selected.length;
+    head.checked = visible > 0 && checked === visible;
+    head.indeterminate = checked > 0 && checked < visible;
+  }
+}
+
+function toggleSelectAllVisible() {
+  const boxes = Array.from(document.querySelectorAll('.row-select-cb'));
+  if (!boxes.length) return;
+  const allChecked = boxes.every((b) => b.checked);
+  boxes.forEach((b) => { b.checked = !allChecked; });
+  updateSelectedRows();
+}
+
+function submitSyncSelected() {
+  updateSelectedRows();
+  const hidden = document.getElementById('selected-raw-job-ids');
+  const ids = (hidden?.value || '').split(',').filter(Boolean);
+  if (!ids.length) {
+    showToast('Select at least one row for re-sync.', 'error');
+    return false;
+  }
+  if (ids.length > 500) {
+    showToast('Max 500 rows per re-sync action.', 'error');
+    return false;
+  }
+  return confirm(`Re-sync ${ids.length} selected jobs to Vet Queue?`);
+}
+
+loadWorkflowInsights();
 </script>
 
 {% endblock %}

@@ -1,0 +1,507 @@
+{% extends 'base.html' %}
+{% block content %}
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600;700&display=swap');
+
+:root {
+  --jf-bg: #f3f8f7;
+  --jf-ink: #143634;
+  --jf-muted: #5e7f7a;
+  --jf-surface: #ffffff;
+  --jf-border: #d5e7e4;
+  --jf-track: #e5efed;
+  --jf-fill: linear-gradient(90deg, #149d90 0%, #0d7f73 100%);
+  --jf-ok: #188a49;
+  --jf-warn: #b26b11;
+  --jf-bad: #be3f3f;
+}
+
+@keyframes jfPulse {
+  0%, 100% { opacity: .65; }
+  50% { opacity: 1; }
+}
+
+.jarvis-fetch-shell {
+  min-height: calc(100vh - 56px);
+  background:
+    radial-gradient(circle at 85% 5%, #e2fbf6 0%, transparent 42%),
+    radial-gradient(circle at 8% 92%, #fff2dd 0%, transparent 40%),
+    var(--jf-bg);
+  padding: 24px;
+  color: var(--jf-ink);
+  font-family: 'Instrument Sans', 'Avenir Next', 'Segoe UI', sans-serif;
+}
+
+.jarvis-fetch-wrap {
+  max-width: 1180px;
+  margin: 0 auto;
+}
+
+.jarvis-fetch-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.jarvis-fetch-title-wrap {
+  display: flex;
+  gap: 14px;
+}
+
+.jarvis-fetch-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+  background: linear-gradient(160deg, #1ba99b, #0f7f75);
+  color: #fff;
+  display: grid;
+  place-items: center;
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 700;
+  box-shadow: 0 10px 24px rgba(14, 127, 116, .22);
+}
+
+.jarvis-fetch-title {
+  margin: 0;
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 28px;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.jarvis-fetch-sub {
+  margin: 7px 0 0;
+  color: var(--jf-muted);
+  font-size: 14px;
+}
+
+.jarvis-fetch-chip-row {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.jarvis-fetch-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #ecf7f5;
+  border: 1px solid #c6dfdb;
+  color: #17514c;
+}
+
+.jarvis-fetch-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.jarvis-fetch-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  border-radius: 11px;
+  border: 1px solid var(--jf-border);
+  background: #fff;
+  color: #1d4e4a;
+  padding: 10px 14px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.jarvis-fetch-btn.primary {
+  background: linear-gradient(135deg, #16a195, #0f7f74);
+  border: 0;
+  color: #fff;
+}
+
+.jarvis-fetch-grid {
+  margin-top: 16px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 18px;
+  align-items: start;
+}
+
+.jarvis-fetch-panel {
+  background: var(--jf-surface);
+  border: 1px solid var(--jf-border);
+  border-radius: 16px;
+  box-shadow: 0 9px 26px rgba(15, 53, 48, .08);
+}
+
+.jarvis-fetch-progress {
+  padding: 18px 20px;
+}
+
+.jarvis-fetch-status {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.jarvis-fetch-status.running {
+  color: #0f7f74;
+  animation: jfPulse 1.2s ease-in-out infinite;
+}
+
+.jarvis-fetch-status.ok { color: var(--jf-ok); }
+.jarvis-fetch-status.warn { color: var(--jf-warn); }
+.jarvis-fetch-status.bad { color: var(--jf-bad); }
+
+.jarvis-fetch-bar {
+  margin-top: 12px;
+  height: 13px;
+  background: var(--jf-track);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+#progress-fill {
+  width: 0;
+  height: 100%;
+  background: var(--jf-fill);
+  transition: width .45s ease;
+}
+
+.jarvis-fetch-bar-meta {
+  margin-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--jf-muted);
+}
+
+.jarvis-fetch-kpis {
+  padding: 0 20px 20px;
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.jarvis-fetch-kpi {
+  border: 1px solid var(--jf-border);
+  background: #f8fcfb;
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.jarvis-fetch-kpi .k {
+  margin: 0;
+  font-size: 11px;
+  color: var(--jf-muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+
+.jarvis-fetch-kpi .v {
+  margin: 4px 0 0;
+  font-size: 24px;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.jarvis-fetch-live {
+  margin-top: 16px;
+  padding: 16px 20px 20px;
+}
+
+.jarvis-fetch-live h3 {
+  margin: 0;
+  font-size: 18px;
+  font-family: 'Space Grotesk', sans-serif;
+}
+
+.jarvis-fetch-live p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--jf-muted);
+}
+
+#job-feed {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 520px;
+  overflow: auto;
+}
+
+.job-item {
+  border: 1px solid var(--jf-border);
+  border-radius: 12px;
+  background: #fff;
+  padding: 11px 12px;
+}
+
+.job-item a {
+  color: #0c6159;
+  text-decoration: none;
+  font-weight: 700;
+}
+
+.job-item .meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--jf-muted);
+}
+
+.job-item .pill {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #c4dfda;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #185750;
+  background: #ecf7f5;
+}
+
+.jarvis-fetch-side {
+  padding: 16px;
+}
+
+.jarvis-fetch-side h4 {
+  margin: 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: #5e7d79;
+}
+
+.jarvis-fetch-side ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+
+.jarvis-fetch-side li {
+  padding: 7px 0;
+  font-size: 13px;
+  color: #244f4b;
+  border-bottom: 1px dashed #d9e8e4;
+}
+
+.jarvis-fetch-board {
+  margin-top: 10px;
+  display: inline-block;
+  color: #0f7f74;
+  word-break: break-all;
+}
+
+@media (max-width: 1080px) {
+  .jarvis-fetch-grid { grid-template-columns: 1fr; }
+  .jarvis-fetch-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+</style>
+
+<div class="jarvis-fetch-shell">
+  <div class="jarvis-fetch-wrap">
+    <div class="jarvis-fetch-head">
+      <div class="jarvis-fetch-title-wrap">
+        <div class="jarvis-fetch-mark">JV</div>
+        <div>
+          <h1 class="jarvis-fetch-title">Company Fetch Progress</h1>
+          <p class="jarvis-fetch-sub">Live stream of jobs being discovered and upserted into Harvest Raw Jobs.</p>
+          <div class="jarvis-fetch-chip-row">
+            <span class="jarvis-fetch-chip" id="chip-company">{{ company_name|default:'Company' }}</span>
+            <span class="jarvis-fetch-chip" id="chip-platform">{{ platform_slug|default:'platform' }}</span>
+            <span class="jarvis-fetch-chip" id="chip-task">Task {{ task_id|default:'-'|truncatechars:14 }}</span>
+          </div>
+        </div>
+      </div>
+      <div class="jarvis-fetch-actions">
+        <a class="jarvis-fetch-btn" href="{{ jarvis_url }}">Back to Jarvis</a>
+        <a class="jarvis-fetch-btn primary" id="open-rawjobs-btn" href="{{ rawjobs_url }}" target="_blank" rel="noopener">Open Raw Jobs</a>
+      </div>
+    </div>
+
+    <div class="jarvis-fetch-grid">
+      <div>
+        <div class="jarvis-fetch-panel">
+          <div class="jarvis-fetch-progress">
+            <p id="fetch-status" class="jarvis-fetch-status running">Queueing company fetch…</p>
+            <div class="jarvis-fetch-bar"><div id="progress-fill"></div></div>
+            <div class="jarvis-fetch-bar-meta">
+              <span id="progress-msg">Waiting for worker…</span>
+              <span id="progress-pct">0%</span>
+            </div>
+          </div>
+          <div class="jarvis-fetch-kpis">
+            <div class="jarvis-fetch-kpi"><p class="k">Found</p><p id="k-found" class="v">0</p></div>
+            <div class="jarvis-fetch-kpi"><p class="k">New</p><p id="k-new" class="v">0</p></div>
+            <div class="jarvis-fetch-kpi"><p class="k">Updated</p><p id="k-updated" class="v">0</p></div>
+            <div class="jarvis-fetch-kpi"><p class="k">Duplicate</p><p id="k-duplicate" class="v">0</p></div>
+            <div class="jarvis-fetch-kpi"><p class="k">Failed</p><p id="k-failed" class="v">0</p></div>
+          </div>
+        </div>
+
+        <div class="jarvis-fetch-panel jarvis-fetch-live">
+          <h3>Live Added / Updated Jobs</h3>
+          <p>Updates refresh every 1.6 seconds while the task is running.</p>
+          <div id="job-feed"></div>
+        </div>
+      </div>
+
+      <div class="jarvis-fetch-panel jarvis-fetch-side">
+        <h4>Run Context</h4>
+        <ul>
+          <li><strong>Task ID:</strong> <span id="ctx-task">{{ task_id|default:'-' }}</span></li>
+          <li><strong>State:</strong> <span id="ctx-state">PENDING</span></li>
+          <li><strong>Started:</strong> <span id="ctx-started">-</span></li>
+          <li><strong>Completed:</strong> <span id="ctx-completed">-</span></li>
+        </ul>
+        {% if company_jobs_url %}
+          <a class="jarvis-fetch-board" href="{{ company_jobs_url }}" target="_blank" rel="noopener">{{ company_jobs_url }}</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  const taskId = '{{ task_id|escapejs }}';
+  const apiBase = '{{ progress_api_url|escapejs }}';
+  const feed = document.getElementById('job-feed');
+  const statusEl = document.getElementById('fetch-status');
+  const pctEl = document.getElementById('progress-pct');
+  const msgEl = document.getElementById('progress-msg');
+  const fillEl = document.getElementById('progress-fill');
+  const ctxState = document.getElementById('ctx-state');
+  const ctxStarted = document.getElementById('ctx-started');
+  const ctxCompleted = document.getElementById('ctx-completed');
+  const chipCompany = document.getElementById('chip-company');
+  const chipPlatform = document.getElementById('chip-platform');
+  const openRawJobsBtn = document.getElementById('open-rawjobs-btn');
+
+  const kFound = document.getElementById('k-found');
+  const kNew = document.getElementById('k-new');
+  const kUpdated = document.getElementById('k-updated');
+  const kDuplicate = document.getElementById('k-duplicate');
+  const kFailed = document.getElementById('k-failed');
+
+  function esc(text) {
+    const d = document.createElement('div');
+    d.textContent = String(text || '');
+    return d.innerHTML;
+  }
+
+  function asLocal(ts) {
+    if (!ts) return '-';
+    const dt = new Date(ts);
+    if (Number.isNaN(dt.getTime())) return '-';
+    return dt.toLocaleString();
+  }
+
+  function setStatusClass(state) {
+    statusEl.classList.remove('running', 'ok', 'warn', 'bad');
+    if (state === 'SUCCESS') statusEl.classList.add('ok');
+    else if (state === 'PARTIAL' || state === 'SKIPPED') statusEl.classList.add('warn');
+    else if (state === 'FAILED') statusEl.classList.add('bad');
+    else statusEl.classList.add('running');
+  }
+
+  function renderJobs(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      feed.innerHTML = '<div class="job-item"><div class="meta">No jobs written yet. Waiting for first upsert…</div></div>';
+      return;
+    }
+
+    feed.innerHTML = items.map((job) => {
+      const title = esc(job.title || 'Untitled role');
+      const company = esc(job.company_name || 'Company');
+      const location = esc(job.location_raw || 'Location not provided');
+      const sync = esc(job.sync_status || 'PENDING');
+      const detailUrl = esc(job.detail_url || '#');
+      const originalUrl = esc(job.original_url || '');
+      const time = asLocal(job.updated_at);
+      const ext = originalUrl ? `<a href="${originalUrl}" target="_blank" rel="noopener">source</a>` : '';
+      return `
+        <div class="job-item">
+          <a href="${detailUrl}" target="_blank" rel="noopener">${title}</a>
+          <div class="meta">${company} · ${location}</div>
+          <div class="meta"><span class="pill">${sync}</span> · ${time} ${ext}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function poll() {
+    if (!taskId) {
+      statusEl.textContent = 'Missing task id.';
+      statusEl.className = 'jarvis-fetch-status bad';
+      return true;
+    }
+
+    const resp = await fetch(`${apiBase}?task_id=${encodeURIComponent(taskId)}`, { cache: 'no-store' });
+    const json = await resp.json();
+
+    if (!resp.ok || !json.ok) {
+      statusEl.textContent = json.error || 'Failed to load progress';
+      statusEl.className = 'jarvis-fetch-status bad';
+      return true;
+    }
+
+    const state = String(json.state || '').toUpperCase();
+    const pct = Number(json.percent || 0);
+    const counts = json.counts || {};
+
+    setStatusClass(state);
+    statusEl.textContent = json.message || `State: ${state}`;
+    pctEl.textContent = `${Math.max(0, Math.min(100, pct))}%`;
+    msgEl.textContent = json.message || '';
+    fillEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+
+    ctxState.textContent = state || '-';
+    if (json.run) {
+      ctxStarted.textContent = asLocal(json.run.started_at);
+      ctxCompleted.textContent = asLocal(json.run.completed_at);
+    }
+
+    if (json.company_name) chipCompany.textContent = json.company_name;
+    if (json.platform_slug) chipPlatform.textContent = json.platform_slug;
+    if (json.rawjobs_url) openRawJobsBtn.href = json.rawjobs_url;
+
+    kFound.textContent = Number(counts.found || 0).toLocaleString();
+    kNew.textContent = Number(counts.new || 0).toLocaleString();
+    kUpdated.textContent = Number(counts.updated || 0).toLocaleString();
+    kDuplicate.textContent = Number(counts.duplicate || 0).toLocaleString();
+    kFailed.textContent = Number(counts.failed || 0).toLocaleString();
+
+    renderJobs(json.recent_jobs || []);
+
+    return Boolean(json.done);
+  }
+
+  let stopped = false;
+
+  async function tick() {
+    if (stopped) return;
+    try {
+      const done = await poll();
+      if (done) {
+        stopped = true;
+        return;
+      }
+    } catch (err) {
+      statusEl.textContent = `Progress polling error: ${err.message}`;
+      statusEl.className = 'jarvis-fetch-status bad';
+    }
+    setTimeout(tick, 1600);
+  }
+
+  tick();
+})();
+</script>
+{% endblock %}

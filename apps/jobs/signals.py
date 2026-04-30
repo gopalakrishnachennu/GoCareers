@@ -4,11 +4,12 @@ Listens to Job + harvest.RawJob post_save. Records events without changing any
 existing behavior so we can validate the audit trail against live data before
 cutting over the actual tasks to stage-driven flow (Phase 3).
 """
-import hashlib
 import logging
 
 from django.db.models.signals import post_save, pre_save
 from django.dispatch import receiver
+
+from harvest.normalizer import compute_url_hash
 
 from .models import Job, PipelineEvent
 
@@ -73,7 +74,7 @@ def _rawjob_post_save_record_event(sender, instance, created: bool, **kwargs):
         return
     url_hash = getattr(instance, 'url_hash', '') or ''
     if not url_hash and getattr(instance, 'original_url', ''):
-        url_hash = hashlib.sha256(instance.original_url.strip().encode()).hexdigest()
+        url_hash = compute_url_hash(instance.original_url)
     _safe_record(
         url_hash=url_hash,
         to_stage=Job.Stage.FETCHED,

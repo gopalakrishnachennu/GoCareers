@@ -834,14 +834,35 @@ class JobApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     employee_feature_key = 'employee_job_pool'
     """Move a POOL job to OPEN (approve it)."""
     def post(self, request, pk):
+        from .gating import apply_gate_result_to_job, evaluate_job_gate
+
         job = get_object_or_404(Job, pk=pk)
         if job.status != Job.Status.POOL:
             messages.warning(request, f"\"{job.title}\" is not in the pool (status: {job.get_status_display()}).")
             return redirect('job-pool')
+        if job.gate_checked_at is None:
+            gate = evaluate_job_gate(job)
+            apply_gate_result_to_job(job, gate)
+            job.gate_checked_at = timezone.now()
+            job.save(update_fields=[
+                'hard_gate_passed', 'gate_status', 'vet_lane', 'pipeline_reason_code', 'pipeline_reason_detail',
+                'hard_gate_failures', 'hard_gate_checks', 'data_quality_score', 'trust_score',
+                'candidate_fit_score', 'vet_priority_score', 'gate_checked_at', 'updated_at'
+            ])
+        if not job.hard_gate_passed or job.vet_lane == Job.VetLane.BLOCKED:
+            messages.error(
+                request,
+                f"\"{job.title}\" is blocked by vet gate ({job.pipeline_reason_code or 'UNKNOWN'}). "
+                "Fix quality/gate issues before approval."
+            )
+            return redirect(request.POST.get('next') or 'job-pool')
         job.status = Job.Status.OPEN
+        job.stage = Job.Stage.LIVE
+        job.stage_changed_at = timezone.now()
+        job.vet_approved_at = timezone.now()
         job.validated_by = request.user
         job.validation_run_at = timezone.now()
-        job.save(update_fields=['status', 'validated_by', 'validation_run_at'])
+        job.save(update_fields=['status', 'stage', 'stage_changed_at', 'vet_approved_at', 'validated_by', 'validation_run_at', 'updated_at'])
         try:
             from .notify import notify_new_open_job_to_consultants, notify_job_pool_status
             notify_new_open_job_to_consultants(job)
@@ -871,10 +892,20 @@ class JobRejectView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             messages.error(request, "Please provide a rejection reason.")
             return redirect('job-pool')
         job.status = Job.Status.CLOSED
+        job.stage = Job.Stage.ARCHIVED
+        job.stage_changed_at = timezone.now()
+        job.gate_status = Job.GateStatus.BLOCKED
+        job.vet_lane = Job.VetLane.BLOCKED
+        job.pipeline_reason_code = "REJECTED_BY_REVIEWER"
+        job.pipeline_reason_detail = reason
         job.rejection_reason = reason
         job.rejected_by = request.user
         job.rejected_at = timezone.now()
-        job.save(update_fields=['status', 'rejection_reason', 'rejected_by', 'rejected_at'])
+        job.save(update_fields=[
+            'status', 'stage', 'stage_changed_at', 'gate_status', 'vet_lane',
+            'pipeline_reason_code', 'pipeline_reason_detail',
+            'rejection_reason', 'rejected_by', 'rejected_at', 'updated_at'
+        ])
         try:
             from .notify import notify_job_pool_status
             notify_job_pool_status(job, approved=False, actor=request.user)
@@ -888,6 +919,8 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     employee_feature_key = 'employee_bulk_ops'
     """Bulk-approve multiple POOL jobs at once."""
     def post(self, request):
+        from .gating import apply_gate_result_to_job, evaluate_job_gate
+
         job_ids = request.POST.getlist('job_ids')
         if not job_ids:
             messages.warning(request, "No jobs selected.")
@@ -902,10 +935,28 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 if job.company_obj and getattr(job.company_obj, 'is_blacklisted', False):
                     skipped += 1
                     continue
+                if job.gate_checked_at is None:
+                    gate = evaluate_job_gate(job)
+                    apply_gate_result_to_job(job, gate)
+                    job.gate_checked_at = now
+                    job.save(update_fields=[
+                        'hard_gate_passed', 'gate_status', 'vet_lane', 'pipeline_reason_code', 'pipeline_reason_detail',
+                        'hard_gate_failures', 'hard_gate_checks', 'data_quality_score', 'trust_score',
+                        'candidate_fit_score', 'vet_priority_score', 'gate_checked_at', 'updated_at'
+                    ])
+                if not job.hard_gate_passed or job.vet_lane == Job.VetLane.BLOCKED:
+                    skipped += 1
+                    continue
                 job.status = Job.Status.OPEN
+                job.stage = Job.Stage.LIVE
+                job.stage_changed_at = now
+                job.vet_approved_at = now
                 job.validated_by = request.user
                 job.validation_run_at = now
-                job.save(update_fields=['status', 'validated_by', 'validation_run_at'])
+                job.save(update_fields=[
+                    'status', 'stage', 'stage_changed_at', 'vet_approved_at',
+                    'validated_by', 'validation_run_at', 'updated_at'
+                ])
                 try:
                     from .notify import notify_new_open_job_to_consultants
                     notify_new_open_job_to_consultants(job)
@@ -982,8 +1033,17 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         from harvest.models import RawJob, FetchBatch
         raw_total = RawJob.objects.count()
         pool_total = Job.objects.filter(status=Job.Status.POOL, is_archived=False).count()
+        pool_qs_all = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
         live_total = Job.objects.filter(status=Job.Status.OPEN, is_archived=False).count()
         archived_total = Job.objects.filter(is_archived=True).count()
+        vet_gate_summary = {
+            "eligible": pool_qs_all.filter(gate_status=Job.GateStatus.ELIGIBLE).count(),
+            "review": pool_qs_all.filter(gate_status=Job.GateStatus.REVIEW).count(),
+            "blocked": pool_qs_all.filter(gate_status=Job.GateStatus.BLOCKED).count(),
+            "auto_lane": pool_qs_all.filter(vet_lane=Job.VetLane.AUTO).count(),
+            "human_lane": pool_qs_all.filter(vet_lane=Job.VetLane.HUMAN).count(),
+            "blocked_lane": pool_qs_all.filter(vet_lane=Job.VetLane.BLOCKED).count(),
+        }
 
         # Last harvest batch info
         last_batch = FetchBatch.objects.order_by('-created_at').first()
@@ -1000,13 +1060,26 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 
         elif tab == 'pool':
             score_tab = request.GET.get('score', 'all')
+            lane_tab = request.GET.get('lane', 'all')
             qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
             if q:
                 qs = qs.filter(Q(title__icontains=q) | Q(company__icontains=q))
+            now = timezone.now()
+            age_24h = now - timezone.timedelta(hours=24)
+            age_6h = now - timezone.timedelta(hours=6)
+            age_1h = now - timezone.timedelta(hours=1)
             pool_high = qs.filter(validation_score__gte=80).count()
             pool_review = qs.filter(validation_score__gte=50, validation_score__lt=80).count()
             pool_flagged = qs.filter(validation_score__lt=50).count()
             pool_unscored = qs.filter(validation_score__isnull=True).count()
+            pool_auto_lane = qs.filter(vet_lane=Job.VetLane.AUTO).count()
+            pool_human_lane = qs.filter(vet_lane=Job.VetLane.HUMAN).count()
+            pool_blocked_lane = qs.filter(vet_lane=Job.VetLane.BLOCKED).count()
+            pool_blocked_gate = qs.filter(gate_status=Job.GateStatus.BLOCKED).count()
+            pool_aging_lt_1h = qs.filter(queue_entered_at__gte=age_1h).count()
+            pool_aging_1_6h = qs.filter(queue_entered_at__lt=age_1h, queue_entered_at__gte=age_6h).count()
+            pool_aging_6_24h = qs.filter(queue_entered_at__lt=age_6h, queue_entered_at__gte=age_24h).count()
+            pool_aging_gt_24h = qs.filter(queue_entered_at__lt=age_24h).count()
             if score_tab == 'high':
                 qs = qs.filter(validation_score__gte=80)
             elif score_tab == 'review':
@@ -1015,13 +1088,36 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 qs = qs.filter(validation_score__lt=50)
             elif score_tab == 'unscored':
                 qs = qs.filter(validation_score__isnull=True)
-            tab_jobs = qs.select_related('posted_by', 'company_obj').order_by('-created_at')[:200]
+            if lane_tab == 'auto':
+                qs = qs.filter(vet_lane=Job.VetLane.AUTO)
+            elif lane_tab == 'human':
+                qs = qs.filter(vet_lane=Job.VetLane.HUMAN)
+            elif lane_tab == 'blocked':
+                qs = qs.filter(vet_lane=Job.VetLane.BLOCKED)
+            elif lane_tab == 'aging':
+                qs = qs.filter(queue_entered_at__lt=age_24h)
+            if lane_tab == 'approved_recent':
+                approved_qs = Job.objects.filter(status=Job.Status.OPEN, is_archived=False, vet_approved_at__isnull=False)
+                if q:
+                    approved_qs = approved_qs.filter(Q(title__icontains=q) | Q(company__icontains=q))
+                tab_jobs = approved_qs.select_related('posted_by', 'company_obj').order_by('-vet_approved_at')[:200]
+            else:
+                tab_jobs = qs.select_related('posted_by', 'company_obj').order_by('-created_at')[:200]
             pool_extra = {
                 'score_tab': score_tab,
+                'lane_tab': lane_tab,
                 'pool_high': pool_high,
                 'pool_review': pool_review,
                 'pool_flagged': pool_flagged,
                 'pool_unscored': pool_unscored,
+                'pool_auto_lane': pool_auto_lane,
+                'pool_human_lane': pool_human_lane,
+                'pool_blocked_lane': pool_blocked_lane,
+                'pool_blocked_gate': pool_blocked_gate,
+                'pool_aging_lt_1h': pool_aging_lt_1h,
+                'pool_aging_1_6h': pool_aging_1_6h,
+                'pool_aging_6_24h': pool_aging_6_24h,
+                'pool_aging_gt_24h': pool_aging_gt_24h,
             }
 
         elif tab == 'live':
@@ -1048,6 +1144,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'last_batch': last_batch,
             'tab_jobs': tab_jobs,
             'tab_raw': tab_raw,
+            'vet_gate_summary': vet_gate_summary,
         }
         if tab == 'pool':
             ctx.update(pool_extra)

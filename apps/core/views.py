@@ -2,7 +2,10 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.views.generic import TemplateView, UpdateView, View, ListView, DetailView, CreateView
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.conf import settings
+from django.core.cache import cache
 from django.db.models import Count, Q, Sum
+from django.db.models.functions import TruncHour
+from django.db.utils import OperationalError, ProgrammingError
 from django.urls import reverse_lazy, reverse
 from django.utils import timezone
 from datetime import timedelta
@@ -1099,6 +1102,488 @@ class MyFeaturesJsonView(LoginRequiredMixin, View):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# SYSTEM OPERATIONS CENTER (GLOBAL MONITORING)
+# One place to see: IN-PROGRESS, SCHEDULED, COMPLETED + subsystem health.
+# ─────────────────────────────────────────────────────────────────────────────
+
+OPS_DEFAULT_TASK_META = {
+    "label": None,
+    "color": "#334155",
+    "owner": "Platform Ops",
+    "priority": "P2",
+    "sla_minutes": 60,
+}
+
+OPS_TASK_META = {
+    "harvest.backfill_descriptions": {"label": "JD Backfill", "color": "#f97316", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.backfill_descriptions_chunk": {"label": "JD Backfill Chunk", "color": "#f97316", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 60},
+    "harvest.fetch_raw_jobs_batch": {"label": "Harvest Batch", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 30},
+    "harvest.fetch_raw_jobs_for_company": {"label": "Company Fetch", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 60},
+    "harvest.harvest_jobs": {"label": "Harvest Jobs", "color": "#0ea5e9", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 30},
+    "harvest.sync_harvested_to_pool": {"label": "Pool Sync", "color": "#10b981", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 45},
+    "harvest.detect_company_platforms": {"label": "Platform Detection", "color": "#38bdf8", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 120},
+    "harvest.verify_all_portals": {"label": "Portal Verify", "color": "#8b5cf6", "owner": "Harvest Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.enrich_existing_jobs": {"label": "Harvest Enrichment", "color": "#22c55e", "owner": "Data Team", "priority": "P2", "sla_minutes": 180},
+    "harvest.backfill_resume_contract": {"label": "Resume Contract Backfill", "color": "#6366f1", "owner": "Data Team", "priority": "P2", "sla_minutes": 240},
+    "harvest.backfill_platform_labels_from_jobs": {"label": "Label Backfill", "color": "#64748b", "owner": "Harvest Team", "priority": "P3", "sla_minutes": 240},
+    "harvest.cleanup_harvested_jobs": {"label": "Harvest Cleanup", "color": "#94a3b8", "owner": "Harvest Team", "priority": "P3", "sla_minutes": 300},
+    "harvest.jarvis_ingest": {"label": "Jarvis Ingest", "color": "#ec4899", "owner": "Harvest Team", "priority": "P1", "sla_minutes": 15},
+    "companies.tasks.validate_company_links_task": {"label": "Company Link Validator", "color": "#14b8a6", "owner": "Data Team", "priority": "P2", "sla_minutes": 120},
+    "companies.tasks.re_enrich_stale_companies_task": {"label": "Company Re-Enrichment", "color": "#06b6d4", "owner": "Data Team", "priority": "P2", "sla_minutes": 240},
+    "jobs.tasks.validate_job_urls_task": {"label": "Job Link Validator", "color": "#f59e0b", "owner": "Jobs Team", "priority": "P2", "sla_minutes": 180},
+    "jobs.tasks.auto_close_jobs_task": {"label": "Auto Close Jobs", "color": "#f59e0b", "owner": "Jobs Team", "priority": "P3", "sla_minutes": 360},
+    "submissions.tasks.send_followup_reminders": {"label": "Followup Reminders", "color": "#8b5cf6", "owner": "Submissions Team", "priority": "P2", "sla_minutes": 120},
+    "submissions.tasks.detect_stale_submissions": {"label": "Stale Submissions Detector", "color": "#7c3aed", "owner": "Submissions Team", "priority": "P2", "sla_minutes": 120},
+    "core.tasks.poll_email_ingest_task": {"label": "Email Ingest", "color": "#64748b", "owner": "Platform Ops", "priority": "P1", "sla_minutes": 15},
+    "core.tasks.send_weekly_executive_report_task": {"label": "Weekly Executive Report", "color": "#334155", "owner": "Platform Ops", "priority": "P3", "sla_minutes": 1440},
+}
+
+
+def _ops_task_meta(task_name: str) -> dict:
+    if not task_name:
+        leaf_label = "Unknown Task"
+    else:
+        leaf = task_name.split(".")[-1]
+        leaf_label = leaf.replace("_", " ").strip().title()
+    base = dict(OPS_DEFAULT_TASK_META)
+    specific = OPS_TASK_META.get(task_name, {})
+    base.update({k: v for k, v in specific.items() if v is not None})
+    base["label"] = base.get("label") or leaf_label
+    return base
+
+
+def _ops_pretty_task_label(task_name: str) -> str:
+    return _ops_task_meta(task_name).get("label", "Unknown Task")
+
+
+def _ops_task_color(task_name: str) -> str:
+    return _ops_task_meta(task_name).get("color", "#334155")
+
+
+def _ops_schedule_label(task):
+    if getattr(task, "crontab", None):
+        c = task.crontab
+        m, h, dow = c.minute, c.hour, c.day_of_week
+        day_map = {"0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat"}
+        if m.startswith("*/"):
+            return f"Every {m[2:]} min"
+        if h.startswith("*/"):
+            return f"Every {h[2:]} hr"
+        if dow != "*":
+            return f"{day_map.get(dow, dow)} {str(h).zfill(2)}:{str(m).zfill(2)} UTC"
+        return f"Daily {str(h).zfill(2)}:{str(m).zfill(2)} UTC"
+    if getattr(task, "interval", None):
+        return f"Every {task.interval}"
+    return "—"
+
+
+def _ops_run_summary(result_payload) -> str:
+    if not isinstance(result_payload, dict):
+        return ""
+    keys = ("total", "processed", "created", "updated", "skipped", "failed", "synced")
+    parts = [f"{k}:{result_payload[k]}" for k in keys if k in result_payload and result_payload.get(k) not in (None, "")]
+    if parts:
+        return " · ".join(parts)[:220]
+    msg = result_payload.get("message") or ""
+    return str(msg)[:220]
+
+
+def _build_ops_snapshot() -> dict:
+    cache_key = "ops_center_snapshot_v1"
+    cached = cache.get(cache_key)
+    if cached:
+        return cached
+
+    from celery import current_app
+    from celery.result import AsyncResult
+    from django_celery_beat.models import PeriodicTask
+    from django_celery_results.models import TaskResult
+    from companies.models import Company
+    from harvest.models import CompanyFetchRun, FetchBatch, RawJob
+    from jobs.models import Job
+    from submissions.models import ApplicationSubmission
+    from resumes.models import ResumeDraft
+
+    now = timezone.now()
+    since_24h = now - timedelta(hours=24)
+
+    inspect_errors = []
+    try:
+        inspect = current_app.control.inspect(timeout=2)
+    except Exception as exc:
+        inspect = None
+        inspect_errors.append(f"Failed to initialize Celery inspect: {exc}")
+
+    def _safe_inspect(callable_name):
+        if inspect is None:
+            return {}
+        try:
+            fn = getattr(inspect, callable_name, None)
+            return fn() or {}
+        except Exception as exc:
+            inspect_errors.append(f"Celery inspect.{callable_name} failed: {exc}")
+            return {}
+
+    active_map = _safe_inspect("active")
+    reserved_map = _safe_inspect("reserved")
+    eta_map = _safe_inspect("scheduled")
+    stats_map = _safe_inspect("stats")
+
+    live_tasks = []
+    seen_live_keys = set()
+
+    def _append_live_task(payload):
+        task_id = payload.get("id") or ""
+        key = task_id or f"{payload.get('state','')}:{payload.get('task_name','')}:{payload.get('worker','')}"
+        if key in seen_live_keys:
+            return
+        seen_live_keys.add(key)
+        live_tasks.append(payload)
+
+    for worker_name, entries in active_map.items():
+        for t in entries or []:
+            task_id = t.get("id", "")
+            task_name = t.get("name", "")
+            meta = _ops_task_meta(task_name)
+            state = "RUNNING"
+            percent, message = 0, "Running..."
+            try:
+                res = AsyncResult(task_id)
+                if res.state == "PROGRESS" and isinstance(res.info, dict):
+                    percent = int(res.info.get("percent") or 0)
+                    message = (res.info.get("message") or "Running...")[:180]
+                elif res.state == "STARTED":
+                    percent = 5
+            except Exception:
+                pass
+            started = t.get("time_start")
+            age_seconds = int((timezone.now().timestamp() - float(started))) if started else None
+            _append_live_task({
+                "id": task_id,
+                "task_name": task_name,
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
+                "state": state,
+                "worker": worker_name,
+                "percent": max(0, min(100, percent)),
+                "message": message,
+                "age_seconds": age_seconds,
+            })
+
+    for worker_name, entries in reserved_map.items():
+        for t in entries or []:
+            task_name = t.get("name", "")
+            meta = _ops_task_meta(task_name)
+            _append_live_task({
+                "id": t.get("id", ""),
+                "task_name": task_name,
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
+                "state": "QUEUED",
+                "worker": worker_name,
+                "percent": 0,
+                "message": "Queued on worker; waiting for execution slot.",
+                "age_seconds": None,
+            })
+
+    for worker_name, entries in eta_map.items():
+        for item in entries or []:
+            req = item.get("request") if isinstance(item, dict) else {}
+            req = req if isinstance(req, dict) else {}
+            task_name = req.get("name", "")
+            eta = item.get("eta") if isinstance(item, dict) else ""
+            meta = _ops_task_meta(task_name)
+            _append_live_task({
+                "id": req.get("id", ""),
+                "task_name": task_name,
+                "label": meta["label"],
+                "color": meta["color"],
+                "owner": meta["owner"],
+                "priority": meta["priority"],
+                "sla_minutes": meta["sla_minutes"],
+                "state": "SCHEDULED_QUEUE",
+                "worker": worker_name,
+                "percent": 0,
+                "message": f"ETA: {eta}" if eta else "Scheduled by worker ETA queue.",
+                "age_seconds": None,
+            })
+
+    workers = []
+    for wname, info in stats_map.items():
+        pool = info.get("pool", {}) if isinstance(info, dict) else {}
+        queues = [q.get("name", "") for q in (info.get("consumer", {}) or {}).get("queues", []) if isinstance(q, dict)]
+        workers.append({
+            "name": wname,
+            "concurrency": pool.get("max-concurrency") or 0,
+            "processes": len(pool.get("processes", []) or []),
+            "queues": [q for q in queues if q],
+        })
+
+    schedule_rows = []
+    for pt in PeriodicTask.objects.select_related("crontab", "interval").order_by("-enabled", "name")[:120]:
+        meta = _ops_task_meta(pt.task or pt.name)
+        crontab_obj = getattr(pt, "crontab", None)
+        schedule_rows.append({
+            "id": pt.pk,
+            "name": pt.name,
+            "task": pt.task,
+            "label": meta["label"],
+            "color": meta["color"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
+            "sla_minutes": meta["sla_minutes"],
+            "enabled": bool(pt.enabled),
+            "one_off": bool(pt.one_off),
+            "last_run_at": pt.last_run_at.isoformat() if pt.last_run_at else "",
+            "next_run_at": getattr(pt, "next_run_at", None).isoformat() if getattr(pt, "next_run_at", None) else "",
+            "total_run_count": int(pt.total_run_count or 0),
+            "uses_crontab": bool(crontab_obj),
+            "minute": getattr(crontab_obj, "minute", "0"),
+            "hour": getattr(crontab_obj, "hour", "*"),
+            "day_of_week": getattr(crontab_obj, "day_of_week", "*"),
+            "day_of_month": getattr(crontab_obj, "day_of_month", "*"),
+            "month_of_year": getattr(crontab_obj, "month_of_year", "*"),
+            "interval_label": str(pt.interval) if getattr(pt, "interval", None) else "",
+            "schedule": _ops_schedule_label(pt),
+        })
+
+    recent_results_qs = TaskResult.objects.order_by("-date_done")[:120]
+    recent_results = []
+    for tr in recent_results_qs:
+        runtime = None
+        if tr.date_done and tr.date_created:
+            runtime = int((tr.date_done - tr.date_created).total_seconds())
+        task_name = tr.task_name or ""
+        meta = _ops_task_meta(task_name)
+        recent_results.append({
+            "id": (tr.task_id or "")[:8],
+            "task_name": task_name,
+            "label": meta["label"],
+            "color": meta["color"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
+            "sla_minutes": meta["sla_minutes"],
+            "status": tr.status or "UNKNOWN",
+            "completed_at": tr.date_done.isoformat() if tr.date_done else "",
+            "runtime_seconds": runtime,
+        })
+
+    result_stats = TaskResult.objects.filter(date_done__gte=since_24h).values("status").annotate(c=Count("id"))
+    result_stats_map = {row["status"]: row["c"] for row in result_stats}
+    success_24h = int(result_stats_map.get("SUCCESS", 0))
+    failed_24h = int(result_stats_map.get("FAILURE", 0))
+    revoked_24h = int(result_stats_map.get("REVOKED", 0))
+
+    job_stats = Job.objects.filter(is_archived=False).aggregate(
+        total=Count("id"),
+        open=Count("id", filter=Q(status=Job.Status.OPEN)),
+        pool=Count("id", filter=Q(status=Job.Status.POOL)),
+        closed=Count("id", filter=Q(status=Job.Status.CLOSED)),
+    )
+    pool_jobs = Job.objects.filter(is_archived=False, status=Job.Status.POOL)
+    gate_stats = pool_jobs.aggregate(
+        eligible=Count("id", filter=Q(gate_status=Job.GateStatus.ELIGIBLE)),
+        review=Count("id", filter=Q(gate_status=Job.GateStatus.REVIEW)),
+        blocked=Count("id", filter=Q(gate_status=Job.GateStatus.BLOCKED)),
+        lane_auto=Count("id", filter=Q(vet_lane=Job.VetLane.AUTO)),
+        lane_human=Count("id", filter=Q(vet_lane=Job.VetLane.HUMAN)),
+        lane_blocked=Count("id", filter=Q(vet_lane=Job.VetLane.BLOCKED)),
+        age_gt_24h=Count("id", filter=Q(queue_entered_at__lt=since_24h)),
+    )
+    company_stats = Company.objects.aggregate(
+        total=Count("id"),
+        pending=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.PENDING)),
+        failed=Count("id", filter=Q(enrichment_status=Company.EnrichmentStatus.FAILED)),
+    )
+    try:
+        raw_stats = RawJob.objects.aggregate(
+            total=Count("id"),
+            pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
+            failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
+            missing_jd=Count("id", filter=Q(has_description=False)),
+        )
+    except (OperationalError, ProgrammingError):
+        raw_stats = RawJob.objects.aggregate(
+            total=Count("id"),
+            pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
+            failed_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.FAILED)),
+            missing_jd=Count("id", filter=Q(description__isnull=True) | Q(description="")),
+        )
+    submission_stats = ApplicationSubmission.objects.filter(is_archived=False).aggregate(
+        total=Count("id"),
+        in_progress=Count("id", filter=Q(status=ApplicationSubmission.Status.IN_PROGRESS)),
+        interviews=Count("id", filter=Q(status=ApplicationSubmission.Status.INTERVIEW)),
+        offers=Count("id", filter=Q(status=ApplicationSubmission.Status.OFFER)),
+    )
+
+    harvest_running_batches = FetchBatch.objects.filter(status=FetchBatch.Status.RUNNING).count()
+    harvest_running_company_runs = CompanyFetchRun.objects.filter(status=CompanyFetchRun.Status.RUNNING).count()
+    harvest_failed_24h = CompanyFetchRun.objects.filter(
+        started_at__gte=since_24h,
+        status__in=[CompanyFetchRun.Status.FAILED, CompanyFetchRun.Status.PARTIAL],
+    ).count()
+
+    pipeline_logs = []
+    for log in PipelineRunLog.objects.order_by("-last_run_at")[:40]:
+        payload = log.last_run_result if isinstance(log.last_run_result, dict) else {}
+        meta = _ops_task_meta(log.task_name)
+        pipeline_logs.append({
+            "task_name": log.task_name,
+            "label": meta["label"],
+            "owner": meta["owner"],
+            "priority": meta["priority"],
+            "last_run_at": log.last_run_at.isoformat() if log.last_run_at else "",
+            "summary": _ops_run_summary(payload),
+        })
+
+    missing_jd_threshold = int(getattr(settings, "OPS_ALERT_MISSING_JD_THRESHOLD", 2000))
+    pending_sync_threshold = int(getattr(settings, "OPS_ALERT_PENDING_SYNC_THRESHOLD", 5000))
+
+    alerts = []
+    for inspect_error in inspect_errors:
+        alerts.append({"level": "error", "message": inspect_error[:220]})
+    if failed_24h > 0:
+        alerts.append({"level": "error", "message": f"{failed_24h} background tasks failed in the last 24 hours."})
+    if harvest_failed_24h > 0:
+        alerts.append({"level": "warning", "message": f"{harvest_failed_24h} Harvest company runs were partial/failed in the last 24 hours."})
+    if int(raw_stats.get("missing_jd") or 0) > missing_jd_threshold:
+        alerts.append({"level": "warning", "message": f"JD backlog is high: {raw_stats['missing_jd']} raw jobs are missing descriptions."})
+    if int(raw_stats.get("pending_sync") or 0) > pending_sync_threshold:
+        alerts.append({"level": "warning", "message": f"Pool sync backlog is high: {raw_stats['pending_sync']} pending raw jobs."})
+
+    # 24h trend timeline (hourly)
+    timeline_hours = []
+    slot0 = (now - timedelta(hours=23)).replace(minute=0, second=0, microsecond=0)
+    for i in range(24):
+        timeline_hours.append(slot0 + timedelta(hours=i))
+
+    task_trend_map = {h: {"SUCCESS": 0, "FAILURE": 0, "REVOKED": 0, "TOTAL": 0} for h in timeline_hours}
+    qs_task = (
+        TaskResult.objects
+        .filter(date_done__gte=slot0)
+        .annotate(hour=TruncHour("date_done"))
+        .values("hour", "status")
+        .annotate(c=Count("id"))
+    )
+    for row in qs_task:
+        hour = row.get("hour")
+        status = row.get("status") or "UNKNOWN"
+        c = int(row.get("c") or 0)
+        if hour not in task_trend_map:
+            continue
+        task_trend_map[hour]["TOTAL"] += c
+        if status in ("SUCCESS", "FAILURE", "REVOKED"):
+            task_trend_map[hour][status] += c
+
+    harvest_trend_map = {h: {"SUCCESS": 0, "PARTIAL": 0, "FAILED": 0, "RUNNING": 0, "TOTAL": 0} for h in timeline_hours}
+    qs_harvest = (
+        CompanyFetchRun.objects
+        .filter(started_at__gte=slot0)
+        .annotate(hour=TruncHour("started_at"))
+        .values("hour", "status")
+        .annotate(c=Count("id"))
+    )
+    for row in qs_harvest:
+        hour = row.get("hour")
+        status = row.get("status") or "UNKNOWN"
+        c = int(row.get("c") or 0)
+        if hour not in harvest_trend_map:
+            continue
+        harvest_trend_map[hour]["TOTAL"] += c
+        if status in harvest_trend_map[hour]:
+            harvest_trend_map[hour][status] += c
+
+    trend = {
+        "labels": [h.strftime("%H:%M") for h in timeline_hours],
+        "task_total": [task_trend_map[h]["TOTAL"] for h in timeline_hours],
+        "task_failed": [task_trend_map[h]["FAILURE"] for h in timeline_hours],
+        "task_success": [task_trend_map[h]["SUCCESS"] for h in timeline_hours],
+        "harvest_total": [harvest_trend_map[h]["TOTAL"] for h in timeline_hours],
+        "harvest_failed": [harvest_trend_map[h]["FAILED"] for h in timeline_hours],
+        "harvest_partial": [harvest_trend_map[h]["PARTIAL"] for h in timeline_hours],
+        "harvest_success": [harvest_trend_map[h]["SUCCESS"] for h in timeline_hours],
+    }
+
+    summary = {
+        "running_now": len([t for t in live_tasks if t["state"] == "RUNNING"]),
+        "queued_now": len([t for t in live_tasks if t["state"] in ("QUEUED", "SCHEDULED_QUEUE")]),
+        "workers_online": len(workers),
+        "scheduled_enabled": len([s for s in schedule_rows if s["enabled"]]),
+        "scheduled_total": len(schedule_rows),
+        "completed_24h": success_24h + failed_24h + revoked_24h,
+        "success_24h": success_24h,
+        "failed_24h": failed_24h,
+        "jobs_total": int(job_stats.get("total") or 0),
+        "jobs_open": int(job_stats.get("open") or 0),
+        "jobs_pool": int(job_stats.get("pool") or 0),
+        "jobs_pool_eligible": int(gate_stats.get("eligible") or 0),
+        "jobs_pool_review": int(gate_stats.get("review") or 0),
+        "jobs_pool_blocked": int(gate_stats.get("blocked") or 0),
+        "jobs_lane_auto": int(gate_stats.get("lane_auto") or 0),
+        "jobs_lane_human": int(gate_stats.get("lane_human") or 0),
+        "jobs_lane_blocked": int(gate_stats.get("lane_blocked") or 0),
+        "jobs_pool_age_gt_24h": int(gate_stats.get("age_gt_24h") or 0),
+        "companies_total": int(company_stats.get("total") or 0),
+        "companies_pending_enrichment": int(company_stats.get("pending") or 0),
+        "companies_failed_enrichment": int(company_stats.get("failed") or 0),
+        "raw_total": int(raw_stats.get("total") or 0),
+        "raw_pending_sync": int(raw_stats.get("pending_sync") or 0),
+        "raw_failed_sync": int(raw_stats.get("failed_sync") or 0),
+        "raw_missing_jd": int(raw_stats.get("missing_jd") or 0),
+        "submissions_total": int(submission_stats.get("total") or 0),
+        "submissions_in_progress": int(submission_stats.get("in_progress") or 0),
+        "submissions_interviews": int(submission_stats.get("interviews") or 0),
+        "submissions_offers": int(submission_stats.get("offers") or 0),
+        "resume_drafts": ResumeDraft.objects.count(),
+        "harvest_running_batches": int(harvest_running_batches),
+        "harvest_running_company_runs": int(harvest_running_company_runs),
+        "ops_alert_missing_jd_threshold": missing_jd_threshold,
+        "ops_alert_pending_sync_threshold": pending_sync_threshold,
+    }
+
+    payload = {
+        "generated_at": now.isoformat(),
+        "summary": summary,
+        "alerts": alerts,
+        "inspect_ok": len(inspect_errors) == 0,
+        "inspect_errors": inspect_errors,
+        "live_tasks": live_tasks[:120],
+        "workers": workers[:40],
+        "scheduled": schedule_rows,
+        "completed": recent_results,
+        "pipelines": pipeline_logs,
+        "trend": trend,
+    }
+    cache.set(cache_key, payload, timeout=5)
+    return payload
+
+
+class SystemOpsCenterView(AdminRequiredMixin, TemplateView):
+    template_name = "settings/ops_center.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        snapshot = _build_ops_snapshot()
+        ctx["ops_summary"] = snapshot.get("summary", {})
+        ctx["ops_alerts"] = snapshot.get("alerts", [])
+        ctx["ops_generated_at"] = snapshot.get("generated_at", "")
+        return ctx
+
+
+class SystemOpsCenterApiView(AdminRequiredMixin, View):
+    """JSON snapshot for the system operations center."""
+
+    def get(self, request, *args, **kwargs):
+        return JsonResponse(_build_ops_snapshot(), encoder=DjangoJSONEncoder)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # TASK SCHEDULER GUI
 # Full GUI to view, toggle, edit, and manually trigger all periodic tasks.
 # Changes take effect immediately — Celery Beat polls the DB every ~5 seconds.
@@ -1147,6 +1632,27 @@ def _get_schedule_label(task):
     if task.interval:
         return f"Every {task.interval}"
     return "—"
+
+
+def _ops_next_url(request, fallback_name="ops-center"):
+    """Safe post-action redirect target."""
+    candidate = (
+        request.POST.get("next")
+        or request.GET.get("next")
+        or request.META.get("HTTP_REFERER")
+        or ""
+    ).strip()
+    if candidate and url_has_allowed_host_and_scheme(
+        candidate,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        return candidate
+    return reverse(fallback_name)
+
+
+def _is_ajax_request(request):
+    return request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
 
 class TaskSchedulerView(AdminRequiredMixin, TemplateView):
@@ -1207,8 +1713,11 @@ class TaskToggleView(AdminRequiredMixin, View):
         task.enabled = not task.enabled
         task.save(update_fields=["enabled"])
         status = "enabled" if task.enabled else "paused"
-        messages.success(request, f"\u2705 Task '{task.name}' is now {status}.")
-        return redirect("task-scheduler")
+        msg = f"Task '{task.name}' is now {status}."
+        if _is_ajax_request(request):
+            return JsonResponse({"ok": True, "message": msg, "enabled": bool(task.enabled), "task_id": task.pk})
+        messages.success(request, f"\u2705 {msg}")
+        return redirect(_ops_next_url(request))
 
 
 class TaskEditScheduleView(AdminRequiredMixin, View):
@@ -1234,8 +1743,11 @@ class TaskEditScheduleView(AdminRequiredMixin, View):
         task.crontab = crontab
         task.interval = None
         task.save(update_fields=["crontab", "interval"])
-        messages.success(request, f"\u2705 Schedule updated for '{task.name}'.")
-        return redirect("task-scheduler")
+        msg = f"Schedule updated for '{task.name}'."
+        if _is_ajax_request(request):
+            return JsonResponse({"ok": True, "message": msg, "task_id": task.pk})
+        messages.success(request, f"\u2705 {msg}")
+        return redirect(_ops_next_url(request))
 
 
 class TaskRunNowView(AdminRequiredMixin, View):
@@ -1265,8 +1777,11 @@ class TaskRunNowView(AdminRequiredMixin, View):
 
         mapping = self.TASK_MAP.get(task.task)
         if not mapping:
-            messages.error(request, f"⚠️ No run-now mapping for task: {task.task}")
-            return redirect("task-scheduler")
+            msg = f"No run-now mapping for task: {task.task}"
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": False, "message": msg}, status=400)
+            messages.error(request, f"⚠️ {msg}")
+            return redirect(_ops_next_url(request))
 
         module_path, func_name = mapping
         try:
@@ -1274,12 +1789,19 @@ class TaskRunNowView(AdminRequiredMixin, View):
             celery_task = getattr(module, func_name)
             kwargs_dict = json.loads(task.kwargs) if task.kwargs and task.kwargs != "{}" else {}
             result = celery_task.delay(**kwargs_dict)
-            messages.success(request, f"\U0001f680 Task '{task.name}' triggered! ID: {result.id[:8]}...")
+            msg = f"Task '{task.name}' triggered. ID: {result.id[:8]}..."
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": True, "message": msg, "task_id": task.pk, "run_id": result.id})
+            messages.success(request, f"\U0001f680 {msg}")
             from urllib.parse import urlencode
-
+            target = _ops_next_url(request)
             q = urlencode({"tp": result.id, "tpl": (task.name or "Scheduled task")[:120]})
-            return redirect(f"{reverse('task-scheduler')}?{q}")
+            separator = "&" if "?" in target else "?"
+            return redirect(f"{target}{separator}{q}")
         except Exception as e:
-            messages.error(request, f"❌ Failed to trigger task: {e}")
+            msg = f"Failed to trigger task: {e}"
+            if _is_ajax_request(request):
+                return JsonResponse({"ok": False, "message": msg}, status=500)
+            messages.error(request, f"❌ {msg}")
 
-        return redirect("task-scheduler")
+        return redirect(_ops_next_url(request))

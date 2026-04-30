@@ -28,6 +28,16 @@ class Job(models.Model):
         FILLED     = 'FILLED',     _('Filled')
         ARCHIVED   = 'ARCHIVED',   _('Archived')
 
+    class GateStatus(models.TextChoices):
+        ELIGIBLE = 'ELIGIBLE', _('Eligible')
+        REVIEW = 'REVIEW', _('Needs Review')
+        BLOCKED = 'BLOCKED', _('Blocked')
+
+    class VetLane(models.TextChoices):
+        AUTO = 'AUTO', _('Auto-Approve Lane')
+        HUMAN = 'HUMAN', _('Human Review Lane')
+        BLOCKED = 'BLOCKED', _('Blocked Lane')
+
     title = models.CharField(max_length=200)
     company = models.CharField(max_length=200, help_text="Legacy company name (will be kept for compatibility).")
     company_obj = models.ForeignKey(
@@ -80,6 +90,39 @@ class Job(models.Model):
         null=True, blank=True,
         help_text=_("0.0–1.0 fraction of key fields populated."),
     )
+    # Vet gate + triage signals (Harvest -> Vet workflow).
+    source_raw_job = models.ForeignKey(
+        "harvest.RawJob",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="synced_jobs",
+        help_text=_("Raw harvest source row used to create this pooled job."),
+    )
+    hard_gate_passed = models.BooleanField(default=False, db_index=True)
+    gate_status = models.CharField(
+        max_length=12,
+        choices=GateStatus.choices,
+        default=GateStatus.REVIEW,
+        db_index=True,
+    )
+    vet_lane = models.CharField(
+        max_length=10,
+        choices=VetLane.choices,
+        default=VetLane.HUMAN,
+        db_index=True,
+    )
+    pipeline_reason_code = models.CharField(max_length=64, blank=True, db_index=True)
+    pipeline_reason_detail = models.TextField(blank=True)
+    hard_gate_failures = models.JSONField(default=list, blank=True)
+    hard_gate_checks = models.JSONField(default=dict, blank=True)
+    data_quality_score = models.FloatField(null=True, blank=True)
+    trust_score = models.FloatField(null=True, blank=True)
+    candidate_fit_score = models.FloatField(null=True, blank=True)
+    vet_priority_score = models.FloatField(null=True, blank=True, db_index=True)
+    gate_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    queue_entered_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    vet_approved_at = models.DateTimeField(null=True, blank=True, db_index=True)
     stage_owner = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

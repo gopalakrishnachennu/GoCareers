@@ -1,14 +1,13 @@
 from celery import shared_task
-from urllib.request import Request, urlopen
 
 from core.task_progress import update_task_progress
 from urllib.parse import urlparse
-import ssl
 import logging
 
 from django.utils import timezone
 
 from .models import Job
+from harvest.url_health import check_job_posting_live
 
 logger = logging.getLogger(__name__)
 
@@ -66,45 +65,8 @@ def _check_job_url(url: str) -> bool:
         return False
     url = _normalize_url(url)
     try:
-        ctx = ssl.create_default_context()
-        req = Request(url, headers={"User-Agent": "GoCareers-job-url-checker/1.0"})
-        req.get_method = lambda: "HEAD"
-        try:
-            resp = urlopen(req, context=ctx, timeout=5)
-        except Exception:
-            # Fallback to GET
-            req.get_method = lambda: "GET"
-            resp = urlopen(req, context=ctx, timeout=5)
-        status = getattr(resp, "status", None) or getattr(resp, "code", None)
-        if status is None:
-            return True
-        status = int(status)
-        # 4xx/5xx are dead links.
-        if status >= 400:
-            return False
-        # 3xx redirect chain accepted as live.
-        if 300 <= status < 400:
-            return True
-        # For 2xx responses, detect "soft 404" pages that still return HTTP 200.
-        try:
-            req_get = Request(url, headers={"User-Agent": "GoCareers-job-url-checker/1.0"})
-            req_get.get_method = lambda: "GET"
-            resp_get = urlopen(req_get, context=ctx, timeout=7)
-            body = (resp_get.read(8192) or b"").decode("utf-8", errors="ignore").lower()
-            soft_404_markers = (
-                "page you are looking for doesn't exist",
-                "page you are looking for does not exist",
-                "job not found",
-                "this job is no longer available",
-                "position no longer available",
-                "404",
-            )
-            if any(m in body for m in soft_404_markers):
-                return False
-        except Exception:
-            # If body check fails but status was 2xx, keep as live to avoid false negatives.
-            pass
-        return True
+        result = check_job_posting_live(url)
+        return bool(result.is_live)
     except Exception:
         return False
 
@@ -117,6 +79,7 @@ def run_job_validation(job_id: int):
     Called async when a job enters POOL status.
     """
     from .services import validate_job_quality, ensure_parsed_jd
+    from .gating import apply_gate_result_to_job, evaluate_job_gate
 
     try:
         job = Job.objects.get(pk=job_id)
@@ -131,12 +94,26 @@ def run_job_validation(job_id: int):
     job.validation_score = result["score"]
     job.validation_result = result
     job.validation_run_at = timezone.now()
-    job.save(update_fields=["validation_score", "validation_result", "validation_run_at"])
+    gate = evaluate_job_gate(job)
+    apply_gate_result_to_job(job, gate)
+    job.gate_checked_at = timezone.now()
+    job.save(
+        update_fields=[
+            "validation_score", "validation_result", "validation_run_at",
+            "hard_gate_passed", "gate_status", "vet_lane",
+            "pipeline_reason_code", "pipeline_reason_detail",
+            "hard_gate_failures", "hard_gate_checks",
+            "data_quality_score", "trust_score", "candidate_fit_score",
+            "vet_priority_score", "gate_checked_at",
+        ]
+    )
 
     # Auto-approve if threshold met
-    if result.get("auto_approved") and job.status == Job.Status.POOL:
+    if result.get("auto_approved") and job.status == Job.Status.POOL and gate.passed:
         job.status = Job.Status.OPEN
-        job.save(update_fields=["status"])
+        job.stage = Job.Stage.LIVE
+        job.vet_approved_at = timezone.now()
+        job.save(update_fields=["status", "stage", "vet_approved_at", "updated_at"])
         try:
             from .notify import notify_new_open_job_to_consultants, notify_job_pool_status
             notify_new_open_job_to_consultants(job)
@@ -320,4 +297,3 @@ def auto_close_jobs_task():
     except Exception:
         pass
     return result
-

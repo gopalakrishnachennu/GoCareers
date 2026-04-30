@@ -412,8 +412,10 @@ class RawJob(models.Model):
 
     # ── Core fields ───────────────────────────────────────────────────────────
     title = models.CharField(max_length=512)
+    normalized_title = models.CharField(max_length=255, blank=True)
     company_name = models.CharField(max_length=256, blank=True)
     department = models.CharField(max_length=256, blank=True)
+    department_normalized = models.CharField(max_length=128, blank=True)
     team = models.CharField(max_length=256, blank=True)
 
     # ── Location ──────────────────────────────────────────────────────────────
@@ -444,6 +446,10 @@ class RawJob(models.Model):
 
     # ── Content ───────────────────────────────────────────────────────────────
     description = models.TextField(blank=True)
+    description_clean = models.TextField(blank=True)
+    description_raw_html = models.TextField(blank=True)
+    has_html_content = models.BooleanField(default=False, db_index=True)
+    cleaning_version = models.CharField(max_length=20, blank=True, default="v2")
     requirements = models.TextField(blank=True)
     benefits = models.TextField(blank=True)
 
@@ -482,6 +488,7 @@ class RawJob(models.Model):
     # e.g. "US citizens only", "US persons", "Any"
     work_authorization = models.CharField(max_length=64, blank=True)
     clearance_required = models.BooleanField(default=False)
+    clearance_level = models.CharField(max_length=64, blank=True)
 
     # ── Enriched: compensation extras ────────────────────────────────────────
     salary_equity = models.BooleanField(default=False)
@@ -491,22 +498,50 @@ class RawJob(models.Model):
     # ── Enriched: work conditions ─────────────────────────────────────────────
     # e.g. "up to 25%", "occasional", "extensive"
     travel_required = models.CharField(max_length=64, blank=True)
+    travel_pct_min = models.PositiveSmallIntegerField(null=True, blank=True)
+    travel_pct_max = models.PositiveSmallIntegerField(null=True, blank=True)
+    schedule_type = models.CharField(max_length=32, blank=True)
+    shift_schedule = models.CharField(max_length=128, blank=True)
+    shift_details = models.CharField(max_length=255, blank=True)
+    hours_hint = models.CharField(max_length=64, blank=True)
+    weekend_required = models.BooleanField(null=True, blank=True)
 
     # ── Enriched: structured lists ────────────────────────────────────────────
     certifications = models.JSONField(default=list, blank=True)
+    licenses_required = models.JSONField(default=list, blank=True)
     benefits_list = models.JSONField(default=list, blank=True)
     languages_required = models.JSONField(default=list, blank=True)
+    encouraged_to_apply = models.JSONField(default=list, blank=True)
+    job_keywords = models.JSONField(default=list, blank=True)
+    title_keywords = models.JSONField(default=list, blank=True)
+
+    # ── Denormalized company context (for fast Raw Jobs filtering) ───────────
+    company_industry = models.CharField(max_length=255, blank=True)
+    company_stage = models.CharField(max_length=64, blank=True)
+    company_funding = models.CharField(max_length=128, blank=True)
+    company_size = models.CharField(max_length=64, blank=True)
+    company_employee_count_band = models.CharField(max_length=64, blank=True)
+    company_founding_year = models.PositiveSmallIntegerField(null=True, blank=True)
 
     # ── Enriched: quality signals ─────────────────────────────────────────────
     word_count = models.PositiveIntegerField(default=0)
     # 0.0–1.0: fraction of key fields populated (description, salary, location…)
     quality_score = models.FloatField(null=True, blank=True)
+    jd_quality_score = models.FloatField(null=True, blank=True)
+    classification_confidence = models.FloatField(null=True, blank=True)
+    classification_provenance = models.JSONField(default=dict, blank=True)
+    field_confidence = models.JSONField(default=dict, blank=True)
+    field_provenance = models.JSONField(default=dict, blank=True)
+    resume_ready_score = models.FloatField(null=True, blank=True)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     sync_status = models.CharField(
         max_length=8, choices=SyncStatus.choices, default=SyncStatus.PENDING
     )
     is_active = models.BooleanField(default=True)
+    # Denormalized flag — set on every save so JD filter hits an index instead of
+    # running Length(Trim(Coalesce(description))) over 100k+ rows.
+    has_description = models.BooleanField(default=False, db_index=True)
     fetched_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     expires_at = models.DateTimeField(null=True, blank=True)
@@ -520,18 +555,50 @@ class RawJob(models.Model):
     class Meta:
         ordering = ["-fetched_at"]
         indexes = [
+            # Single-column
             models.Index(fields=["company", "platform_slug"]),
             models.Index(fields=["platform_slug"]),
             models.Index(fields=["sync_status"]),
+            models.Index(fields=["fetched_at"],       name="harvest_raw_fetched_idx"),
+            models.Index(fields=["is_remote"],         name="harvest_raw_remote_idx"),
+            models.Index(fields=["has_description"],   name="harvest_raw_hasdesc_idx"),
             models.Index(fields=["posted_date"]),
             models.Index(fields=["employment_type"]),
             models.Index(fields=["location_type"]),
             models.Index(fields=["is_active"]),
             models.Index(fields=["job_category"]),
+            models.Index(fields=["normalized_title"]),
+            models.Index(fields=["department_normalized"]),
+            models.Index(fields=["country"]),
+            models.Index(fields=["state"]),
+            models.Index(fields=["years_required"]),
+            models.Index(fields=["education_required"]),
             models.Index(fields=["visa_sponsorship"]),
             models.Index(fields=["clearance_required"]),
+            models.Index(fields=["clearance_level"]),
+            models.Index(fields=["schedule_type"]),
+            models.Index(fields=["weekend_required"]),
+            models.Index(fields=["shift_schedule"]),
+            models.Index(fields=["travel_pct_min"]),
+            models.Index(fields=["travel_pct_max"]),
+            models.Index(fields=["company_industry"]),
+            models.Index(fields=["company_size"]),
+            models.Index(fields=["company_employee_count_band"]),
+            models.Index(fields=["company_founding_year"]),
+            models.Index(fields=["quality_score"]),
+            models.Index(fields=["jd_quality_score"]),
+            models.Index(fields=["classification_confidence"]),
+            models.Index(fields=["resume_ready_score"]),
+            models.Index(fields=["has_html_content"]),
+            # Composite — filter + default ORDER BY fetched_at DESC
+            models.Index(fields=["sync_status",    "-fetched_at"], name="harvest_raw_sync_fetched_idx"),
+            models.Index(fields=["is_active",      "-fetched_at"], name="harvest_raw_active_fetched_idx"),
+            models.Index(fields=["is_remote",      "-fetched_at"], name="harvest_raw_remote_fetched_idx"),
+            models.Index(fields=["has_description","-fetched_at"], name="harvest_raw_hd_fetched_idx"),
+            models.Index(fields=["platform_slug",  "-fetched_at"], name="harvest_raw_plat_fetched_idx"),
+            models.Index(fields=["posted_date"],                    name="harvest_raw_posted_idx"),
             # Compound index for backfill eligibility queries
-            models.Index(fields=["has_description", "jd_backfill_locked_at"]),
+            models.Index(fields=["has_description", "jd_backfill_locked_at"], name="harvest_raw_has_desc_lock_idx"),
         ]
         verbose_name = "Raw Job"
         verbose_name_plural = "Raw Jobs"
@@ -539,6 +606,10 @@ class RawJob(models.Model):
     def has_meaningful_description(self) -> bool:
         """True when stored description has more than trivial whitespace (matches Jobs Browser)."""
         return len((self.description or "").strip()) > 1
+
+    def save(self, *args, **kwargs):
+        self.has_description = self.has_meaningful_description()
+        super().save(*args, **kwargs)
 
     def is_expired_listing(self) -> bool:
         """
@@ -581,6 +652,76 @@ class RawJob(models.Model):
     def save(self, *args, **kwargs):
         self.has_description = self.has_meaningful_description()
         super().save(*args, **kwargs)
+
+    def resume_jd_gate(self) -> dict:
+        """Resume-generation JD gate with reason and thresholds."""
+        from .jd_gate import evaluate_raw_job_resume_gate
+
+        cache_attr = "_resume_jd_gate_cache"
+        cached = getattr(self, cache_attr, None)
+        if cached is not None:
+            return cached
+        gate = evaluate_raw_job_resume_gate(self).asdict()
+        setattr(self, cache_attr, gate)
+        return gate
+
+    def is_resume_jd_usable(self) -> bool:
+        return bool(self.resume_jd_gate().get("usable"))
+
+    def pipeline_stage_label(self) -> str:
+        """
+        Coarse pipeline stage used by Raw Jobs workflow board.
+
+        Flow: Fetched -> Parsed -> Enriched -> Classified -> Ready -> Synced
+        """
+        if self.sync_status == self.SyncStatus.SYNCED:
+            return "SYNCED"
+        if self.sync_status == self.SyncStatus.FAILED:
+            return "FAILED"
+        if self.sync_status == self.SyncStatus.SKIPPED:
+            return "DUPLICATE"
+        if (
+            self.has_description
+            and self.is_resume_jd_usable()
+            and (self.classification_confidence or 0) >= 0.55
+            and self.is_active
+        ):
+            return "READY"
+        if (self.classification_confidence or 0) > 0:
+            return "CLASSIFIED"
+        if self.quality_score is not None or self.jd_quality_score is not None:
+            return "ENRICHED"
+        if self.has_description:
+            return "PARSED"
+        return "FETCHED"
+
+    def owner_pipeline_label(self) -> str:
+        slug = (self.platform_slug or "").lower()
+        if slug in {"jarvis"}:
+            return "Jarvis"
+        if slug in {"workday", "greenhouse", "lever", "ashby", "workable", "smartrecruiters", "bamboohr", "dayforce"}:
+            return "API"
+        return "Scraper"
+
+    def retry_count_estimate(self) -> int:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        for key in ("retry_count", "retries", "attempts"):
+            val = payload.get(key)
+            if isinstance(val, int) and val >= 0:
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+        return 0
+
+    def last_error_text(self) -> str:
+        payload = self.raw_payload if isinstance(self.raw_payload, dict) else {}
+        for key in ("last_error", "error_message", "error", "sync_error"):
+            val = payload.get(key)
+            if isinstance(val, str) and val.strip():
+                return val.strip()[:220]
+        if self.sync_status == self.SyncStatus.FAILED:
+            return "Sync to pool failed"
+        return ""
 
     def __str__(self):
         return f"{self.title} @ {self.company_name}"
@@ -729,6 +870,31 @@ class HarvestEngineConfig(models.Model):
             "After enrichment, automatically promote enriched jobs with real "
             "descriptions into the Vet Queue (Job Pool). "
             "Fires 5 min after the last company task finishes."
+        ),
+    )
+
+    # ── Resume-JD gate thresholds (live, no restart) ─────────────────────────
+    resume_jd_min_words = models.PositiveSmallIntegerField(
+        default=80,
+        verbose_name="Resume JD minimum words",
+        help_text=(
+            "Minimum cleaned JD word count required before a raw job is considered "
+            "resume-usable."
+        ),
+    )
+    resume_jd_min_chars = models.PositiveSmallIntegerField(
+        default=400,
+        verbose_name="Resume JD minimum characters",
+        help_text=(
+            "Minimum cleaned JD character length required before a raw job is considered "
+            "resume-usable."
+        ),
+    )
+    resume_jd_min_classification_confidence = models.FloatField(
+        default=0.35,
+        verbose_name="Resume JD minimum classification confidence",
+        help_text=(
+            "Minimum classification confidence (0-1) required for resume-ready gating."
         ),
     )
 

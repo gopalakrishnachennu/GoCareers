@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 
 from .push_api import ExportLabelsView, PushJobsView, PushStatusView
 from .views import (
@@ -8,6 +9,10 @@ from .views import (
     FetchBatchListView,
     FetchCooldownStatusView,
     JarvisReScrapeView,
+    JarvisApproveView,
+    JarvisFetchCompanyJobsView,
+    JarvisFetchProgressApiView,
+    JarvisFetchProgressView,
     JarvisStatusView,
     JarvisView,
     LabelManualSetView,
@@ -19,12 +24,19 @@ from .views import (
     PlatformToggleView,
     PlatformUpdateView,
     RawJobCompanyBreakdownView,
+    RawJobCheckLiveStatusView,
     RawJobDetailView,
     RawJobListView,
+    RawJobResumeProfileView,
     RawJobStatsView,
+    RawJobWorkflowInsightsView,
     RunBackfillDescriptionsView,
+    RunBackfillResumeContractView,
     RunBackfillNowView,
     RunBulkSyncView,
+    RunValidateRawUrlsView,
+    RunRetryFailedFetchesView,
+    RunSyncSelectedRawJobsView,
     RunCleanupNowView,
     RunDetectNowView,
     RunEnrichExistingView,
@@ -50,6 +62,8 @@ urlpatterns = [
     path("schedule/", ScheduleConfigView.as_view(), name="harvest-schedule"),
     # Monitor
     path("monitor/", RunMonitorView.as_view(), name="harvest-monitor"),
+    path("tasks/", RedirectView.as_view(pattern_name="ops-center", permanent=False), name="harvest-tasks"),
+    path("tasks/api/", RedirectView.as_view(pattern_name="ops-center-api", permanent=False), name="harvest-tasks-api"),
     # Labels
     path("labels/", CompanyLabelListView.as_view(), name="harvest-labels"),
     path("labels/<int:pk>/verify/", LabelVerifyView.as_view(), name="harvest-label-verify"),
@@ -60,13 +74,19 @@ urlpatterns = [
     path("raw-jobs/batches/", FetchBatchListView.as_view(), name="harvest-rawjobs-batches"),
     path("raw-jobs/company-status/", CompanyFetchStatusView.as_view(), name="harvest-rawjobs-company-status"),
     path("raw-jobs/stats/", RawJobStatsView.as_view(), name="harvest-rawjobs-stats"),
+    path("raw-jobs/insights/", RawJobWorkflowInsightsView.as_view(), name="harvest-rawjobs-insights"),
     path("raw-jobs/api/companies/", RawJobCompanyBreakdownView.as_view(), name="harvest-rawjobs-company-breakdown"),
+    path("raw-jobs/<int:pk>/recheck-live/", RawJobCheckLiveStatusView.as_view(), name="harvest-rawjob-recheck-live"),
+    path("raw-jobs/<int:pk>/resume-profile/", RawJobResumeProfileView.as_view(), name="harvest-rawjob-resume-profile"),
     path("raw-jobs/<int:pk>/", RawJobDetailView.as_view(), name="harvest-rawjob-detail"),
     # Trigger actions
     path("run/detect/", RunDetectNowView.as_view(), name="harvest-run-detect"),
     path("run/harvest/", RunHarvestNowView.as_view(), name="harvest-run-harvest"),
     path("run/sync/", RunSyncNowView.as_view(), name="harvest-run-sync"),
     path("run/bulk-sync/", RunBulkSyncView.as_view(), name="harvest-run-bulk-sync"),
+    path("run/validate-urls/", RunValidateRawUrlsView.as_view(), name="harvest-run-validate-urls"),
+    path("run/retry-failed-fetches/", RunRetryFailedFetchesView.as_view(), name="harvest-run-retry-failed-fetches"),
+    path("run/sync-selected/", RunSyncSelectedRawJobsView.as_view(), name="harvest-run-sync-selected"),
     path("run/cleanup/", RunCleanupNowView.as_view(), name="harvest-run-cleanup"),
     path("run/backfill/", RunBackfillNowView.as_view(), name="harvest-run-backfill"),
     path("run/verify-portals/", RunVerifyPortalsView.as_view(), name="harvest-run-verify-portals"),
@@ -75,6 +95,7 @@ urlpatterns = [
     path("run/stop-batch/", StopBatchView.as_view(), name="harvest-run-stop-batch"),
     path("run/backfill-descriptions/", RunBackfillDescriptionsView.as_view(), name="harvest-run-backfill-descriptions"),
     path("run/enrich-existing/", RunEnrichExistingView.as_view(), name="harvest-run-enrich-existing"),
+    path("run/backfill-resume-contract/", RunBackfillResumeContractView.as_view(), name="harvest-run-backfill-resume-contract"),
     path("run/setup-schedule/", SetupScheduleView.as_view(), name="harvest-run-setup-schedule"),
     # API helpers
     path("api/cooldown/", FetchCooldownStatusView.as_view(), name="harvest-api-cooldown"),
@@ -87,5 +108,9 @@ urlpatterns = [
     # Job Jarvis — paste-any-URL ingestion
     path("jarvis/", JarvisView.as_view(), name="harvest-jarvis"),
     path("jarvis/status/", JarvisStatusView.as_view(), name="harvest-jarvis-status"),
+    path("jarvis/approve/", JarvisApproveView.as_view(), name="harvest-jarvis-approve"),
+    path("jarvis/fetch-all/", JarvisFetchCompanyJobsView.as_view(), name="harvest-jarvis-fetch-all"),
+    path("jarvis/fetch-all/progress/", JarvisFetchProgressView.as_view(), name="harvest-jarvis-fetch-all-progress"),
+    path("jarvis/fetch-all/progress/api/", JarvisFetchProgressApiView.as_view(), name="harvest-jarvis-fetch-all-progress-api"),
     path("jarvis/rescrape/", JarvisReScrapeView.as_view(), name="harvest-jarvis-rescrape"),
 ]

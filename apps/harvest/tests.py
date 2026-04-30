@@ -1,10 +1,14 @@
 """Fast checks for career URLs, tenant extraction, harvester wiring, and smoke command."""
 
+import json
 from io import StringIO
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
+import requests
 from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
 
 from apps.harvest.career_url import build_career_url
 from apps.harvest.detectors import extract_tenant
@@ -53,6 +57,22 @@ class HarvestUrlAndRegistryTests(SimpleTestCase):
         self.assertEqual(kind_for_slug("teamtailor"), ImplementationKind.DEDICATED)
         self.assertIn("zoho", dedicated_slugs())
         self.assertIn("teamtailor", dedicated_slugs())
+
+
+class HarvestUrlHashDedupeTests(SimpleTestCase):
+    def test_tracking_query_params_do_not_change_hash(self):
+        from apps.harvest.normalizer import compute_url_hash
+
+        a = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn&utm_source=linkedin"
+        b = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503"
+        self.assertEqual(compute_url_hash(a), compute_url_hash(b))
+
+    def test_identity_query_params_still_change_hash(self):
+        from apps.harvest.normalizer import compute_url_hash
+
+        a = "https://example.com/jobs/view?jobId=123"
+        b = "https://example.com/jobs/view?jobId=456"
+        self.assertNotEqual(compute_url_hash(a), compute_url_hash(b))
 
 
 class SmokeTestHarvestCommandTests(TestCase):
@@ -409,6 +429,60 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertIn("Dayforce JD body", out.get("description", ""))
         self.assertEqual(out.get("title"), "Payroll Analyst")
 
+    def test_dayforce_next_data_fallback_for_modern_board_urls(self):
+        jarvis = JobJarvis()
+        url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        next_data = {
+            "props": {
+                "pageProps": {
+                    "jobData": {
+                        "jobTitle": "Platform Engineer",
+                        "jobReqId": "6503",
+                        "postingLocations": [
+                            {"formattedAddress": "Austin, Texas, United States of America"},
+                            {"formattedAddress": "Tempe, Arizona, United States of America"},
+                        ],
+                        "jobPostingAttributes": [{"name": "JobFamily", "value": "Technology"}],
+                        "postingStartTimestampUTC": "2026-04-02T03:00:00Z",
+                        "jobPostingContent": {
+                            "jobDescription": "<p>Lead and build secure cloud platforms.</p>",
+                            "jobDescriptionFooter": "<p>Benefits package and growth opportunities.</p>",
+                        },
+                    }
+                }
+            },
+            "query": {"clientNamespace": "kestra"},
+        }
+        html = (
+            '<html><head></head><body>'
+            '<script id="__NEXT_DATA__" type="application/json">'
+            f"{json.dumps(next_data)}"
+            "</script></body></html>"
+        )
+
+        detail_404 = requests.HTTPError("404")
+        html_resp = MagicMock()
+        html_resp.raise_for_status = MagicMock()
+        html_resp.text = html
+        html_resp.url = url
+
+        def fake_get(target_url, *args, **kwargs):
+            if "/api/geo/" in target_url:
+                raise detail_404
+            return html_resp
+
+        with patch.object(jarvis, "_http_get", side_effect=fake_get):
+            out = jarvis._dayforce(url)
+
+        self.assertIsNotNone(out)
+        self.assertEqual(out.get("title"), "Platform Engineer")
+        self.assertEqual(out.get("company_name"), "Kestra")
+        self.assertEqual(out.get("department"), "Technology")
+        self.assertEqual(out.get("external_id"), "6503")
+        self.assertIn("Austin, Texas", out.get("location_raw", ""))
+        self.assertIn("Lead and build secure cloud platforms", out.get("description", ""))
+        self.assertIn("Benefits package", out.get("description", ""))
+
     def test_breezy_detail_page_scrape(self):
         jarvis = JobJarvis()
         url = "https://acme.breezy.hr/p/abc123-software-dev"
@@ -610,3 +684,394 @@ class SyncRawJobsToPoolTests(TestCase):
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
         raw.refresh_from_db()
         self.assertEqual(raw.sync_status, "SKIPPED")
+
+
+class JarvisCompanyFallbackTests(SimpleTestCase):
+    def test_extract_company_from_dayforce_url_uses_tenant(self):
+        from harvest.tasks import _extract_company_from_url
+
+        url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        self.assertEqual(_extract_company_from_url(url), "Kestra")
+
+    def test_jarvis_company_jobs_url_dayforce_board_root(self):
+        from harvest.tasks import _jarvis_company_jobs_url
+
+        self.assertEqual(
+            _jarvis_company_jobs_url("dayforce", "kestra|KESTRACAREERSITE"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+
+
+class JarvisPlatformLabelRepairTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform
+
+        self.company = Company.objects.create(name="Appliedsystems")
+        self.greenhouse = JobBoardPlatform.objects.create(
+            name="Greenhouse",
+            slug="greenhouse",
+            is_enabled=True,
+        )
+        self.icims = JobBoardPlatform.objects.create(
+            name="iCIMS",
+            slug="icims",
+            is_enabled=True,
+        )
+        self.label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.greenhouse,
+            tenant_id="appliedsystems",
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            confidence=CompanyPlatformLabel.Confidence.MEDIUM,
+        )
+
+    def test_jarvis_can_repair_stale_platform_label_when_not_manual(self):
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        source_url = "https://careers-appliedsystems.icims.com/jobs/search"
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url=source_url,
+            job_platform=self.icims,
+        )
+        label.refresh_from_db()
+        self.assertIsNotNone(label)
+        self.assertEqual(label.platform.slug, "icims")
+        self.assertEqual(label.tenant_id, "careers-appliedsystems")
+        self.assertEqual(board_ctx.get("platform_slug"), "icims")
+        self.assertEqual(board_ctx.get("tenant_id"), "careers-appliedsystems")
+        self.assertEqual(
+            board_ctx.get("company_jobs_url"),
+            "https://careers-appliedsystems.icims.com/jobs/search",
+        )
+        self.assertTrue(board_ctx.get("fetch_all_supported"))
+
+    def test_manual_verified_label_is_not_overridden(self):
+        from harvest.models import CompanyPlatformLabel
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        self.label.detection_method = CompanyPlatformLabel.DetectionMethod.MANUAL
+        self.label.is_verified = True
+        self.label.save(update_fields=["detection_method", "is_verified"])
+
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url="https://careers-appliedsystems.icims.com/jobs/search",
+            job_platform=self.icims,
+        )
+        label.refresh_from_db()
+        self.assertEqual(label.platform.slug, "greenhouse")
+        self.assertEqual(board_ctx.get("platform_slug"), "greenhouse")
+        self.assertEqual(board_ctx.get("tenant_id"), "appliedsystems")
+        self.assertEqual(
+            board_ctx.get("company_jobs_url"),
+            "https://boards.greenhouse.io/appliedsystems",
+        )
+
+    def test_prefers_existing_label_for_detected_platform_when_multiple_labels_exist(self):
+        from harvest.models import CompanyPlatformLabel
+        from harvest.tasks import _jarvis_ensure_company_platform_label
+
+        icims_label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.icims,
+            tenant_id="careers-appliedsystems",
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+        )
+
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=self.company,
+            detected_ats="icims",
+            source_url="https://careers-appliedsystems.icims.com/jobs/search",
+            job_platform=self.icims,
+        )
+        self.assertEqual(label.pk, icims_label.pk)
+        self.assertEqual(label.platform.slug, "icims")
+        self.assertEqual(board_ctx.get("platform_slug"), "icims")
+
+
+class JarvisCompanyAndRawJobDedupeTests(TestCase):
+    def test_company_resolution_reuses_normalized_existing_company(self):
+        from companies.models import Company
+        from harvest.tasks import _jarvis_resolve_company
+
+        existing = Company.objects.create(name="Applied Systems")
+        resolved = _jarvis_resolve_company(
+            "Appliedsystems",
+            "https://careers-appliedsystems.icims.com/jobs/6419",
+        )
+        self.assertEqual(resolved.pk, existing.pk)
+
+    def test_fetch_task_dedupes_same_external_id_with_different_urls(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform, RawJob
+        from harvest.tasks import fetch_raw_jobs_for_company_task
+
+        company = Company.objects.create(name="Acme")
+        platform = JobBoardPlatform.objects.create(name="Greenhouse", slug="greenhouse", is_enabled=True)
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id="acme",
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+        )
+
+        class _FakeHarvester:
+            last_total_available = 2
+
+            def fetch_jobs(self, *args, **kwargs):
+                return [
+                    {
+                        "original_url": "https://example.com/jobs/view?jobId=123",
+                        "apply_url": "https://example.com/jobs/view?jobId=123",
+                        "external_id": "job-123",
+                        "title": "Platform Engineer",
+                        "company_name": "Acme",
+                    },
+                    {
+                        "original_url": "https://example.com/jobs/123",
+                        "apply_url": "https://example.com/jobs/123",
+                        "external_id": "job-123",
+                        "title": "Platform Engineer",
+                        "company_name": "Acme",
+                    },
+                ]
+
+        with patch("harvest.harvesters.get_harvester", return_value=_FakeHarvester()):
+            out = fetch_raw_jobs_for_company_task.apply(
+                kwargs={"label_pk": label.pk, "fetch_all": True}
+            ).get()
+
+        self.assertEqual(RawJob.objects.filter(platform_label=label).count(), 1)
+        self.assertEqual(out["jobs_found"], 2)
+        self.assertEqual(out["jobs_new"], 1)
+        self.assertEqual(out["jobs_updated"], 1)
+
+    def test_fetch_task_dedupes_query_variant_without_external_id(self):
+        import hashlib
+
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform, RawJob
+        from harvest.tasks import fetch_raw_jobs_for_company_task
+
+        company = Company.objects.create(name="Acme Query Variant")
+        platform = JobBoardPlatform.objects.create(name="iCIMS Query", slug="icims-query-temp", is_enabled=True)
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id="acme-query",
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+        )
+
+        old_url = "https://example.com/jobs/6503?src=LinkedIn"
+        old_hash = hashlib.sha256(old_url.encode("utf-8")).hexdigest()
+        RawJob.objects.create(
+            company=company,
+            platform_label=label,
+            job_platform=platform,
+            title="Query Variant Role",
+            original_url=old_url,
+            apply_url=old_url,
+            url_hash=old_hash,
+            platform_slug="icims-query-temp",
+            company_name=company.name,
+        )
+
+        class _FakeHarvester:
+            last_total_available = 1
+
+            def fetch_jobs(self, *args, **kwargs):
+                return [
+                    {
+                        "original_url": "https://example.com/jobs/6503",
+                        "apply_url": "https://example.com/jobs/6503",
+                        "title": "Query Variant Role",
+                        "company_name": company.name,
+                    }
+                ]
+
+        with patch("harvest.harvesters.get_harvester", return_value=_FakeHarvester()):
+            out = fetch_raw_jobs_for_company_task.apply(
+                kwargs={"label_pk": label.pk, "fetch_all": True}
+            ).get()
+
+        self.assertEqual(RawJob.objects.filter(platform_label=label).count(), 1)
+        self.assertEqual(out["jobs_found"], 1)
+        self.assertEqual(out["jobs_new"], 0)
+        self.assertEqual(out["jobs_updated"], 1)
+
+
+class JarvisIngestDayforceIntegrationTests(TestCase):
+    def test_ingest_auto_creates_dayforce_platform_and_company(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform, RawJob
+        from harvest.tasks import jarvis_ingest_task
+
+        JobBoardPlatform.objects.filter(slug="dayforce").delete()
+        Company.objects.filter(name="Kestra").delete()
+
+        source_url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        mock_ingest = {
+            "error": "",
+            "platform_slug": "dayforce",
+            "strategy": "api:dayforce",
+            "title": "Platform Engineer",
+            "company_name": "",
+            "description": "Lead cloud platform engineering initiatives across secure Azure workloads.",
+            "original_url": source_url,
+            "apply_url": source_url,
+            "raw_payload": {"source": "test"},
+        }
+
+        with patch("apps.harvest.jarvis.JobJarvis.ingest", return_value=mock_ingest):
+            result = jarvis_ingest_task.apply(kwargs={"url": source_url, "user_id": None}).get()
+
+        self.assertTrue(result.get("ok"))
+        self.assertTrue(JobBoardPlatform.objects.filter(slug="dayforce").exists())
+        company = Company.objects.get(name="Kestra")
+        raw_job = RawJob.objects.get(pk=result["raw_job_id"])
+        self.assertEqual(raw_job.company_id, company.pk)
+        self.assertIsNotNone(raw_job.job_platform)
+        self.assertEqual(raw_job.job_platform.slug, "dayforce")
+        self.assertIsNotNone(raw_job.platform_label)
+        self.assertEqual(raw_job.platform_label.tenant_id, "kestra|KESTRACAREERSITE")
+        self.assertEqual(raw_job.platform_label.platform.slug, "dayforce")
+        self.assertEqual((raw_job.raw_payload or {}).get("jarvis_tenant_id"), "kestra|KESTRACAREERSITE")
+        self.assertEqual(
+            (raw_job.raw_payload or {}).get("jarvis_company_jobs_url"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+        self.assertTrue((raw_job.raw_payload or {}).get("jarvis_fetch_all_supported"))
+        self.assertEqual((raw_job.raw_payload or {}).get("jarvis_detected_ats"), "dayforce")
+        self.assertTrue(CompanyPlatformLabel.objects.filter(company=company, platform__slug="dayforce").exists())
+
+
+class JarvisFetchAllCompanyViewTests(TestCase):
+    def setUp(self):
+        import hashlib
+
+        from companies.models import Company
+        from harvest.models import JobBoardPlatform, RawJob
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="jarvis_fetch_admin",
+            email="jarvis_fetch_admin@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.client.force_login(self.user)
+        self.company = Company.objects.create(name="Kestra")
+        self.platform = JobBoardPlatform.objects.create(
+            name="Dayforce",
+            slug="dayforce",
+            is_enabled=True,
+        )
+        self.source_url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
+        h = hashlib.sha256(self.source_url.encode()).hexdigest()
+        self.raw_job = RawJob.objects.create(
+            company=self.company,
+            job_platform=self.platform,
+            title="Platform Engineer",
+            url_hash=h,
+            original_url=self.source_url,
+            apply_url=self.source_url,
+            description="JD text long enough for task wiring.",
+            platform_slug="jarvis",
+            raw_payload={"jarvis_detected_ats": "dayforce"},
+        )
+
+    def test_fetch_all_endpoint_queues_company_task_and_updates_payload(self):
+        from types import SimpleNamespace
+
+        from harvest.models import CompanyPlatformLabel
+
+        with patch("apps.harvest.tasks.fetch_raw_jobs_for_company_task.apply_async", return_value=SimpleNamespace(id="task-123")) as mocked_apply:
+            resp = self.client.post(
+                reverse("harvest-jarvis-fetch-all"),
+                {"raw_job_id": str(self.raw_job.pk)},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("task_id"), "task-123")
+        self.assertEqual(body.get("tenant_id"), "kestra|KESTRACAREERSITE")
+        self.assertEqual(
+            body.get("company_jobs_url"),
+            "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE",
+        )
+        self.assertTrue(body.get("progress_url"))
+        parsed = urlparse(body["progress_url"])
+        self.assertEqual(parsed.path, reverse("harvest-jarvis-fetch-all-progress"))
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("task_id"), ["task-123"])
+        self.assertEqual(qs.get("label_pk"), [str(body["label_pk"])])
+        mocked_apply.assert_called_once()
+
+        self.raw_job.refresh_from_db()
+        self.assertIsNotNone(self.raw_job.platform_label)
+        self.assertEqual(self.raw_job.platform_label.tenant_id, "kestra|KESTRACAREERSITE")
+        self.assertTrue((self.raw_job.raw_payload or {}).get("jarvis_fetch_all_supported"))
+        self.assertTrue(
+            CompanyPlatformLabel.objects.filter(company=self.company, platform__slug="dayforce").exists()
+        )
+
+    def test_progress_api_returns_live_counts_and_recent_jobs(self):
+        from django.utils import timezone
+
+        from harvest.models import CompanyFetchRun, CompanyPlatformLabel
+
+        label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.platform,
+            tenant_id="kestra|KESTRACAREERSITE",
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+        )
+        self.raw_job.platform_label = label
+        self.raw_job.save(update_fields=["platform_label", "updated_at"])
+
+        run = CompanyFetchRun.objects.create(
+            label=label,
+            status=CompanyFetchRun.Status.RUNNING,
+            task_id="task-live-1",
+            started_at=timezone.now(),
+            jobs_found=5,
+            jobs_new=1,
+            jobs_updated=1,
+            jobs_duplicate=0,
+            jobs_failed=0,
+            triggered_by="JARVIS",
+        )
+
+        with patch("celery.result.AsyncResult") as mocked:
+            mocked.return_value.state = "PROGRESS"
+            mocked.return_value.info = {"percent": 44, "message": "Processing…"}
+            resp = self.client.get(
+                reverse("harvest-jarvis-fetch-all-progress-api"),
+                {"task_id": run.task_id},
+            )
+
+        self.assertEqual(resp.status_code, 200, resp.content)
+        body = resp.json()
+        self.assertTrue(body.get("ok"))
+        self.assertEqual(body.get("state"), "RUNNING")
+        self.assertTrue(body.get("running"))
+        self.assertFalse(body.get("done"))
+        self.assertGreaterEqual(body.get("percent", 0), 1)
+        self.assertEqual(body.get("counts", {}).get("found"), 5)
+        self.assertEqual(body.get("counts", {}).get("new"), 1)
+        self.assertTrue(body.get("rawjobs_url"))
+        self.assertIn("recent_jobs", body)
+        parsed = urlparse(body["rawjobs_url"])
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("_subtab"), ["jobs"])
+        self.assertEqual(qs.get("platform"), ["dayforce"])
+        self.assertEqual(qs.get("company_id"), [str(self.company.pk)])
+        self.assertEqual(qs.get("label_pk"), [str(label.pk)])

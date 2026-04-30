@@ -1,16 +1,23 @@
 import json
 import logging
+from urllib.parse import urlencode
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.db.models import Count, Q
+from django.core.cache import cache
+from django.core.serializers.json import DjangoJSONEncoder
+from django.db import transaction
+from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
+from django.db.models.functions import Coalesce, Length, Trim
 from django.http import JsonResponse
-from django.shortcuts import get_object_or_404, redirect
-from django.urls import reverse_lazy
+from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse, reverse_lazy
 from datetime import timedelta
 
 from django.utils import timezone
+from django.utils.decorators import method_decorator
+from django.views.decorators.cache import never_cache
 from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from core.http import redirect_with_task_progress
@@ -24,11 +31,203 @@ from .models import (
     JobBoardPlatform,
     RawJob,
 )
+from .resume_profile import build_resume_job_profile
+from .jd_gate import evaluate_raw_job_resume_gate
 
 logger = logging.getLogger(__name__)
 
 
 _FULL_CRAWL_COOLDOWN_HOURS = 2
+
+
+def _find_existing_live_job_for_rawjob(raw_job):
+    """Find existing non-archived Job mapped to a RawJob URL hash/link."""
+    from jobs.dedup import find_existing_job_by_url
+    from jobs.models import Job
+
+    if raw_job.url_hash:
+        by_hash = Job.objects.filter(url_hash=raw_job.url_hash, is_archived=False).first()
+        if by_hash:
+            return by_hash
+    if raw_job.original_url:
+        by_url = find_existing_job_by_url(raw_job.original_url)
+        if by_url and not by_url.is_archived:
+            return by_url
+        by_link = Job.objects.filter(original_link=raw_job.original_url, is_archived=False).first()
+        if by_link:
+            return by_link
+    return None
+
+
+def _invalidate_rawjobs_dashboard_cache() -> None:
+    """Best-effort cache bust for Raw Jobs KPI cards."""
+    try:
+        cache.delete("rawjobs_dashboard_stats")
+        cache.delete("rawjobs_expired_missing_jd")
+        for h in (3, 6, 12, 24):
+            cache.delete(f"rawjobs_workflow_insights_{h}")
+    except Exception:
+        pass
+
+
+def _load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
+    """
+    Unified dashboard stats payload used by both HTML and JSON views.
+
+    Keeping this in one place avoids KPI drift between initial render and polling.
+    """
+    from django.utils.timezone import now as _now
+
+    stats_key = "rawjobs_dashboard_stats"
+    expired_key = "rawjobs_expired_missing_jd"
+    stats_ttl_sec = 20
+    expired_ttl_sec = 120
+
+    stats = None if force_refresh else cache.get(stats_key)
+    if stats is not None:
+        return stats
+
+    last_24h_cutoff = _now() - timedelta(hours=24)
+    agg = RawJob.objects.aggregate(
+        total=Count("id"),
+        active=Count("id", filter=Q(is_active=True)),
+        remote=Count("id", filter=Q(is_remote=True)),
+        synced=Count("id", filter=Q(sync_status="SYNCED")),
+        pending=Count("id", filter=Q(sync_status="PENDING")),
+        failed=Count("id", filter=Q(sync_status="FAILED")),
+        # Rolling 24h avoids timezone-midnight confusion for global users.
+        new_today=Count("id", filter=Q(fetched_at__gte=last_24h_cutoff)),
+        missing_jd=Count("id", filter=Q(has_description=False)),
+    )
+    expired_missing = None if force_refresh else cache.get(expired_key)
+    if expired_missing is None:
+        expired_missing = raw_jobs_missing_jd_expired_count()
+        cache.set(expired_key, expired_missing, expired_ttl_sec)
+    agg["expired_missing"] = expired_missing
+    cache.set(stats_key, agg, stats_ttl_sec)
+    return agg
+
+
+def _sync_rawjob_to_pool(raw_job, *, posted_by):
+    """
+    Sync one RawJob into Job pool (same mapping as bulk sync task).
+
+    Returns ``(job, created_new)``.
+    """
+    from django.utils import timezone as _tz
+    from jobs.models import Job
+    from jobs.quality import compute_quality_score
+    from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
+    from .url_health import check_job_posting_live, is_definitive_inactive
+
+    existing = _find_existing_live_job_for_rawjob(raw_job)
+    if existing:
+        if raw_job.sync_status != "SYNCED":
+            raw_job.sync_status = "SKIPPED"
+            raw_job.save(update_fields=["sync_status", "updated_at"])
+            _invalidate_rawjobs_dashboard_cache()
+        return existing, False
+
+    # Last-mile link-health check before any promotion.
+    if (raw_job.original_url or "").strip():
+        live = check_job_posting_live(
+            raw_job.original_url,
+            platform_slug=(raw_job.platform_slug or ""),
+        )
+        if not live.is_live and is_definitive_inactive(live):
+            payload = dict(raw_job.raw_payload or {})
+            payload["link_health"] = {
+                "is_live": False,
+                "reason": live.reason,
+                "status_code": live.status_code,
+                "checked_at": _tz.now().isoformat(),
+                "final_url": live.final_url,
+                "decisive": True,
+            }
+            raw_job.is_active = False
+            raw_job.raw_payload = payload
+            raw_job.save(update_fields=["is_active", "raw_payload", "updated_at"])
+            _invalidate_rawjobs_dashboard_cache()
+            raise ValueError(
+                f"Cannot promote to vet queue: posting appears inactive ({live.reason})."
+            )
+
+    gate = evaluate_raw_job_gate(raw_job)
+    if not gate.passed:
+        raise ValueError(
+            f"Cannot promote to vet queue: blocked by gate ({gate.reason_code}). "
+            f"Reasons: {', '.join(gate.reasons[:3])}"
+        )
+
+    platform_slug = raw_job.platform_slug or (raw_job.job_platform.slug if raw_job.job_platform else "")
+    with transaction.atomic():
+        job = Job.objects.create(
+            title=raw_job.title,
+            company=raw_job.company_name or (raw_job.company.name if raw_job.company else ""),
+            company_obj=raw_job.company,
+            location=raw_job.location_raw or "",
+            description=raw_job.description or raw_job.title,
+            original_link=raw_job.original_url,
+            salary_range=raw_job.salary_raw or "",
+            job_type=raw_job.employment_type if raw_job.employment_type != "UNKNOWN" else "FULL_TIME",
+            status="POOL",
+            stage=Job.Stage.VETTED,
+            stage_changed_at=_tz.now(),
+            url_hash=raw_job.url_hash or "",
+            job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
+            posted_by=posted_by,
+            source_raw_job=raw_job,
+            queue_entered_at=_tz.now(),
+        )
+        apply_gate_result_to_job(job, gate)
+        job.quality_score = compute_quality_score(job)
+        job.validation_score = int(round(gate.vet_priority_score * 100))
+        job.validation_result = {
+            "score": job.validation_score,
+            "lane": gate.lane,
+            "gate_status": gate.status,
+            "reason_code": gate.reason_code,
+            "reasons": gate.reasons,
+            "checks": gate.checks,
+            "multi_score": {
+                "data_quality": gate.data_quality_score,
+                "trust": gate.trust_score,
+                "candidate_fit": gate.candidate_fit_score,
+                "vet_priority": gate.vet_priority_score,
+            },
+        }
+        job.validation_run_at = _tz.now()
+        job.gate_checked_at = _tz.now()
+        job.save(
+            update_fields=[
+                "hard_gate_passed", "gate_status", "vet_lane",
+                "pipeline_reason_code", "pipeline_reason_detail",
+                "hard_gate_failures", "hard_gate_checks",
+                "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
+                "quality_score", "validation_score", "validation_result",
+                "validation_run_at", "gate_checked_at",
+            ]
+        )
+        payload = dict(raw_job.raw_payload or {})
+        payload["vet_gate"] = {
+            "status": "eligible",
+            "lane": gate.lane,
+            "reason_code": gate.reason_code,
+            "checks": gate.checks,
+            "scores": {
+                "data_quality": gate.data_quality_score,
+                "trust": gate.trust_score,
+                "candidate_fit": gate.candidate_fit_score,
+                "vet_priority": gate.vet_priority_score,
+            },
+            "job_id": job.pk,
+            "checked_at": _tz.now().isoformat(),
+        }
+        raw_job.sync_status = "SYNCED"
+        raw_job.raw_payload = payload
+        raw_job.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+    _invalidate_rawjobs_dashboard_cache()
+    return job, True
 
 
 def _full_crawl_cooldown_ctx() -> dict:
@@ -71,6 +270,162 @@ def raw_jobs_missing_jd_expired_count() -> int:
         )
         .count()
     )
+
+
+def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
+    """
+    Aggregate operational insights for the Raw Jobs workflow board.
+    """
+    cache_key = f"rawjobs_workflow_insights_{max(1, int(stale_pending_hours))}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    now = timezone.now()
+    stale_cutoff = now - timedelta(hours=max(1, int(stale_pending_hours)))
+    recent_cutoff = now - timedelta(hours=24)
+
+    base = RawJob.objects.all()
+    total = base.count()
+
+    # Funnel counts are intentionally "drill-down aligned":
+    # clicking a funnel card applies the same predicate in Jobs Browser.
+    parsed = base.filter(has_description=True).count()
+    enriched = base.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)).count()
+    classified = base.filter(classification_confidence__gte=0.01).count()
+    ready = base.filter(has_description=True, classification_confidence__gte=0.55, is_active=True).count()
+    synced = base.filter(sync_status=RawJob.SyncStatus.SYNCED).count()
+
+    pending_qs = base.filter(sync_status=RawJob.SyncStatus.PENDING)
+    pending_total = pending_qs.count()
+    pending_stale_qs = pending_qs.filter(fetched_at__lt=stale_cutoff)
+    pending_stale = pending_stale_qs.count()
+
+    pending_aging = {
+        "lt_1h": pending_qs.filter(fetched_at__gte=now - timedelta(hours=1)).count(),
+        "h_1_6": pending_qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6)).count(),
+        "h_6_24": pending_qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24)).count(),
+        "gt_24h": pending_qs.filter(fetched_at__lt=now - timedelta(hours=24)).count(),
+    }
+
+    completed_24h = base.filter(sync_status__in=[RawJob.SyncStatus.SYNCED, RawJob.SyncStatus.SKIPPED], updated_at__gte=recent_cutoff).count()
+    failed_24h = base.filter(sync_status=RawJob.SyncStatus.FAILED, updated_at__gte=recent_cutoff).count()
+    drain_per_hour = round(completed_24h / 24.0, 2) if completed_24h > 0 else 0.0
+    eta_hours = round(pending_total / drain_per_hour, 1) if drain_per_hour > 0 else None
+
+    missing_jd = base.filter(has_description=False).count()
+    html_heavy = base.filter(has_html_content=True).count()
+    low_confidence = base.filter(Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True)).count()
+    missing_salary = base.filter(salary_min__isnull=True, salary_max__isnull=True).count()
+    missing_location = base.filter(
+        Q(location_raw="") & Q(city="") & Q(state="") & Q(country="")
+    ).count()
+    missing_experience = base.filter(
+        Q(experience_level=RawJob.ExperienceLevel.UNKNOWN)
+        & Q(years_required__isnull=True)
+        & Q(years_required_max__isnull=True)
+    ).count()
+
+    # Duplicate = SKIPPED in current pipeline semantics (already in pool / URL hash match)
+    duplicate_total = base.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
+    duplicate_recent = base.filter(sync_status=RawJob.SyncStatus.SKIPPED, updated_at__gte=recent_cutoff).count()
+
+    blocked_companies = list(
+        pending_stale_qs.values("company_name")
+        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
+        .order_by("-count")[:10]
+    )
+    blocked_platforms = list(
+        pending_stale_qs.values("platform_slug")
+        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
+        .order_by("-count")[:10]
+    )
+
+    stuck_queue = list(
+        pending_stale_qs.values("platform_label_id", "company_name", "platform_slug")
+        .annotate(count=Count("id"), oldest=Min("fetched_at"))
+        .order_by("-count")[:100]
+    )
+
+    # Platform health from per-company fetch runs in last 24h
+    recent_runs = CompanyFetchRun.objects.filter(started_at__gte=recent_cutoff)
+    platform_health = []
+    for row in (
+        recent_runs.values("label__platform__slug")
+        .annotate(
+            runs=Count("id"),
+            success=Count("id", filter=Q(status=CompanyFetchRun.Status.SUCCESS)),
+            partial=Count("id", filter=Q(status=CompanyFetchRun.Status.PARTIAL)),
+            failed=Count("id", filter=Q(status=CompanyFetchRun.Status.FAILED)),
+            avg_jobs_found=Avg("jobs_found"),
+            avg_jobs_new=Avg("jobs_new"),
+            avg_jobs_failed=Avg("jobs_failed"),
+            last_run=Max("started_at"),
+        )
+        .order_by("-runs")
+    ):
+        slug = (row.get("label__platform__slug") or "unknown").strip() or "unknown"
+        runs = int(row.get("runs") or 0)
+        success = int(row.get("success") or 0)
+        partial = int(row.get("partial") or 0)
+        failed = int(row.get("failed") or 0)
+        success_rate = round(((success + (partial * 0.5)) / runs) * 100, 1) if runs else 0.0
+        platform_health.append(
+            {
+                "platform_slug": slug,
+                "runs": runs,
+                "success": success,
+                "partial": partial,
+                "failed": failed,
+                "success_rate": success_rate,
+                "avg_jobs_found": round(float(row.get("avg_jobs_found") or 0.0), 1),
+                "avg_jobs_new": round(float(row.get("avg_jobs_new") or 0.0), 1),
+                "avg_jobs_failed": round(float(row.get("avg_jobs_failed") or 0.0), 1),
+                "last_run": row.get("last_run").isoformat() if row.get("last_run") else "",
+            }
+        )
+
+    payload = {
+        "funnel": {
+            "fetched": total,
+            "parsed": parsed,
+            "enriched": enriched,
+            "classified": classified,
+            "ready": ready,
+            "synced": synced,
+        },
+        "queue": {
+            "pending_total": pending_total,
+            "pending_stale": pending_stale,
+            "stale_pending_hours": max(1, int(stale_pending_hours)),
+            "aging": pending_aging,
+            "drain_per_hour": drain_per_hour,
+            "eta_hours": eta_hours,
+            "completed_24h": completed_24h,
+            "failed_24h": failed_24h,
+        },
+        "quality_debt": {
+            "missing_jd": missing_jd,
+            "html_heavy": html_heavy,
+            "low_confidence": low_confidence,
+            "missing_salary": missing_salary,
+            "missing_location": missing_location,
+            "missing_experience": missing_experience,
+        },
+        "duplicates": {
+            "total": duplicate_total,
+            "recent_24h": duplicate_recent,
+        },
+        "top_blocked": {
+            "companies": blocked_companies,
+            "platforms": blocked_platforms,
+        },
+        "stuck_queue": stuck_queue,
+        "platform_health": platform_health,
+        "generated_at": now.isoformat(),
+    }
+    cache.set(cache_key, payload, 20)
+    return payload
 
 
 class SuperuserRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -175,12 +530,62 @@ class RunMonitorView(SuperuserRequiredMixin, ListView):
 
     def get_context_data(self, **kwargs):
         from .models import RawJob
+        from celery import current_app
+
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "monitor"
         ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True)
         ctx["total_harvested"] = RawJob.objects.filter(is_active=True).count()
         ctx["pending_sync"] = RawJob.objects.filter(sync_status="PENDING").count()
         ctx["synced_count"] = RawJob.objects.filter(sync_status="SYNCED").count()
+        # Total run history from DB fetch runs (stable even when result backend is Redis).
+        recent_cutoff = timezone.now() - timedelta(days=7)
+        ctx["total_runs"] = CompanyFetchRun.objects.filter(started_at__gte=recent_cutoff).count()
+
+        # Live running/queued state from Celery inspect (source of truth for "running now").
+        running_names = {
+            "harvest.harvest_jobs",
+            "harvest.detect_company_platforms",
+            "harvest.sync_harvested_to_pool",
+            "harvest.validate_raw_job_urls",
+            "harvest.cleanup_harvested_jobs",
+            "harvest.fetch_raw_jobs_for_company",
+            "harvest.backfill_descriptions",
+            "harvest.backfill_descriptions_chunk",
+            "harvest.backfill_resume_contract",
+        }
+        running_now = 0
+        try:
+            inspect = current_app.control.inspect(timeout=2)
+            active_map = inspect.active() or {}
+            reserved_map = inspect.reserved() or {}
+            scheduled_map = inspect.scheduled() or {}
+
+            def _count_matching(entries, key_name: str = "name") -> int:
+                c = 0
+                for e in entries or []:
+                    task_name = (e.get(key_name) or "").strip()
+                    if task_name in running_names:
+                        c += 1
+                return c
+
+            for entries in active_map.values():
+                running_now += _count_matching(entries, "name")
+            for entries in reserved_map.values():
+                running_now += _count_matching(entries, "name")
+            # scheduled entries wrap the request payload under "request"
+            for entries in scheduled_map.values():
+                c = 0
+                for e in entries or []:
+                    req = e.get("request") or {}
+                    task_name = (req.get("name") or "").strip()
+                    if task_name in running_names:
+                        c += 1
+                running_now += c
+        except Exception:
+            running_now = 0
+
+        ctx["running_runs"] = running_now
         return ctx
 
 
@@ -385,23 +790,143 @@ class RunHarvestNowView(SuperuserRequiredMixin, View):
 class RunSyncNowView(SuperuserRequiredMixin, View):
     def post(self, request):
         from .tasks import sync_harvested_to_pool_task
-        max_jobs = int(request.POST.get("max_jobs", "500") or "500")
-        task = sync_harvested_to_pool_task.delay(max_jobs=max_jobs)
-        messages.success(request, f"Sync to job pool started (max {max_jobs:,} jobs, Task: {task.id[:8]}...)")
-        return redirect_with_task_progress("harvest-monitor", task.id, "Sync to job pool")
+        raw_max = (request.POST.get("max_jobs", "") or "").strip()
+        try:
+            max_jobs = int(raw_max) if raw_max else 0
+        except (TypeError, ValueError):
+            max_jobs = 0
+        qualified_only = (request.POST.get("qualified_only", "1").strip() != "0")
+        chunk_raw = (request.POST.get("chunk_size", "") or "").strip()
+        try:
+            chunk_size = int(chunk_raw) if chunk_raw else 500
+        except (TypeError, ValueError):
+            chunk_size = 500
+
+        task = sync_harvested_to_pool_task.delay(
+            max_jobs=max_jobs,
+            qualified_only=qualified_only,
+            chunk_size=chunk_size,
+        )
+        scope_txt = "all qualified pending jobs" if not max_jobs else f"up to {max_jobs:,} qualified jobs"
+        if not qualified_only:
+            scope_txt = "pending jobs"
+            if max_jobs:
+                scope_txt = f"up to {max_jobs:,} pending jobs"
+        messages.success(
+            request,
+            f"Vet sync started ({scope_txt}, Task: {task.id[:8]}…). "
+            "This scans across the backlog and updates multi-page results.",
+        )
+        return_to = (request.POST.get("return_to", "") or "").strip() or "harvest-rawjobs"
+        if return_to not in {"harvest-rawjobs", "harvest-monitor", "jobs-pipeline", "harvest-schedule"}:
+            return_to = "harvest-rawjobs"
+        return redirect_with_task_progress(return_to, task.id, "Sync Qualified to Vet Queue")
 
 
 class RunBulkSyncView(SuperuserRequiredMixin, View):
     """POST — sync up to 20,000 pending RawJobs to the pool in one shot."""
     def post(self, request):
         from .tasks import sync_harvested_to_pool_task
-        task = sync_harvested_to_pool_task.delay(max_jobs=20000)
+        task = sync_harvested_to_pool_task.delay(max_jobs=20000, qualified_only=False, chunk_size=500)
         messages.success(
             request,
             f"Bulk sync started — up to 20,000 pending jobs → pool (Task: {task.id[:8]}…). "
             "This runs in the background. Refresh to see progress.",
         )
         return redirect_with_task_progress("harvest-rawjobs", task.id, "Bulk sync (20k jobs)")
+
+
+class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
+    """POST — retry FAILED company fetch runs from the last 7 days."""
+
+    def post(self, request):
+        from .tasks import retry_failed_raw_jobs_task
+
+        task = retry_failed_raw_jobs_task.delay()
+        messages.success(
+            request,
+            f"Retry failed fetches queued (Task: {task.id[:8]}…). "
+            "This will re-run failed company fetches in the background.",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Retry failed fetches")
+
+
+class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
+    """POST — run robust link-health validation on active raw jobs."""
+
+    def post(self, request):
+        from .tasks import validate_raw_job_urls_task
+
+        platform = (request.POST.get("platform_slug") or "").strip() or None
+        recent_hours = request.POST.get("recent_hours", "").strip()
+        pending_only = (request.POST.get("pending_only", "1").strip() != "0")
+        max_jobs = request.POST.get("max_jobs", "").strip()
+
+        kwargs = {
+            "batch_size": 250,
+            "concurrency": 24,
+            "pending_only": pending_only,
+        }
+        if platform:
+            kwargs["platform_slug"] = platform
+        if recent_hours.isdigit():
+            kwargs["recent_hours"] = int(recent_hours)
+        else:
+            kwargs["recent_hours"] = 168
+        if max_jobs.isdigit():
+            kwargs["max_jobs"] = int(max_jobs)
+        else:
+            kwargs["max_jobs"] = 0
+
+        task = validate_raw_job_urls_task.delay(**kwargs)
+        messages.success(
+            request,
+            f"Link-health validation queued (Task: {task.id[:8]}…). "
+            "Soft-404 pages will be marked inactive before vet sync.",
+        )
+        return redirect_with_task_progress("harvest-rawjobs", task.id, "Validate Raw Job URLs")
+
+
+class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
+    """POST — sync selected RawJob ids into pool."""
+
+    def post(self, request):
+        raw_ids = request.POST.get("raw_job_ids", "").strip()
+        if not raw_ids:
+            messages.error(request, "No rows selected for sync.")
+            return redirect("harvest-rawjobs")
+
+        parts = [p.strip() for p in raw_ids.split(",") if p.strip()]
+        ids: list[int] = []
+        for part in parts:
+            if part.isdigit():
+                ids.append(int(part))
+        ids = ids[:500]
+        if not ids:
+            messages.error(request, "Selected ids were invalid.")
+            return redirect("harvest-rawjobs")
+
+        qs = RawJob.objects.select_related("company", "job_platform").filter(pk__in=ids)
+        synced = skipped = failed = 0
+        skipped_reasons: list[str] = []
+        for raw_job in qs:
+            try:
+                _sync_rawjob_to_pool(raw_job, posted_by=request.user)
+                synced += 1
+            except ValueError as exc:
+                skipped += 1
+                reason = str(exc).strip()
+                if reason and len(skipped_reasons) < 3:
+                    skipped_reasons.append(reason)
+            except Exception:
+                failed += 1
+                logger.exception("Sync selected raw job failed: raw_job_id=%s", raw_job.pk)
+
+        msg = f"Selected sync complete — {synced} synced, {skipped} skipped, {failed} failed."
+        if skipped_reasons:
+            msg += " Sample blocked reasons: " + " | ".join(skipped_reasons)
+        messages.success(request, msg)
+        return redirect("harvest-rawjobs")
 
 
 class RunCleanupNowView(SuperuserRequiredMixin, View):
@@ -445,7 +970,23 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             from django.core.paginator import Paginator
             from django.urls import reverse
-            qs = self.get_queryset()
+            # Fetch only the columns rendered in the list — skips description /
+            # raw_payload blobs which can be 10–50 KB each and are never shown here.
+            qs = self.get_queryset().only(
+                "id", "company_name", "platform_slug", "title", "original_url",
+                "location_raw", "is_remote", "employment_type", "experience_level",
+                "salary_min", "salary_max", "salary_raw", "posted_date", "fetched_at",
+                "sync_status", "has_description", "is_active",
+                "department", "department_normalized", "state", "country",
+                "education_required", "languages_required", "certifications",
+                "licenses_required", "clearance_required", "clearance_level",
+                "schedule_type", "shift_schedule", "travel_pct_min", "travel_pct_max",
+                "resume_ready_score", "classification_confidence", "quality_score",
+                "jd_quality_score", "raw_payload",
+                "job_keywords", "title_keywords",
+                "company_industry", "company_size",
+                "word_count",
+            )
             paginator = Paginator(qs, self.paginate_by)
             try:
                 page_num = int(request.GET.get("page", 1))
@@ -455,6 +996,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
 
             jobs_data = []
             for job in page_obj.object_list:
+                jd_gate = evaluate_raw_job_resume_gate(job)
                 jobs_data.append({
                     "id": job.pk,
                     "company_name": (job.company_name or "")[:30],
@@ -469,10 +1011,40 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                     "salary_max": float(job.salary_max) if job.salary_max else None,
                     "salary_raw": (job.salary_raw or "")[:20],
                     "posted_date": str(job.posted_date) if job.posted_date else "",
+                    "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
+                    "fetched_at_iso": job.fetched_at.isoformat() if job.fetched_at else "",
                     "sync_status": job.sync_status or "",
-                    "has_jd": job.has_meaningful_description(),
-                    "jd_label": job.jd_browser_label(),
+                    "has_jd": job.has_description,
+                    "jd_label": "yes" if job.has_description else ("expired" if not job.is_active else "no"),
+                    "department": (job.department_normalized or job.department or "")[:40],
+                    "state": (job.state or "")[:48],
+                    "country": (job.country or "")[:48],
+                    "education_required": job.education_required or "",
+                    "languages_required": (job.languages_required or [])[:3],
+                    "licenses_required": (job.licenses_required or [])[:3],
+                    "clearance_required": bool(job.clearance_required),
+                    "clearance_level": (job.clearance_level or "")[:64],
+                    "schedule_type": (job.schedule_type or "")[:32],
+                    "shift_schedule": (job.shift_schedule or "")[:64],
+                    "travel_pct_min": job.travel_pct_min,
+                    "travel_pct_max": job.travel_pct_max,
+                    "resume_ready_score": job.resume_ready_score,
+                    "classification_confidence": job.classification_confidence,
+                    "quality_score": job.quality_score,
+                    "jd_quality_score": job.jd_quality_score,
+                    "certifications": (job.certifications or [])[:3],
+                    "keywords": (job.title_keywords or job.job_keywords or [])[:4],
+                    "company_industry": (job.company_industry or "")[:64],
+                    "company_size": (job.company_size or "")[:32],
+                    "stage": job.pipeline_stage_label(),
+                    "owner_pipeline": job.owner_pipeline_label(),
+                    "retry_count": job.retry_count_estimate(),
+                    "last_error": job.last_error_text(),
                     "detail_url": reverse("harvest-rawjob-detail", args=[job.pk]),
+                    "resume_jd_usable": jd_gate.usable,
+                    "resume_jd_reason_code": jd_gate.reason_code,
+                    "resume_jd_reason_text": jd_gate.reason_text,
+                    "word_count": jd_gate.word_count,
                 })
 
             return JsonResponse({
@@ -485,13 +1057,28 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         return super().get(request, *args, **kwargs)
 
     def get_queryset(self):
-        qs = RawJob.objects.select_related("company", "job_platform").order_by("-fetched_at")
+        # No select_related — JOINs add 20x overhead on 122k rows; all displayed
+        # fields (company_name, platform_slug) are denormalised directly on RawJob.
+        qs = RawJob.objects.order_by("-fetched_at")
 
         q = self.request.GET.get("q", "").strip()
         if q:
             qs = qs.filter(
-                Q(title__icontains=q) | Q(company_name__icontains=q)
+                Q(title__icontains=q)
+                | Q(company_name__icontains=q)
+                | Q(skills__icontains=q)
+                | Q(job_keywords__icontains=q)
+                | Q(title_keywords__icontains=q)
+                | Q(description_clean__icontains=q)
             )
+
+        company_id_f = self.request.GET.get("company_id", "").strip()
+        if company_id_f.isdigit():
+            qs = qs.filter(company_id=int(company_id_f))
+
+        label_pk_f = self.request.GET.get("label_pk", "").strip()
+        if label_pk_f.isdigit():
+            qs = qs.filter(platform_label_id=int(label_pk_f))
 
         platform_f = self.request.GET.get("platform", "").strip()
         if platform_f:
@@ -509,9 +1096,177 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         if exp_f:
             qs = qs.filter(experience_level=exp_f)
 
+        dept_f = self.request.GET.get("department", "").strip()
+        if dept_f:
+            qs = qs.filter(
+                Q(department_normalized__icontains=dept_f)
+                | Q(department__icontains=dept_f)
+            )
+
+        country_f = self.request.GET.get("country", "").strip()
+        if country_f:
+            qs = qs.filter(country__icontains=country_f)
+
+        state_f = self.request.GET.get("state", "").strip()
+        if state_f:
+            qs = qs.filter(state__icontains=state_f)
+
+        edu_f = self.request.GET.get("education_required", "").strip()
+        if edu_f:
+            qs = qs.filter(education_required=edu_f)
+
+        years_min_f = self.request.GET.get("years_min", "").strip()
+        if years_min_f.isdigit():
+            qs = qs.filter(years_required__gte=int(years_min_f))
+
+        years_max_f = self.request.GET.get("years_max", "").strip()
+        if years_max_f.isdigit():
+            qs = qs.filter(years_required__lte=int(years_max_f))
+
+        salary_min_from_f = self.request.GET.get("salary_min_from", "").strip()
+        try:
+            if salary_min_from_f:
+                qs = qs.filter(salary_min__gte=float(salary_min_from_f))
+        except ValueError:
+            pass
+
+        salary_max_to_f = self.request.GET.get("salary_max_to", "").strip()
+        try:
+            if salary_max_to_f:
+                qs = qs.filter(salary_max__lte=float(salary_max_to_f))
+        except ValueError:
+            pass
+
+        clear_f = self.request.GET.get("clearance_required", "").strip()
+        if clear_f == "1":
+            qs = qs.filter(clearance_required=True)
+        elif clear_f == "0":
+            qs = qs.filter(clearance_required=False)
+
+        clearance_level_f = self.request.GET.get("clearance_level", "").strip()
+        if clearance_level_f:
+            qs = qs.filter(clearance_level__icontains=clearance_level_f)
+
+        lang_f = self.request.GET.get("language", "").strip()
+        if lang_f:
+            try:
+                qs = qs.filter(languages_required__contains=[lang_f])
+            except Exception:
+                qs = qs.filter(languages_required__icontains=lang_f)
+
+        shift_f = self.request.GET.get("shift_schedule", "").strip()
+        if shift_f:
+            qs = qs.filter(shift_schedule__icontains=shift_f)
+
+        schedule_f = self.request.GET.get("schedule_type", "").strip()
+        if schedule_f:
+            qs = qs.filter(schedule_type__icontains=schedule_f)
+
+        weekend_f = self.request.GET.get("weekend_required", "").strip()
+        if weekend_f == "1":
+            qs = qs.filter(weekend_required=True)
+        elif weekend_f == "0":
+            qs = qs.filter(weekend_required=False)
+
+        travel_min_f = self.request.GET.get("travel_min", "").strip()
+        if travel_min_f.isdigit():
+            qs = qs.filter(travel_pct_max__gte=int(travel_min_f))
+
+        travel_max_f = self.request.GET.get("travel_max", "").strip()
+        if travel_max_f.isdigit():
+            qs = qs.filter(travel_pct_min__lte=int(travel_max_f))
+
+        license_f = self.request.GET.get("license", "").strip()
+        if license_f:
+            try:
+                qs = qs.filter(licenses_required__contains=[license_f])
+            except Exception:
+                qs = qs.filter(licenses_required__icontains=license_f)
+
+        encouraged_f = self.request.GET.get("encouraged", "").strip()
+        if encouraged_f:
+            try:
+                qs = qs.filter(encouraged_to_apply__contains=[encouraged_f])
+            except Exception:
+                qs = qs.filter(encouraged_to_apply__icontains=encouraged_f)
+
+        cert_f = self.request.GET.get("certification", "").strip()
+        if cert_f:
+            try:
+                qs = qs.filter(certifications__contains=[cert_f])
+            except Exception:
+                qs = qs.filter(certifications__icontains=cert_f)
+
+        benefit_f = self.request.GET.get("benefit", "").strip()
+        if benefit_f:
+            try:
+                qs = qs.filter(benefits_list__contains=[benefit_f])
+            except Exception:
+                qs = qs.filter(benefits_list__icontains=benefit_f)
+
+        industry_f = self.request.GET.get("company_industry", "").strip()
+        if industry_f:
+            qs = qs.filter(company_industry__icontains=industry_f)
+
+        company_stage_f = self.request.GET.get("company_stage", "").strip()
+        if company_stage_f:
+            qs = qs.filter(company_stage__icontains=company_stage_f)
+
+        size_f = self.request.GET.get("company_size", "").strip()
+        if size_f:
+            qs = qs.filter(
+                Q(company_size__icontains=size_f)
+                | Q(company_employee_count_band__icontains=size_f)
+            )
+
+        funding_f = self.request.GET.get("company_funding", "").strip()
+        if funding_f:
+            qs = qs.filter(company_funding__icontains=funding_f)
+
+        resume_score_f = self.request.GET.get("resume_ready_min", "").strip()
+        try:
+            if resume_score_f:
+                qs = qs.filter(resume_ready_score__gte=float(resume_score_f))
+        except ValueError:
+            pass
+
+        conf_min_f = self.request.GET.get("classification_min_conf", "").strip()
+        try:
+            if conf_min_f:
+                qs = qs.filter(classification_confidence__gte=float(conf_min_f))
+        except ValueError:
+            pass
+
+        founded_from = self.request.GET.get("founded_from", "").strip()
+        if founded_from.isdigit():
+            qs = qs.filter(company_founding_year__gte=int(founded_from))
+
+        founded_to = self.request.GET.get("founded_to", "").strip()
+        if founded_to.isdigit():
+            qs = qs.filter(company_founding_year__lte=int(founded_to))
+
         sync_f = self.request.GET.get("sync_status", "").strip()
         if sync_f:
             qs = qs.filter(sync_status=sync_f)
+
+        stage_f = self.request.GET.get("stage", "").strip().upper()
+        if stage_f == "FETCHED":
+            # Fetched = all harvested rows (top of funnel).
+            qs = qs
+        elif stage_f == "PARSED":
+            qs = qs.filter(has_description=True)
+        elif stage_f == "ENRICHED":
+            qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False))
+        elif stage_f == "CLASSIFIED":
+            qs = qs.filter(classification_confidence__gte=0.01)
+        elif stage_f == "READY":
+            qs = qs.filter(has_description=True, classification_confidence__gte=0.55, is_active=True)
+        elif stage_f == "SYNCED":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
+        elif stage_f == "FAILED":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.FAILED)
+        elif stage_f == "DUPLICATE":
+            qs = qs.filter(sync_status=RawJob.SyncStatus.SKIPPED)
 
         remote_f = self.request.GET.get("is_remote", "").strip()
         if remote_f == "1":
@@ -531,6 +1286,66 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         elif jd_f == "0":
             qs = qs.filter(has_description=False)
 
+        resume_jd_f = self.request.GET.get("resume_jd", "").strip()
+        if resume_jd_f == "ready":
+            qs = qs.filter(
+                has_description=True,
+                is_active=True,
+                word_count__gte=max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80))),
+                classification_confidence__gte=float(
+                    getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35)
+                ),
+            )
+        elif resume_jd_f == "blocked":
+            min_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
+            min_conf = float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
+            qs = qs.filter(
+                Q(has_description=False)
+                | Q(is_active=False)
+                | Q(word_count__lt=min_words)
+                | Q(classification_confidence__lt=min_conf)
+                | Q(classification_confidence__isnull=True)
+            )
+
+        # Fetched-date range — uses the indexed fetched_at column so these are
+        # fast range scans instead of function-based date extractions.
+        from datetime import datetime as _dt, timedelta as _td
+        from django.utils.timezone import make_aware as _aware
+
+        fetched_from = self.request.GET.get("fetched_from", "").strip()
+        if fetched_from:
+            try:
+                qs = qs.filter(fetched_at__gte=_aware(_dt.strptime(fetched_from, "%Y-%m-%d")))
+            except ValueError:
+                pass
+
+        fetched_to = self.request.GET.get("fetched_to", "").strip()
+        if fetched_to:
+            try:
+                next_day = _dt.strptime(fetched_to, "%Y-%m-%d") + _td(days=1)
+                qs = qs.filter(fetched_at__lt=_aware(next_day))
+            except ValueError:
+                pass
+
+        last_hours = self.request.GET.get("last_hours", "").strip()
+        if last_hours.isdigit():
+            hours = max(1, min(720, int(last_hours)))
+            qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=hours))
+
+        pending_age_bucket = self.request.GET.get("pending_age_bucket", "").strip()
+        if pending_age_bucket:
+            now = timezone.now()
+            qs = qs.filter(sync_status=RawJob.SyncStatus.PENDING)
+            if pending_age_bucket == "lt_1h":
+                qs = qs.filter(fetched_at__gte=now - timedelta(hours=1))
+            elif pending_age_bucket == "h_1_6":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6))
+            elif pending_age_bucket == "h_6_24":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24))
+            elif pending_age_bucket == "gt_24h":
+                qs = qs.filter(fetched_at__lt=now - timedelta(hours=24))
+
+        # Posted-date range (separate from fetched_at)
         date_from = self.request.GET.get("date_from", "").strip()
         if date_from:
             qs = qs.filter(posted_date__gte=date_from)
@@ -545,20 +1360,19 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx = super().get_context_data(**kwargs)
         ctx["active_tab"] = "rawjobs"
 
-        # Stats — single aggregation query instead of 8+ separate counts
-        today = timezone.now().date()
-        stats = RawJob.objects.aggregate(
-            total_jobs=Count("id"),
-            active_jobs=Count("id", filter=Q(is_active=True)),
-            remote_jobs=Count("id", filter=Q(is_remote=True)),
-            synced_jobs=Count("id", filter=Q(sync_status="SYNCED")),
-            pending_jobs=Count("id", filter=Q(sync_status="PENDING")),
-            failed_jobs=Count("id", filter=Q(sync_status="FAILED")),
-            missing_description_jobs=Count("id", filter=Q(has_description=False)),
-            new_today=Count("id", filter=Q(fetched_at__date=today)),
-        )
-        ctx.update(stats)
-        ctx["missing_jd_expired_jobs"] = raw_jobs_missing_jd_expired_count()
+        # Unified KPI aggregation with short TTL + invalidation on writes.
+        stats = _load_rawjobs_dashboard_stats(force_refresh=False)
+
+        ctx["total_jobs"] = stats["total"]
+        ctx["active_jobs"] = stats["active"]
+        ctx["remote_jobs"] = stats["remote"]
+        ctx["synced_jobs"] = stats["synced"]
+        ctx["pending_jobs"] = stats["pending"]
+        ctx["failed_jobs"] = stats["failed"]
+        ctx["new_today"] = stats["new_today"]
+        ctx["missing_description_jobs"] = stats["missing_jd"]
+        ctx["missing_jd_expired_jobs"] = stats["expired_missing"]
+
 
         # Platform breakdown
         ctx["platform_stats"] = (
@@ -578,6 +1392,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["employment_type_choices"] = RawJob.EmploymentType.choices
         ctx["experience_level_choices"] = RawJob.ExperienceLevel.choices
         ctx["sync_status_choices"] = RawJob.SyncStatus.choices
+        ctx["education_required_choices"] = [
+            (val, label) for val, label in RawJob._meta.get_field("education_required").choices if val
+        ]
 
         # Filter state
         ctx["q"] = self.request.GET.get("q", "")
@@ -585,12 +1402,53 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["selected_location_type"] = self.request.GET.get("location_type", "")
         ctx["selected_employment_type"] = self.request.GET.get("employment_type", "")
         ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
+        ctx["selected_department"] = self.request.GET.get("department", "")
+        ctx["selected_country"] = self.request.GET.get("country", "")
+        ctx["selected_state"] = self.request.GET.get("state", "")
+        ctx["selected_education_required"] = self.request.GET.get("education_required", "")
+        ctx["selected_years_min"] = self.request.GET.get("years_min", "")
+        ctx["selected_years_max"] = self.request.GET.get("years_max", "")
+        ctx["selected_salary_min_from"] = self.request.GET.get("salary_min_from", "")
+        ctx["selected_salary_max_to"] = self.request.GET.get("salary_max_to", "")
+        ctx["selected_clearance_required"] = self.request.GET.get("clearance_required", "")
+        ctx["selected_clearance_level"] = self.request.GET.get("clearance_level", "")
+        ctx["selected_language"] = self.request.GET.get("language", "")
+        ctx["selected_license"] = self.request.GET.get("license", "")
+        ctx["selected_encouraged"] = self.request.GET.get("encouraged", "")
+        ctx["selected_certification"] = self.request.GET.get("certification", "")
+        ctx["selected_benefit"] = self.request.GET.get("benefit", "")
+        ctx["selected_shift_schedule"] = self.request.GET.get("shift_schedule", "")
+        ctx["selected_schedule_type"] = self.request.GET.get("schedule_type", "")
+        ctx["selected_weekend_required"] = self.request.GET.get("weekend_required", "")
+        ctx["selected_travel_min"] = self.request.GET.get("travel_min", "")
+        ctx["selected_travel_max"] = self.request.GET.get("travel_max", "")
+        ctx["selected_company_industry"] = self.request.GET.get("company_industry", "")
+        ctx["selected_company_stage"] = self.request.GET.get("company_stage", "")
+        ctx["selected_company_size"] = self.request.GET.get("company_size", "")
+        ctx["selected_company_funding"] = self.request.GET.get("company_funding", "")
+        ctx["selected_resume_ready_min"] = self.request.GET.get("resume_ready_min", "")
+        ctx["selected_classification_min_conf"] = self.request.GET.get("classification_min_conf", "")
+        ctx["selected_founded_from"] = self.request.GET.get("founded_from", "")
+        ctx["selected_founded_to"] = self.request.GET.get("founded_to", "")
         ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
+        ctx["selected_stage"] = self.request.GET.get("stage", "")
+        ctx["selected_pending_age_bucket"] = self.request.GET.get("pending_age_bucket", "")
         ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
         ctx["selected_is_active"] = self.request.GET.get("is_active", "")
         ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
+        ctx["selected_resume_jd"] = self.request.GET.get("resume_jd", "")
+        ctx["selected_fetched_from"] = self.request.GET.get("fetched_from", "")
+        ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
+        ctx["selected_last_hours"] = self.request.GET.get("last_hours", "")
         ctx["selected_date_from"] = self.request.GET.get("date_from", "")
         ctx["selected_date_to"] = self.request.GET.get("date_to", "")
+        ctx["selected_company_id"] = self.request.GET.get("company_id", "")
+        ctx["selected_label_pk"] = self.request.GET.get("label_pk", "")
+        paginator = ctx.get("paginator")
+        ctx["jobs_total_filtered"] = paginator.count if paginator else 0
+
+        # Workflow analytics for new control tabs.
+        ctx["raw_insights"] = _raw_jobs_workflow_insights(stale_pending_hours=6)
 
         # Running batch check (for live polling)
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
@@ -606,6 +1464,88 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
 
     def get_queryset(self):
         return RawJob.objects.select_related("company", "job_platform", "platform_label")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["resume_jd_gate"] = evaluate_raw_job_resume_gate(self.object)
+        return ctx
+
+
+class RawJobCheckLiveStatusView(SuperuserRequiredMixin, View):
+    """POST — recheck a single raw-job posting URL and update is_active immediately."""
+
+    def post(self, request, pk):
+        from .url_health import check_job_posting_live, is_definitive_inactive
+
+        raw_job = get_object_or_404(RawJob, pk=pk)
+        url = (raw_job.original_url or "").strip()
+        if not url:
+            messages.error(request, "No source URL available for this row.")
+            return redirect("harvest-rawjob-detail", pk=pk)
+
+        result = check_job_posting_live(url, platform_slug=(raw_job.platform_slug or ""))
+        payload = dict(raw_job.raw_payload or {})
+        payload["link_health"] = {
+            "is_live": bool(result.is_live),
+            "reason": result.reason,
+            "status_code": int(result.status_code or 0),
+            "checked_at": timezone.now().isoformat(),
+            "final_url": result.final_url,
+            "decisive": bool((not result.is_live) and is_definitive_inactive(result)),
+        }
+        # Only flip inactive on definitive evidence to avoid transient false negatives.
+        if result.is_live:
+            raw_job.is_active = True
+        elif is_definitive_inactive(result):
+            raw_job.is_active = False
+        raw_job.raw_payload = payload
+        raw_job.save(update_fields=["is_active", "raw_payload", "updated_at"])
+        _invalidate_rawjobs_dashboard_cache()
+
+        if result.is_live:
+            messages.success(
+                request,
+                f"Link health check: ACTIVE ({result.reason}, HTTP {result.status_code}).",
+            )
+        else:
+            messages.warning(
+                request,
+                f"Link health check: INACTIVE ({result.reason}, HTTP {result.status_code}).",
+            )
+        return redirect("harvest-rawjob-detail", pk=pk)
+
+
+@method_decorator(never_cache, name="dispatch")
+class RawJobResumeProfileView(SuperuserRequiredMixin, View):
+    """JSON export used by resume generation pipeline."""
+
+    def get(self, request, pk):
+        raw_job = get_object_or_404(
+            RawJob.objects.select_related("company", "job_platform", "platform_label"),
+            pk=pk,
+        )
+        jd_gate = evaluate_raw_job_resume_gate(raw_job)
+        if not jd_gate.usable:
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "raw_job_id": raw_job.pk,
+                    "error": "JD is not usable for resume generation.",
+                    "reason_code": jd_gate.reason_code,
+                    "reason_text": jd_gate.reason_text,
+                    "word_count": jd_gate.word_count,
+                    "min_words": jd_gate.min_words,
+                },
+                status=422,
+            )
+        return JsonResponse(
+            {
+                "ok": True,
+                "raw_job_id": raw_job.pk,
+                "profile": build_resume_job_profile(raw_job),
+                "resume_jd_gate": jd_gate.asdict(),
+            }
+        )
 
 
 class FetchBatchListView(SuperuserRequiredMixin, ListView):
@@ -921,6 +1861,26 @@ class RunEnrichExistingView(SuperuserRequiredMixin, View):
         )
 
 
+class RunBackfillResumeContractView(SuperuserRequiredMixin, View):
+    """POST — backfill expanded resume-classification contract fields."""
+
+    def post(self, request):
+        from .tasks import backfill_resume_contract_task
+
+        batch_size = int(request.POST.get("batch_size", "1500") or "1500")
+        offset = int(request.POST.get("offset", "0") or "0")
+        task = backfill_resume_contract_task.delay(batch_size=batch_size, offset=offset)
+        messages.success(
+            request,
+            f"Resume contract backfill started (batch={batch_size:,}, offset={offset:,}) — Task {task.id[:8]}…",
+        )
+        return redirect_with_task_progress(
+            "harvest-rawjobs",
+            task.id,
+            "Backfill resume contract fields",
+        )
+
+
 class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
     """POST — launch backfill_descriptions_task to fetch JDs for jobs that have none."""
 
@@ -973,14 +1933,180 @@ class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
         return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
 
 
-class RawJobStatsView(SuperuserRequiredMixin, View):
-    """JSON endpoint — live stats for dashboard polling."""
-    def get(self, request):
-        from django.utils.timezone import now
-        today = now().date()
+class TaskMonitorView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/task_monitor.html"
 
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "monitor"
+        return ctx
+
+
+# Human-readable names for every task in the system
+_TASK_LABELS = {
+    "harvest.backfill_descriptions":              ("JD Backfill",         "#f97316"),
+    "harvest.backfill_descriptions_chunk":        ("JD Backfill Chunk",   "#f97316"),
+    "harvest.fetch_raw_jobs_batch":               ("Harvest Batch",       "#6366f1"),
+    "harvest.harvest_jobs":                       ("Harvest Jobs",        "#6366f1"),
+    "harvest.sync_harvested_to_pool":             ("Pool Sync",           "#10b981"),
+    "harvest.detect_company_platforms":           ("Platform Detection",  "#38bdf8"),
+    "harvest.verify_all_portals":                 ("Portal Verify",       "#a855f7"),
+    "harvest.enrich_existing_jobs":               ("Enrichment",          "#eab308"),
+    "harvest.backfill_platform_labels_from_jobs": ("Label Backfill",      "#64748b"),
+    "harvest.cleanup_harvested_jobs":             ("Cleanup",             "#64748b"),
+    "harvest.jarvis_ingest":                      ("Jarvis Import",       "#ec4899"),
+    "harvest.retry_failed_raw_jobs":              ("Retry Failed",        "#ef4444"),
+    "core.tasks.poll_email_ingest_task":          ("Email Ingest",        "#0ea5e9"),
+}
+
+
+class TaskMonitorAPIView(SuperuserRequiredMixin, View):
+    """GET — JSON snapshot of running tasks, recent history, workers, and key stats."""
+
+    def get(self, request):
+        from celery import current_app
+        from celery.result import AsyncResult
+
+        # ── Active tasks from all workers ────────────────────────────────────
+        active_tasks = []
+        try:
+            inspect = current_app.control.inspect(timeout=2)
+            active_map = inspect.active() or {}
+            for worker_name, tasks in active_map.items():
+                for t in tasks:
+                    task_id = t.get("id", "")
+                    name = t.get("name", "")
+                    label, color = _TASK_LABELS.get(name, (name.split(".")[-1].replace("_", " ").title(), "#64748b"))
+                    started = t.get("time_start")
+
+                    # Pull live progress from result backend
+                    percent, message, detail = 0, "Running…", {}
+                    try:
+                        res = AsyncResult(task_id)
+                        if res.state == "PROGRESS":
+                            meta = res.info or {}
+                            percent = meta.get("percent", 0)
+                            message = meta.get("message", "Running…")
+                            detail = meta.get("detail", {})
+                    except Exception:
+                        pass
+
+                    active_tasks.append({
+                        "id": task_id,
+                        "name": name,
+                        "label": label,
+                        "color": color,
+                        "worker": worker_name.split("@")[0],
+                        "percent": percent,
+                        "message": message[:120],
+                        "started": int(started) if started else None,
+                        "updated": detail.get("updated", 0),
+                        "skipped": detail.get("skipped", 0),
+                        "failed": detail.get("failed", 0),
+                        "speed": detail.get("speed", 0),
+                        "eta": detail.get("eta", ""),
+                        "remaining": detail.get("remaining_global", 0),
+                    })
+        except Exception:
+            pass
+
+        # ── Worker health ─────────────────────────────────────────────────────
+        workers = []
+        try:
+            stats_map = current_app.control.inspect(timeout=2).stats() or {}
+            for wname, info in stats_map.items():
+                pool = info.get("pool", {})
+                workers.append({
+                    "name": wname.split("@")[0] + "@" + wname.split("@")[1][:8],
+                    "concurrency": pool.get("max-concurrency", "?"),
+                    "processes": len(pool.get("processes", [])),
+                    "queues": [q["name"] for q in info.get("consumer", {}).get("queues", [])],
+                })
+        except Exception:
+            pass
+
+        # ── Recent task history ───────────────────────────────────────────────
+        recent = []
+        try:
+            from django_celery_results.models import TaskResult
+            qs = TaskResult.objects.exclude(
+                task_name="core.tasks.poll_email_ingest_task"
+            ).order_by("-date_done")[:30]
+            for t in qs:
+                name = t.task_name or ""
+                label, color = _TASK_LABELS.get(name, (name.split(".")[-1].replace("_", " ").title(), "#64748b"))
+                runtime = None
+                if t.date_done and t.date_created:
+                    runtime = int((t.date_done - t.date_created).total_seconds())
+                recent.append({
+                    "id": (t.task_id or "")[:8],
+                    "label": label,
+                    "color": color,
+                    "status": t.status or "UNKNOWN",
+                    "date_done": t.date_done.strftime("%b %d %H:%M") if t.date_done else "",
+                    "runtime_secs": runtime,
+                })
+        except Exception:
+            pass
+
+        # ── Key stats ─────────────────────────────────────────────────────────
+        stats = {}
+        try:
+            from .models import RawJob
+            from django.db.models import Count, Q
+            agg = RawJob.objects.aggregate(
+                total=Count("id"),
+                missing_jd=Count("id", filter=Q(has_description=False)),
+                pending_sync=Count("id", filter=Q(sync_status="PENDING")),
+                locked=Count("id", filter=Q(jd_backfill_locked_at__isnull=False)),
+            )
+            stats = {
+                "total_jobs": agg["total"],
+                "missing_jd": agg["missing_jd"],
+                "pending_sync": agg["pending_sync"],
+                "backfill_in_progress": agg["locked"],
+            }
+        except Exception:
+            pass
+
+        return JsonResponse({
+            "active": active_tasks,
+            "workers": workers,
+            "recent": recent,
+            "stats": stats,
+        })
+
+
+class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
+    """GET ?filter=pending|missing_jd — company-level breakdown for a stat filter."""
+
+    def get(self, request):
+        filter_type = request.GET.get("filter", "").strip()
+
+        if filter_type == "pending":
+            qs = RawJob.objects.filter(sync_status="PENDING")
+        elif filter_type == "missing_jd":
+            qs = _raw_jobs_missing_jd_base_qs()
+        else:
+            return JsonResponse({"error": "Invalid filter. Use pending or missing_jd."}, status=400)
+
+        companies = list(
+            qs.values("company_name", "platform_slug")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:200]
+        )
+        return JsonResponse({"filter": filter_type, "total": qs.count(), "companies": companies})
+
+
+@method_decorator(never_cache, name="dispatch")
+class RawJobStatsView(SuperuserRequiredMixin, View):
+    """Raw Jobs stats page + JSON endpoint for dashboard polling."""
+    def get(self, request):
         # Running batch info
         running_batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
+        running_company_fetch = CompanyFetchRun.objects.filter(
+            status=CompanyFetchRun.Status.RUNNING
+        ).exists()
         batch_data = None
         if running_batch:
             batch_data = {
@@ -994,19 +2120,19 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 "total_jobs_new": running_batch.total_jobs_new,
             }
 
-        stats = RawJob.objects.aggregate(
-            total_jobs=Count("id"),
-            active_jobs=Count("id", filter=Q(is_active=True)),
-            remote_jobs=Count("id", filter=Q(is_remote=True)),
-            synced_jobs=Count("id", filter=Q(sync_status="SYNCED")),
-            pending_jobs=Count("id", filter=Q(sync_status="PENDING")),
-            failed_jobs=Count("id", filter=Q(sync_status="FAILED")),
-            missing_description_jobs=Count("id", filter=Q(has_description=False)),
-            new_today=Count("id", filter=Q(fetched_at__date=today)),
-        )
-        return JsonResponse({
-            **stats,
-            "missing_jd_expired_jobs": raw_jobs_missing_jd_expired_count(),
+        # Force refresh while a batch or Jarvis company fetch is running.
+        stats = _load_rawjobs_dashboard_stats(force_refresh=bool(running_batch or running_company_fetch))
+
+        payload = {
+            "total_jobs": stats["total"],
+            "active_jobs": stats["active"],
+            "remote_jobs": stats["remote"],
+            "synced_jobs": stats["synced"],
+            "pending_jobs": stats["pending"],
+            "failed_jobs": stats["failed"],
+            "new_today": stats["new_today"],
+            "missing_description_jobs": stats["missing_jd"],
+            "missing_jd_expired_jobs": stats["expired_missing"],
             "running_batch": batch_data,
             "platform_stats": list(
                 RawJob.objects.values("platform_slug")
@@ -1014,11 +2140,51 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
                 .order_by("-count")
                 .values("platform_slug", "count")
             ),
-        })
+            "insights": _raw_jobs_workflow_insights(stale_pending_hours=6),
+            "meta": {
+                "cache": "fresh" if (running_batch or running_company_fetch) else "short_ttl",
+                "new_today_basis": "last_24h_fetched",
+            },
+        }
+
+        fmt = (request.GET.get("format") or "").strip().lower()
+        accept = (request.headers.get("Accept") or "").lower()
+        is_xhr = request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        wants_json = (fmt == "json") or is_xhr or ("application/json" in accept)
+
+        if wants_json:
+            return JsonResponse(payload)
+
+        context = {
+            "active_tab": "rawjobs",
+            "stats_payload": payload,
+            "running_batch": payload.get("running_batch"),
+            "platform_stats": payload.get("platform_stats", []),
+            "insights": payload.get("insights", {}),
+            "stats_pretty_json": json.dumps(payload, indent=2, cls=DjangoJSONEncoder),
+        }
+        return render(request, "harvest/rawjobs_stats.html", context)
+
+
+@method_decorator(never_cache, name="dispatch")
+class RawJobWorkflowInsightsView(SuperuserRequiredMixin, View):
+    """JSON endpoint — queue/quality/funnel/platform-health insights for control tabs."""
+
+    def get(self, request):
+        stale_hours_raw = (request.GET.get("stale_hours") or "6").strip()
+        stale_hours = int(stale_hours_raw) if stale_hours_raw.isdigit() else 6
+        stale_hours = max(1, min(72, stale_hours))
+        return JsonResponse(
+            {
+                "ok": True,
+                "insights": _raw_jobs_workflow_insights(stale_pending_hours=stale_hours),
+            }
+        )
 
 
 # ── Job Jarvis ─────────────────────────────────────────────────────────────────
 
+@method_decorator(never_cache, name="dispatch")
 class JarvisView(SuperuserRequiredMixin, TemplateView):
     """
     GET  → show paste form
@@ -1067,7 +2233,7 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
 
         ctx["platforms_supported"] = [
             "Greenhouse", "Lever", "Ashby", "Workday", "Workable",
-            "LinkedIn", "Indeed", "SmartRecruiters", "BambooHR", "Any career page",
+            "Dayforce", "LinkedIn", "Indeed", "SmartRecruiters", "BambooHR", "Any career page",
         ]
         return ctx
 
@@ -1083,6 +2249,7 @@ class JarvisView(SuperuserRequiredMixin, TemplateView):
         return JsonResponse({"ok": True, "task_id": task.id, "url": url})
 
 
+@method_decorator(never_cache, name="dispatch")
 class JarvisStatusView(SuperuserRequiredMixin, View):
     """
     GET ?task_id=xxx → poll task state.
@@ -1105,6 +2272,12 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
         if state == "PENDING":
             return JsonResponse({"state": "PENDING", "percent": 0, "message": "Queued…"})
 
+        if state == "STARTED":
+            return JsonResponse({"state": "STARTED", "percent": 12, "message": "Started…"})
+
+        if state == "RETRY":
+            return JsonResponse({"state": "RETRY", "percent": 18, "message": "Retrying…"})
+
         if state == "PROGRESS":
             meta = res.info or {}
             return JsonResponse({
@@ -1121,8 +2294,36 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
             raw_job_data = None
             if result.get("raw_job_id"):
                 try:
-                    job = RawJob.objects.select_related("company", "job_platform").get(
+                    from .harvesters import get_harvester
+
+                    job = RawJob.objects.select_related(
+                        "company",
+                        "job_platform",
+                        "platform_label",
+                        "platform_label__platform",
+                    ).get(
                         pk=result["raw_job_id"]
+                    )
+                    payload = job.raw_payload if isinstance(job.raw_payload, dict) else {}
+                    existing_live_job = _find_existing_live_job_for_rawjob(job)
+                    tenant_id = (
+                        payload.get("jarvis_tenant_id")
+                        or (job.platform_label.tenant_id if job.platform_label else "")
+                        or ""
+                    )
+                    company_jobs_url = (
+                        payload.get("jarvis_company_jobs_url")
+                        or (job.platform_label.career_page_url if job.platform_label else "")
+                        or ""
+                    )
+                    support_slug = (
+                        payload.get("jarvis_detected_ats")
+                        or (job.platform_label.platform.slug if job.platform_label and job.platform_label.platform else "")
+                        or (job.job_platform.slug if job.job_platform else "")
+                        or ""
+                    )
+                    fetch_all_supported = bool(
+                        tenant_id and support_slug and get_harvester(support_slug) is not None
                     )
                     raw_job_data = {
                         "id": job.pk,
@@ -1141,15 +2342,23 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
                         "salary_max": str(job.salary_max) if job.salary_max else None,
                         "salary_currency": job.salary_currency,
                         "salary_period": job.salary_period,
+                        "quality_score": job.quality_score,
                         "description": (job.description or "")[:3000],
                         "platform_slug": job.platform_slug,
-                        "platform_name": job.job_platform.name if job.job_platform else (job.raw_payload.get("jarvis_detected_ats") or job.platform_slug).title(),
-                        "detected_ats": job.raw_payload.get("jarvis_detected_ats", ""),
+                        "platform_name": job.job_platform.name if job.job_platform else (payload.get("jarvis_detected_ats") or job.platform_slug).title(),
+                        "detected_ats": payload.get("jarvis_detected_ats", ""),
                         "original_url": job.original_url,
                         "apply_url": job.apply_url,
                         "posted_date": job.posted_date.isoformat() if job.posted_date else "",
                         "sync_status": job.sync_status,
                         "detail_url": f"/harvest/raw-jobs/{job.pk}/",
+                        "duplicate_job_id": existing_live_job.pk if existing_live_job else None,
+                        "live_job_id": existing_live_job.pk if existing_live_job else None,
+                        "live_job_url": f"/jobs/{existing_live_job.pk}/" if existing_live_job else "",
+                        "platform_label_id": job.platform_label_id,
+                        "tenant_id": tenant_id,
+                        "company_jobs_url": company_jobs_url,
+                        "fetch_all_supported": fetch_all_supported,
                     }
                 except RawJob.DoesNotExist:
                     pass
@@ -1167,6 +2376,408 @@ class JarvisStatusView(SuperuserRequiredMixin, View):
 
         # REVOKED or other
         return JsonResponse({"state": state})
+
+
+class JarvisApproveView(SuperuserRequiredMixin, View):
+    """POST { raw_job_id } -> sync RawJob to pool then approve to live in one step."""
+
+    def post(self, request, *args, **kwargs):
+        from jobs.models import Job
+
+        raw_job_id = (request.POST.get("raw_job_id") or "").strip()
+        if not raw_job_id.isdigit():
+            return JsonResponse({"ok": False, "error": "Missing or invalid raw_job_id."}, status=400)
+
+        try:
+            raw_job = RawJob.objects.select_related("company", "job_platform").get(pk=int(raw_job_id))
+        except RawJob.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "Raw job not found."}, status=404)
+
+        try:
+            job, created_new = _sync_rawjob_to_pool(raw_job, posted_by=request.user)
+        except ValueError as exc:
+            return JsonResponse({"ok": False, "error": str(exc)}, status=400)
+        except Exception as exc:
+            logger.exception("Jarvis approve sync failed for raw_job=%s", raw_job.pk)
+            return JsonResponse({"ok": False, "error": f"Failed to sync job: {exc}"}, status=500)
+
+        approved_now = False
+        if job.status == Job.Status.POOL:
+            job.status = Job.Status.OPEN
+            job.validated_by = request.user
+            job.validation_run_at = timezone.now()
+            job.save(update_fields=["status", "validated_by", "validation_run_at", "updated_at"])
+            approved_now = True
+            try:
+                from jobs.notify import notify_new_open_job_to_consultants, notify_job_pool_status
+
+                notify_new_open_job_to_consultants(job)
+                notify_job_pool_status(job, approved=True, actor=request.user)
+            except Exception:
+                logger.exception("Jarvis approve notifications failed for job=%s", job.pk)
+            try:
+                from jobs.tasks import generate_job_matches_task
+
+                generate_job_matches_task.delay(job.pk, notify=True)
+            except Exception:
+                logger.exception("Jarvis approve match task dispatch failed for job=%s", job.pk)
+
+        if job.status not in (Job.Status.OPEN, Job.Status.POOL):
+            return JsonResponse(
+                {
+                    "ok": False,
+                    "error": f"Job exists but cannot be auto-approved from status {job.status}.",
+                    "job_id": job.pk,
+                    "job_url": f"/jobs/{job.pk}/",
+                },
+                status=409,
+            )
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "raw_job_id": raw_job.pk,
+                "job_id": job.pk,
+                "job_url": f"/jobs/{job.pk}/",
+                "created_job": created_new,
+                "approved_now": approved_now,
+                "job_status": job.status,
+            }
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+class JarvisFetchCompanyJobsView(SuperuserRequiredMixin, View):
+    """
+    POST { raw_job_id } → fetch all jobs for the detected company board.
+
+    Uses the existing `fetch_raw_jobs_for_company_task(fetch_all=True)` pipeline
+    so results are deduped/upserted into RawJob.
+    """
+
+    def post(self, request, *args, **kwargs):
+        from .harvesters import get_harvester
+        from .tasks import fetch_raw_jobs_for_company_task, _jarvis_ensure_company_platform_label
+
+        raw_job_id = (request.POST.get("raw_job_id") or "").strip()
+        if not raw_job_id.isdigit():
+            return JsonResponse({"ok": False, "error": "Missing or invalid raw_job_id."}, status=400)
+
+        try:
+            raw_job = RawJob.objects.select_related("company", "job_platform").get(pk=int(raw_job_id))
+        except RawJob.DoesNotExist:
+            return JsonResponse({"ok": False, "error": "Raw job not found."}, status=404)
+
+        if not raw_job.company_id:
+            return JsonResponse({"ok": False, "error": "Company mapping is missing. Re-run Jarvis analyze."}, status=400)
+
+        payload = raw_job.raw_payload if isinstance(raw_job.raw_payload, dict) else {}
+        detected_ats = (
+            payload.get("jarvis_detected_ats")
+            or (raw_job.job_platform.slug if raw_job.job_platform else "")
+            or ""
+        )
+        label, board_ctx = _jarvis_ensure_company_platform_label(
+            company=raw_job.company,
+            detected_ats=detected_ats,
+            source_url=raw_job.original_url or payload.get("jarvis_source_url") or "",
+            job_platform=raw_job.job_platform,
+        )
+
+        if not label or not label.platform:
+            return JsonResponse(
+                {"ok": False, "error": "Could not resolve ATS platform for this company URL."},
+                status=400,
+            )
+        if not (label.tenant_id or "").strip():
+            return JsonResponse(
+                {"ok": False, "error": "Tenant could not be derived from this URL yet."},
+                status=400,
+            )
+        if get_harvester(label.platform.slug) is None:
+            return JsonResponse(
+                {"ok": False, "error": f"Fetch-all is not supported for platform '{label.platform.slug}' yet."},
+                status=400,
+            )
+
+        # Fetch-all for large Workday boards can exceed the default 8-minute
+        # soft limit. Override per-task limits for Jarvis-triggered full crawls.
+        task = fetch_raw_jobs_for_company_task.apply_async(
+            kwargs={
+                "label_pk": label.pk,
+                "batch_id": None,
+                "triggered_by": "JARVIS",
+                "fetch_all": True,
+            },
+            soft_time_limit=1800,
+            time_limit=2100,
+        )
+
+        # Keep payload enriched for UI render
+        payload["jarvis_platform_label_id"] = label.pk
+        payload["jarvis_tenant_id"] = board_ctx.get("tenant_id") or label.tenant_id
+        payload["jarvis_company_jobs_url"] = (
+            board_ctx.get("company_jobs_url")
+            or label.career_page_url
+            or ""
+        )
+        payload["jarvis_fetch_all_supported"] = True
+        raw_job.raw_payload = payload
+        raw_job.platform_label = label
+        raw_job.save(update_fields=["raw_payload", "platform_label", "updated_at"])
+
+        progress_qs = urlencode(
+            {
+                "task_id": task.id,
+                "label_pk": label.pk,
+                "raw_job_id": raw_job.pk,
+                "company_name": raw_job.company.name if raw_job.company else (raw_job.company_name or ""),
+                "platform_slug": label.platform.slug if label.platform else "",
+                "company_jobs_url": payload.get("jarvis_company_jobs_url", ""),
+            }
+        )
+        progress_url = f"{reverse('harvest-jarvis-fetch-all-progress')}?{progress_qs}"
+
+        return JsonResponse(
+            {
+                "ok": True,
+                "task_id": task.id,
+                "label_pk": label.pk,
+                "platform_slug": label.platform.slug,
+                "tenant_id": payload.get("jarvis_tenant_id", ""),
+                "company_jobs_url": payload.get("jarvis_company_jobs_url", ""),
+                "company_id": raw_job.company_id,
+                "company_name": raw_job.company.name if raw_job.company else raw_job.company_name,
+                "progress_url": progress_url,
+            }
+        )
+
+
+@method_decorator(never_cache, name="dispatch")
+class JarvisFetchProgressView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/jarvis_fetch_progress.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["active_tab"] = "jarvis"
+        ctx["task_id"] = self.request.GET.get("task_id", "").strip()
+        ctx["label_pk"] = self.request.GET.get("label_pk", "").strip()
+        ctx["raw_job_id"] = self.request.GET.get("raw_job_id", "").strip()
+        ctx["company_name"] = self.request.GET.get("company_name", "").strip()
+        ctx["platform_slug"] = self.request.GET.get("platform_slug", "").strip()
+        ctx["company_jobs_url"] = self.request.GET.get("company_jobs_url", "").strip()
+        ctx["jarvis_url"] = reverse("harvest-jarvis")
+        ctx["rawjobs_url"] = f"{reverse('harvest-rawjobs')}?_subtab=jobs"
+        ctx["progress_api_url"] = reverse("harvest-jarvis-fetch-all-progress-api")
+        return ctx
+
+
+@method_decorator(never_cache, name="dispatch")
+class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
+    """Live status payload for the Jarvis fetch-all progress page."""
+
+    def get(self, request, *args, **kwargs):
+        from celery.result import AsyncResult
+
+        task_id = request.GET.get("task_id", "").strip()
+        if not task_id:
+            return JsonResponse({"ok": False, "error": "Missing task_id."}, status=400)
+
+        async_res = AsyncResult(task_id)
+        celery_state = (async_res.state or "").upper()
+        run = (
+            CompanyFetchRun.objects.select_related("label__company", "label__platform")
+            .filter(task_id=task_id)
+            .order_by("-started_at")
+            .first()
+        )
+
+        if run:
+            state = run.status
+            running = state == CompanyFetchRun.Status.RUNNING
+            done = state in {
+                CompanyFetchRun.Status.SUCCESS,
+                CompanyFetchRun.Status.PARTIAL,
+                CompanyFetchRun.Status.FAILED,
+                CompanyFetchRun.Status.SKIPPED,
+            }
+            found = int(run.jobs_found or 0)
+            processed = int(run.jobs_new + run.jobs_updated + run.jobs_duplicate + run.jobs_failed)
+            if done:
+                percent = 100
+            elif found > 0:
+                percent = max(8, min(95, int((processed / max(found, 1)) * 100)))
+            elif celery_state == "STARTED":
+                percent = 10
+            elif celery_state == "RETRY":
+                percent = 18
+            elif celery_state == "PROGRESS" and isinstance(async_res.info, dict):
+                percent = int(async_res.info.get("percent", 15) or 15)
+            else:
+                percent = 4
+
+            if done:
+                if state == CompanyFetchRun.Status.SUCCESS:
+                    message = (
+                        "Company fetch complete."
+                        if found > 0
+                        else "Company fetch complete (no jobs returned from board)."
+                    )
+                elif state == CompanyFetchRun.Status.PARTIAL:
+                    if int(run.jobs_failed or 0) > 0:
+                        message = f"Company fetch completed with partial failures ({run.jobs_failed} failed)."
+                    elif run.error_message:
+                        message = run.error_message
+                    else:
+                        message = "Company fetch completed with warnings."
+                elif state == CompanyFetchRun.Status.SKIPPED:
+                    message = run.error_message or "Company fetch skipped."
+                else:
+                    message = run.error_message or "Company fetch failed."
+            else:
+                if found > 0:
+                    message = f"Processing jobs… {processed}/{found}"
+                else:
+                    message = "Discovering jobs from company board…"
+
+            recent_qs = RawJob.objects.filter(platform_label_id=run.label_id)
+            if run.started_at:
+                recent_qs = recent_qs.filter(updated_at__gte=run.started_at - timedelta(seconds=3))
+            recent_jobs = list(
+                recent_qs.order_by("-updated_at").values(
+                    "id",
+                    "title",
+                    "company_name",
+                    "location_raw",
+                    "sync_status",
+                    "updated_at",
+                    "original_url",
+                )[:20]
+            )
+            jobs_payload = [
+                {
+                    "id": row["id"],
+                    "title": row["title"] or "Untitled role",
+                    "company_name": row["company_name"] or (run.label.company.name if run.label and run.label.company else ""),
+                    "location_raw": row["location_raw"] or "",
+                    "sync_status": row["sync_status"] or "PENDING",
+                    "detail_url": f"/harvest/raw-jobs/{row['id']}/",
+                    "original_url": row["original_url"] or "",
+                    "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
+                }
+                for row in recent_jobs
+            ]
+
+            rawjobs_qs = {
+                "_subtab": "jobs",
+                "q": run.label.company.name if run.label and run.label.company else "",
+            }
+            if run.label and run.label.company_id:
+                rawjobs_qs["company_id"] = str(run.label.company_id)
+            if run.label and run.label.platform:
+                rawjobs_qs["platform"] = run.label.platform.slug
+            if run.label_id:
+                rawjobs_qs["label_pk"] = str(run.label_id)
+            rawjobs_url = f"{reverse('harvest-rawjobs')}?{urlencode(rawjobs_qs)}"
+
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "celery_state": celery_state,
+                    "state": state,
+                    "running": running,
+                    "done": done,
+                    "percent": percent,
+                    "message": message,
+                    "company_name": run.label.company.name if run.label and run.label.company else "",
+                    "platform_slug": run.label.platform.slug if run.label and run.label.platform else "",
+                    "company_jobs_url": run.label.career_page_url or "",
+                    "counts": {
+                        "found": found,
+                        "new": int(run.jobs_new),
+                        "updated": int(run.jobs_updated),
+                        "duplicate": int(run.jobs_duplicate),
+                        "skipped": int(run.jobs_duplicate),
+                        "failed": int(run.jobs_failed),
+                    },
+                    "run": {
+                        "id": run.pk,
+                        "label_pk": run.label_id,
+                        "started_at": run.started_at.isoformat() if run.started_at else "",
+                        "completed_at": run.completed_at.isoformat() if run.completed_at else "",
+                        "error_message": run.error_message or "",
+                    },
+                    "recent_jobs": jobs_payload,
+                    "rawjobs_url": rawjobs_url,
+                }
+            )
+
+        # Fallback before run record is created.
+        if celery_state in {"PENDING", "STARTED", "RETRY", "PROGRESS"}:
+            percent_map = {"PENDING": 2, "STARTED": 10, "RETRY": 18}
+            percent = percent_map.get(celery_state, 15)
+            message = "Queued…" if celery_state == "PENDING" else "Starting company fetch…"
+            if celery_state == "PROGRESS" and isinstance(async_res.info, dict):
+                percent = int(async_res.info.get("percent", percent) or percent)
+                message = async_res.info.get("message", message)
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "state": celery_state,
+                    "celery_state": celery_state,
+                    "running": True,
+                    "done": False,
+                    "percent": max(1, min(95, percent)),
+                    "message": message,
+                    "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 0},
+                    "recent_jobs": [],
+                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+                }
+            )
+
+        if celery_state == "SUCCESS":
+            result = async_res.result if isinstance(async_res.result, dict) else {}
+            return JsonResponse(
+                {
+                    "ok": True,
+                    "task_id": task_id,
+                    "state": "SUCCESS",
+                    "celery_state": "SUCCESS",
+                    "running": False,
+                    "done": True,
+                    "percent": 100,
+                    "message": "Company fetch complete.",
+                    "counts": {
+                        "found": int(result.get("jobs_found", 0) or 0),
+                        "new": int(result.get("jobs_new", 0) or 0),
+                        "updated": int(result.get("jobs_updated", 0) or 0),
+                        "duplicate": 0,
+                        "skipped": 0,
+                        "failed": int(result.get("jobs_failed", 0) or 0),
+                    },
+                    "recent_jobs": [],
+                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+                }
+            )
+
+        err = str(async_res.result) if async_res.result else "Company fetch failed."
+        return JsonResponse(
+            {
+                "ok": True,
+                "task_id": task_id,
+                "state": celery_state or "FAILURE",
+                "celery_state": celery_state or "FAILURE",
+                "running": False,
+                "done": True,
+                "percent": 100,
+                "message": err,
+                "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 1},
+                "recent_jobs": [],
+                "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+            }
+        )
 
 
 class JarvisReScrapeView(SuperuserRequiredMixin, View):
@@ -1335,6 +2946,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "worker_concurrency", "task_rate_limit",
             "api_stagger_ms", "scraper_stagger_ms",
             "min_hours_since_fetch", "task_soft_time_limit_secs",
+            "resume_jd_min_words", "resume_jd_min_chars",
         ]
         errors = []
         for field in int_fields:
@@ -1344,6 +2956,19 @@ class EngineConfigView(SuperuserRequiredMixin, View):
                     setattr(cfg, field, int(val))
                 except (ValueError, TypeError):
                     errors.append(f"{field}: must be a whole number")
+
+        # Float fields
+        float_fields = ["resume_jd_min_classification_confidence"]
+        for field in float_fields:
+            val = request.POST.get(field, "").strip()
+            if val:
+                try:
+                    fval = float(val)
+                    if field == "resume_jd_min_classification_confidence" and not (0.0 <= fval <= 1.0):
+                        raise ValueError
+                    setattr(cfg, field, fval)
+                except (ValueError, TypeError):
+                    errors.append(f"{field}: must be a number (0 to 1)")
 
         # Boolean (checkbox) fields — unchecked checkboxes send no value, so
         # we must explicitly set False when the key is absent from POST.
@@ -1359,6 +2984,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             messages.success(
                 request,
                 "Engine config saved. Rate limit applied to running workers immediately. "
+                "Resume JD gate thresholds apply immediately. "
                 "Pipeline funnel toggles and stagger changes apply on the next batch run.",
             )
 

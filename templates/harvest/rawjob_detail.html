@@ -168,6 +168,19 @@
         <!-- Actions -->
         <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
           <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 14px;text-transform:uppercase;letter-spacing:.4px;">Actions</h3>
+          {% if rawjob.original_url %}
+          <form method="post" action="{% url 'harvest-rawjob-recheck-live' rawjob.pk %}" style="margin:0 0 8px 0;">
+            {% csrf_token %}
+            <button type="submit" style="display:block;width:100%;padding:10px;background:#fff;color:#92400e;border:1px solid #fcd34d;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-sizing:border-box;">Recheck Active Status</button>
+          </form>
+          {% endif %}
+          {% if rawjob.sync_status == 'PENDING' and rawjob.is_active %}
+          <form method="post" action="{% url 'harvest-run-sync-selected' %}" style="margin:0 0 8px 0;">
+            {% csrf_token %}
+            <input type="hidden" name="raw_job_ids" value="{{ rawjob.id }}">
+            <button type="submit" style="display:block;width:100%;padding:10px;background:#16a34a;color:#fff;border:1px solid #15803d;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;box-sizing:border-box;">Sync to Vet Queue</button>
+          </form>
+          {% endif %}
           {% if rawjob.apply_url %}
           <a href="{{ rawjob.apply_url }}" target="_blank" rel="noopener" style="display:block;width:100%;padding:10px;background:#2563eb;color:#fff;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;text-align:center;margin-bottom:8px;box-sizing:border-box;">Apply Now →</a>
           {% endif %}
@@ -192,6 +205,32 @@
           {% if rawjob.word_count %}<p style="font-size:11px;color:#94a3b8;margin:0;">{{ rawjob.word_count }} words in description</p>{% endif %}
         </div>
         {% endif %}
+
+        <!-- Resume JD Gate -->
+        <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
+          <h3 style="font-size:12px;font-weight:700;color:#374151;margin:0 0 12px;text-transform:uppercase;letter-spacing:.4px;">Resume JD Gate</h3>
+          {% if resume_jd_gate.usable %}
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;margin-bottom:8px;">READY FOR RESUME</div>
+          {% else %}
+          <div style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;margin-bottom:8px;">BLOCKED FOR RESUME</div>
+          {% endif %}
+          <p style="margin:4px 0 8px;font-size:12px;color:#334155;">{{ resume_jd_gate.reason_text }}</p>
+          {% if resume_jd_gate.reason_code == 'LOW_CLASSIFICATION_CONFIDENCE' %}
+          <p style="margin:0 0 10px;font-size:11px;color:#0f766e;background:#ecfeff;border:1px solid #a5f3fc;padding:7px 9px;border-radius:8px;">
+            This can still be sent to Vet Queue for human review. Resume generation remains blocked until enrichment raises confidence.
+          </p>
+          {% endif %}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+              <p style="margin:0 0 2px;font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Words</p>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#0f172a;">{{ resume_jd_gate.word_count }}</p>
+            </div>
+            <div style="padding:8px 10px;border:1px solid #e2e8f0;border-radius:8px;background:#f8fafc;">
+              <p style="margin:0 0 2px;font-size:10px;color:#94a3b8;text-transform:uppercase;font-weight:700;">Minimum</p>
+              <p style="margin:0;font-size:13px;font-weight:700;color:#0f172a;">{{ resume_jd_gate.min_words }} words</p>
+            </div>
+          </div>
+        </div>
 
         <!-- Job Category + Experience -->
         <div style="background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:20px;">
@@ -360,6 +399,22 @@
               <p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Active</p>
               <span style="font-size:12px;color:#374151;">{% if rawjob.is_active %}✓ Yes{% else %}✗ No{% endif %}</span>
             </div>
+            {% if rawjob.raw_payload.link_health %}
+            <div>
+              <p style="font-size:10px;color:#94a3b8;font-weight:600;margin:0 0 2px;text-transform:uppercase;">Link Health</p>
+              <span style="font-size:11px;color:#374151;">
+                {{ rawjob.raw_payload.link_health.reason|default:"unknown" }}
+                {% if rawjob.raw_payload.link_health.status_code %}
+                  · HTTP {{ rawjob.raw_payload.link_health.status_code }}
+                {% endif %}
+                {% if rawjob.raw_payload.link_health.decisive %}
+                  · decisive
+                {% else %}
+                  · inconclusive
+                {% endif %}
+              </span>
+            </div>
+            {% endif %}
           </div>
         </div>
 

@@ -1,0 +1,46 @@
+name: Ops - Reset Vet Queue To Raw
+
+on:
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "Set true to APPLY changes (false = dry-run only)"
+        required: true
+        default: "false"
+      limit:
+        description: "Optional limit (0 = all POOL jobs)"
+        required: false
+        default: "0"
+      create_missing_raw:
+        description: "Create Raw rows when no source match exists"
+        required: true
+        default: "true"
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Reset vet queue on production server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            git fetch origin
+            git pull --ff-only origin main
+            LIMIT="${{ github.event.inputs.limit }}"
+            ARGS="--limit ${LIMIT}"
+            if [ "${{ github.event.inputs.create_missing_raw }}" = "false" ]; then
+              ARGS="${ARGS} --no-create-missing-raw"
+            fi
+            if [ "${{ github.event.inputs.execute }}" = "true" ]; then
+              echo "Executing Vet Queue reset..."
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py reset_vet_queue_to_raw --execute ${ARGS}
+            else
+              echo "Dry-run Vet Queue reset..."
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py reset_vet_queue_to_raw ${ARGS}
+            fi

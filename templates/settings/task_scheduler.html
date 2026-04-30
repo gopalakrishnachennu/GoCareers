@@ -17,9 +17,14 @@
         Changes take effect within <strong class="text-gray-700">~5 seconds</strong> without restarting anything.
       </p>
     </div>
-    <a href="{% url 'admin-dashboard' %}" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
-      ← Admin Dashboard
-    </a>
+    <div class="flex items-center gap-3">
+      <a href="{% url 'ops-center' %}" class="text-sm bg-slate-800 hover:bg-slate-900 text-white font-semibold px-3 py-2 rounded-lg transition">
+        Open Ops Center
+      </a>
+      <a href="{% url 'admin-dashboard' %}" class="text-sm text-blue-600 hover:text-blue-800 font-medium flex items-center gap-1">
+        ← Admin Dashboard
+      </a>
+    </div>
   </div>
 
   {% if messages %}

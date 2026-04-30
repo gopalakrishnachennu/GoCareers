@@ -1,4 +1,5 @@
 from django.urls import path
+from django.views.generic import RedirectView
 from .views import (
     home,
     GlobalSearchView,
@@ -32,6 +33,8 @@ from .views import (
     TaskEditScheduleView,
     TaskRunNowView,
     TaskProgressAPIView,
+    SystemOpsCenterView,
+    SystemOpsCenterApiView,
 )
 
 urlpatterns = [
@@ -65,9 +68,11 @@ urlpatterns = [
     path('feature-control/', FeatureControlCenterView.as_view(), name='feature-control-center'),
     path('api/my-features/', MyFeaturesJsonView.as_view(), name='api-my-features'),
     path('api/task-progress/<str:task_id>/', TaskProgressAPIView.as_view(), name='api-task-progress'),
+    path('ops-center/', SystemOpsCenterView.as_view(), name='ops-center'),
+    path('ops-center/api/', SystemOpsCenterApiView.as_view(), name='ops-center-api'),
 
     # Task Scheduler
-    path('task-scheduler/', TaskSchedulerView.as_view(), name='task-scheduler'),
+    path('task-scheduler/', RedirectView.as_view(pattern_name='ops-center', permanent=False), name='task-scheduler'),
     path('task-scheduler/<int:pk>/toggle/', TaskToggleView.as_view(), name='task-toggle'),
     path('task-scheduler/<int:pk>/edit/', TaskEditScheduleView.as_view(), name='task-edit-schedule'),
     path('task-scheduler/<int:pk>/run/', TaskRunNowView.as_view(), name='task-run-now'),

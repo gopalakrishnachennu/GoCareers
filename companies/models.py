@@ -35,6 +35,22 @@ class Company(models.Model):
     )
 
     industry = models.CharField(max_length=255, blank=True)
+    funding_stage = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="e.g. Bootstrapped, Seed, Series A, Public.",
+    )
+    funding_amount = models.CharField(
+        max_length=128,
+        blank=True,
+        help_text="Free-text funding signal (e.g. '$120M total raised').",
+    )
+    funding_total_usd = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text="Normalized funding total in USD when available.",
+    )
+    founding_year = models.PositiveSmallIntegerField(null=True, blank=True)
     size_band = models.CharField(
         max_length=50,
         blank=True,
@@ -44,6 +60,11 @@ class Company(models.Model):
         max_length=50,
         blank=True,
         help_text="e.g. 1-10, 11-50, 51-200, 201-1000, 1000+",
+    )
+    employee_count_band = models.CharField(
+        max_length=64,
+        blank=True,
+        help_text="Normalized employee count band used by resume filtering.",
     )
     hq_location = models.CharField(max_length=255, blank=True)
     locations = models.TextField(blank=True, help_text="Other office locations (free text).")

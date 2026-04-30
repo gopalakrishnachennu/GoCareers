@@ -4,6 +4,7 @@ from datetime import timedelta
 
 from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
+from django.core.cache import cache
 from django.db import connection, models, transaction
 from django.db.models import F, IntegerField, Q, Value
 from django.db.models.functions import Coalesce, Length, Mod, Trim
@@ -28,6 +29,42 @@ logger = logging.getLogger(__name__)
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
 BACKFILL_LOCK_STALE_MINUTES = 45
 BACKFILL_MAX_PARALLEL = 8
+
+
+def _invalidate_rawjobs_dashboard_cache() -> None:
+    """Ensure Raw Jobs KPI cards refresh quickly after writes."""
+    try:
+        cache.delete("rawjobs_dashboard_stats")
+        cache.delete("rawjobs_expired_missing_jd")
+    except Exception:
+        pass
+
+
+def _company_snapshot_fields(company) -> dict:
+    """Denormalized company fields copied onto RawJob for fast filtering."""
+    if not company:
+        return {
+            "company_industry": "",
+            "company_stage": "",
+            "company_funding": "",
+            "company_size": "",
+            "company_employee_count_band": "",
+            "company_founding_year": None,
+        }
+    return {
+        "company_industry": (getattr(company, "industry", "") or "")[:255],
+        "company_stage": (getattr(company, "funding_stage", "") or "")[:64],
+        "company_funding": (getattr(company, "funding_amount", "") or "")[:128],
+        "company_size": (
+            (getattr(company, "size_band", "") or "")
+            or (getattr(company, "headcount_range", "") or "")
+        )[:64],
+        "company_employee_count_band": (
+            (getattr(company, "employee_count_band", "") or "")
+            or (getattr(company, "headcount_range", "") or "")
+        )[:64],
+        "company_founding_year": getattr(company, "founding_year", None),
+    }
 def _backfill_inter_job_delay_sec() -> float:
     """Pause between JD fetches in a chunk; Jarvis per-host/global limits handle burst control."""
     from django.conf import settings
@@ -324,6 +361,7 @@ def harvest_jobs_task(
     from .harvesters import get_harvester
     from .normalizer import normalize_job_data
     from .rate_limiter import throttle as _throttle
+    from .enrichments import clean_job_content, clean_job_text, extract_enrichments
 
     tb = triggered_by if triggered_by in ("SCHEDULED", "MANUAL") else "SCHEDULED"
 
@@ -378,6 +416,27 @@ def harvest_jobs_task(
                         url_hash = normalized.get("url_hash", "")
                         if not original_url or not url_hash:
                             continue
+                        desc_meta = clean_job_content(normalized.get("description_text", ""), max_len=50000)
+                        description = desc_meta["clean_text"]
+                        requirements = clean_job_text(normalized.get("requirements_text", ""), max_len=20000)
+                        benefits = clean_job_text(normalized.get("benefits_text", ""), max_len=10000)
+                        enriched = extract_enrichments({
+                            "title": normalized.get("title", ""),
+                            "description": description,
+                            "description_clean": (enriched.get("description_clean") or description)[:50000],
+                            "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                            "has_html_content": bool(desc_meta.get("has_html_content")),
+                            "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                            "requirements": requirements,
+                            "benefits": benefits,
+                            "department": normalized.get("department", ""),
+                            "location_raw": normalized.get("location", ""),
+                            "employment_type": normalized.get("job_type", "UNKNOWN"),
+                            "experience_level": "UNKNOWN",
+                            "salary_raw": normalized.get("salary_raw", ""),
+                            "company_name": normalized.get("company_name", company.name),
+                            "posted_date": normalized.get("posted_date"),
+                        })
 
                         # Map HarvestedJob-shaped dict → RawJob fields
                         rj_defaults = {
@@ -396,13 +455,15 @@ def harvest_jobs_task(
                             "salary_max": normalized.get("salary_max"),
                             "salary_currency": normalized.get("salary_currency", "USD")[:8],
                             "salary_raw": normalized.get("salary_raw", "")[:256],
-                            "description": normalized.get("description_text", "")[:50000],
-                            "requirements": normalized.get("requirements_text", ""),
-                            "benefits": normalized.get("benefits_text", ""),
+                            "description": description,
+                            "requirements": requirements,
+                            "benefits": benefits,
                             "posted_date": normalized.get("posted_date"),
                             "raw_payload": normalized.get("raw_payload", {}),
                             "sync_status": "PENDING",
                             "is_active": True,
+                            **_company_snapshot_fields(company),
+                            **enriched,
                         }
                         _, created = RawJob.objects.update_or_create(
                             url_hash=url_hash,
@@ -568,6 +629,7 @@ def fetch_raw_jobs_for_company_task(
 
     from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig, RawJob
     from .harvesters import get_harvester
+    from .normalizer import compute_url_hash
 
     # ── Read live config from DB — overrides decorator-level fallbacks ────────
     try:
@@ -601,6 +663,13 @@ def fetch_raw_jobs_for_company_task(
         started_at=timezone.now(),
         triggered_by=triggered_by,
     )
+    try:
+        self.update_state(
+            state="PROGRESS",
+            meta={"percent": 5, "message": "Starting company fetch…"},
+        )
+    except Exception:
+        pass
 
     # ── Guard: no tenant or no platform ──────────────────────────────────────
     if not label.platform or not label.tenant_id:
@@ -651,6 +720,13 @@ def fetch_raw_jobs_for_company_task(
     # Phase 3: honor PlatformConfig.inter_request_delay_ms before each fetch.
     from .rate_limiter import throttle as _throttle
     _throttle(label.platform.slug)
+    try:
+        self.update_state(
+            state="PROGRESS",
+            meta={"percent": 12, "message": "Connecting to company board…"},
+        )
+    except Exception:
+        pass
 
     try:
         if is_scraper_platform:
@@ -677,6 +753,19 @@ def fetch_raw_jobs_for_company_task(
             )
         # Capture API-reported total (even when we only fetched a subset)
         run.jobs_total_available = getattr(harvester, "last_total_available", 0) or len(raw_jobs)
+        run.jobs_found = len(raw_jobs)
+        run.save(update_fields=["jobs_total_available", "jobs_found"])
+        try:
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "percent": 30 if raw_jobs else 95,
+                    "message": f"Discovered {len(raw_jobs)} jobs. Processing…",
+                    "jobs_found": len(raw_jobs),
+                },
+            )
+        except Exception:
+            pass
     except requests.exceptions.Timeout as exc:
         run.status = CompanyFetchRun.Status.FAILED
         run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
@@ -734,14 +823,20 @@ def fetch_raw_jobs_for_company_task(
     if max_jobs and len(raw_jobs) > max_jobs:
         raw_jobs = raw_jobs[:max_jobs]
 
-    for job_dict in raw_jobs:
+    total_jobs = len(raw_jobs)
+    from .enrichments import clean_job_content, clean_job_text, extract_enrichments
+    for idx, job_dict in enumerate(raw_jobs, start=1):
         try:
             original_url = (job_dict.get("original_url") or "").strip()
             if not original_url:
                 jobs_failed += 1
                 continue
 
-            url_hash = hashlib.sha256(original_url.encode()).hexdigest()
+            url_hash = compute_url_hash(original_url)
+            if not url_hash:
+                jobs_failed += 1
+                continue
+            external_id = (job_dict.get("external_id") or "").strip()[:512]
 
             # Parse posted_date
             posted_date = None
@@ -764,11 +859,31 @@ def fetch_raw_jobs_for_company_task(
                 except Exception:
                     pass
 
+            desc_meta = clean_job_content(job_dict.get("description") or "", max_len=50000)
+            description = desc_meta["clean_text"]
+            requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
+            benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
+            enriched = extract_enrichments({
+                "title": job_dict.get("title") or "",
+                "description": description,
+                "requirements": requirements,
+                "benefits": benefits,
+                "department": job_dict.get("department") or "",
+                "location_raw": job_dict.get("location_raw") or "",
+                "employment_type": job_dict.get("employment_type") or "",
+                "experience_level": job_dict.get("experience_level") or "",
+                "salary_raw": job_dict.get("salary_raw") or "",
+                "company_name": job_dict.get("company_name") or label.company.name,
+                "country": job_dict.get("country") or "",
+                "state": job_dict.get("state") or "",
+                "posted_date": posted_date,
+            })
+
             defaults = {
                 "company": label.company,
                 "platform_label": label,
                 "job_platform": label.platform,
-                "external_id": (job_dict.get("external_id") or "")[:512],
+                "external_id": external_id,
                 "original_url": original_url[:1024],
                 "apply_url": (job_dict.get("apply_url") or "")[:1024],
                 "title": (job_dict.get("title") or "")[:512],
@@ -788,15 +903,127 @@ def fetch_raw_jobs_for_company_task(
                 "salary_currency": (job_dict.get("salary_currency") or "USD")[:8],
                 "salary_period": (job_dict.get("salary_period") or "")[:16],
                 "salary_raw": (job_dict.get("salary_raw") or "")[:256],
-                "description": job_dict.get("description") or "",
-                "requirements": job_dict.get("requirements") or "",
-                "benefits": job_dict.get("benefits") or "",
+                "description": description,
+                "description_clean": (enriched.get("description_clean") or description)[:50000],
+                "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                "has_html_content": bool(desc_meta.get("has_html_content")),
+                "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                "requirements": requirements,
+                "benefits": benefits,
                 "posted_date": posted_date,
                 "closing_date": closing_date,
                 "platform_slug": (label.platform.slug if label.platform else "")[:64],
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
+                **_company_snapshot_fields(label.company),
+                **enriched,
             }
+
+            # ── Dedup guard (ATS external_id): same label+external_id = same job ──
+            # Some platforms append tracker params or alternate paths to the same job.
+            # We treat external_id as stable identity when present and update in place.
+            existing_by_external = None
+            if external_id:
+                ext_q = RawJob.objects.filter(
+                    company=label.company,
+                    external_id=external_id,
+                )
+                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
+                if platform_slug_match:
+                    ext_q = ext_q.filter(
+                        Q(platform_label=label)
+                        | Q(job_platform=label.platform)
+                        | Q(platform_slug=platform_slug_match)
+                        | Q(job_platform__isnull=True)
+                    )
+                existing_by_external = (
+                    ext_q
+                    .order_by("pk")
+                    .first()
+                )
+            if existing_by_external:
+                if existing_by_external.sync_status == "SYNCED":
+                    jobs_duplicate += 1
+                    continue
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=existing_by_external.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if hash_owned_elsewhere:
+                    jobs_duplicate += 1
+                    continue
+                for field, val in defaults.items():
+                    setattr(existing_by_external, field, val)
+                existing_by_external.url_hash = url_hash
+                existing_by_external.save()
+                jobs_updated += 1
+                continue
+
+            # ── Query-variant reconciliation: same path, tracker query changed ──
+            base_url = original_url.split("?", 1)[0].strip()
+            if base_url:
+                variant_q = RawJob.objects.filter(
+                    company=label.company,
+                    original_url__startswith=base_url,
+                )
+                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
+                if platform_slug_match:
+                    variant_q = variant_q.filter(
+                        Q(platform_label=label)
+                        | Q(job_platform=label.platform)
+                        | Q(platform_slug=platform_slug_match)
+                        | Q(job_platform__isnull=True)
+                    )
+                variant_row = (
+                    variant_q
+                    .order_by("pk")
+                    .first()
+                )
+                if variant_row and variant_row.url_hash != url_hash:
+                    if variant_row.sync_status == "SYNCED":
+                        jobs_duplicate += 1
+                        continue
+                    hash_owned_elsewhere = (
+                        RawJob.objects.filter(url_hash=url_hash)
+                        .exclude(pk=variant_row.pk)
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if hash_owned_elsewhere:
+                        jobs_duplicate += 1
+                        continue
+                    for field, val in defaults.items():
+                        setattr(variant_row, field, val)
+                    variant_row.url_hash = url_hash
+                    variant_row.save()
+                    jobs_updated += 1
+                    continue
+
+            # ── Legacy hash reconciliation: migrate old non-canonical hash in place ──
+            legacy_hash = hashlib.sha256(original_url.encode("utf-8")).hexdigest()
+            if legacy_hash and legacy_hash != url_hash:
+                legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
+                if legacy_row:
+                    if legacy_row.sync_status == "SYNCED":
+                        jobs_duplicate += 1
+                        continue
+                    hash_owned_elsewhere = (
+                        RawJob.objects.filter(url_hash=url_hash)
+                        .exclude(pk=legacy_row.pk)
+                        .values_list("pk", flat=True)
+                        .first()
+                    )
+                    if hash_owned_elsewhere:
+                        jobs_duplicate += 1
+                        continue
+                    for field, val in defaults.items():
+                        setattr(legacy_row, field, val)
+                    legacy_row.url_hash = url_hash
+                    legacy_row.save()
+                    jobs_updated += 1
+                    continue
 
             # ── Dedup guard: never overwrite a SYNCED job ────────────────────
             # If this URL is already in the pool (sync_status=SYNCED), there is
@@ -824,6 +1051,29 @@ def fetch_raw_jobs_for_company_task(
             logger.error("RawJob upsert failed for label %s: %s", label_pk, err_str)
             if len(upsert_errors) < 5:
                 upsert_errors.append(err_str[:300])
+
+        if idx == 1 or idx % 5 == 0 or idx == total_jobs:
+            run.jobs_new = jobs_new
+            run.jobs_updated = jobs_updated
+            run.jobs_duplicate = jobs_duplicate
+            run.jobs_failed = jobs_failed
+            run.save(update_fields=["jobs_new", "jobs_updated", "jobs_duplicate", "jobs_failed"])
+            try:
+                pct = 35 + int((idx / max(total_jobs, 1)) * 60)
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "percent": min(95, max(35, pct)),
+                        "message": f"Processing jobs… {idx}/{total_jobs}",
+                        "jobs_found": total_jobs,
+                        "jobs_new": jobs_new,
+                        "jobs_updated": jobs_updated,
+                        "jobs_duplicate": jobs_duplicate,
+                        "jobs_failed": jobs_failed,
+                    },
+                )
+            except Exception:
+                pass
 
     # ── Update run record ─────────────────────────────────────────────────────
     run.status = (
@@ -912,11 +1162,20 @@ def fetch_raw_jobs_for_company_task(
             if _pipe_cfg.auto_enrich and new_jobs:
                 ENRICH_FIELDS = [
                     "skills", "tech_stack", "job_category",
+                    "normalized_title", "title_keywords",
                     "years_required", "years_required_max", "education_required",
-                    "visa_sponsorship", "work_authorization", "clearance_required",
+                    "visa_sponsorship", "work_authorization", "clearance_required", "clearance_level",
                     "salary_equity", "signing_bonus", "relocation_assistance",
-                    "travel_required", "certifications", "benefits_list",
-                    "languages_required", "word_count", "quality_score",
+                    "travel_required", "travel_pct_min", "travel_pct_max",
+                    "schedule_type", "shift_schedule", "shift_details", "hours_hint", "weekend_required",
+                    "certifications", "licenses_required", "benefits_list",
+                    "languages_required", "encouraged_to_apply",
+                    "job_keywords", "department_normalized",
+                    "word_count", "quality_score", "jd_quality_score",
+                    "classification_confidence", "classification_provenance",
+                    "field_confidence", "field_provenance",
+                    "resume_ready_score", "description_clean", "description_raw_html",
+                    "has_html_content", "cleaning_version",
                 ]
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:
@@ -976,20 +1235,37 @@ def fetch_raw_jobs_for_company_task(
         try:
             from .models import HarvestEngineConfig as _EngCfg3
             _sync_cfg = _EngCfg3.get()
+            # First run link-health validation to flip soft-404 rows inactive
+            # before promotion into Vet Queue.
+            validate_raw_job_urls_task.apply_async(
+                kwargs={
+                    "batch_size": 250,
+                    "concurrency": 24,
+                    "max_jobs": 6000,
+                    "pending_only": True,
+                    "recent_hours": 96,
+                },
+                countdown=15,
+            )
+            logger.info("Auto URL validation queued before sync (batch #%s)", batch.pk)
             if _sync_cfg.auto_sync_to_pool:
                 sync_harvested_to_pool_task.apply_async(
                     kwargs={"max_jobs": 5000},
-                    countdown=60,  # 60 s after last task — inline enrich is already done
+                    countdown=90,  # wait for URL validation pass first
                 )
-                logger.info("Auto-sync queued 60 s after batch #%s completion", batch.pk)
+                logger.info("Auto-sync queued 90 s after batch #%s completion", batch.pk)
         except Exception as exc:
             logger.warning("Auto-sync queue failed: %s", exc)
 
+    _invalidate_rawjobs_dashboard_cache()
+
     return {
         "label_pk": label_pk,
+        "run_id": run.pk,
         "jobs_found": len(raw_jobs),
         "jobs_new": jobs_new,
         "jobs_updated": jobs_updated,
+        "jobs_duplicate": jobs_duplicate,
         "jobs_failed": jobs_failed,
     }
 
@@ -1203,9 +1479,12 @@ def validate_raw_job_urls_task(
     batch_size: int = 200,
     concurrency: int = 20,
     max_jobs: int | None = None,
+    pending_only: bool = False,
+    recent_hours: int | None = None,
 ):
     """
-    HEAD-check raw job URLs and mark is_active=False for ones that return 4xx/5xx.
+    Validate raw job URLs with multi-signal liveness detection and mark inactive
+    only on *definitive* closed signals.
 
     Runs after every FETCH ALL batch (or on a schedule) to surface broken links
     before a human ever sees them. Results are visible in the Jobs Browser
@@ -1219,42 +1498,37 @@ def validate_raw_job_urls_task(
     concurrency   — parallel HTTP threads
     max_jobs      — cap total checked (for quick spot-checks)
     """
-    import requests
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from .models import RawJob
+    from .url_health import check_job_posting_live, is_definitive_inactive
 
     qs = RawJob.objects.filter(is_active=True).exclude(original_url="")
     if platform_slug:
         qs = qs.filter(platform_slug=platform_slug)
+    if pending_only:
+        qs = qs.filter(sync_status=RawJob.SyncStatus.PENDING)
+    if recent_hours and recent_hours > 0:
+        qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=int(recent_hours)))
     if max_jobs:
         qs = qs[:max_jobs]
 
     total = qs.count()
     update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (compatible; GoCareers-UrlValidator/1.0; +https://chennu.co)"
-        )
-    }
+    checked = alive = dead = inconclusive = errors = 0
+    reason_counts: dict[str, int] = {}
 
-    checked = alive = dead = errors = 0
-
-    def check_url(job_id: int, url: str) -> tuple[int, bool]:
-        """Returns (job_id, is_alive)."""
+    def check_url(job_id: int, url: str, slug: str) -> tuple[int, object]:
+        """Returns (job_id, LinkHealthResult)."""
         try:
-            r = requests.head(url, timeout=10, allow_redirects=True, headers=headers)
-            if r.status_code == 405:
-                # HEAD blocked — try GET streaming (just headers)
-                r = requests.get(url, timeout=12, stream=True, allow_redirects=True, headers=headers)
-                r.close()
-            return job_id, r.status_code < 400
+            result = check_job_posting_live(url, platform_slug=slug or "")
+            return job_id, result
         except Exception:
-            return job_id, False  # treat network errors as dead
+            return job_id, check_job_posting_live("", platform_slug=slug or "")  # missing_url (non-fatal)
 
     offset = 0
     while True:
-        chunk = list(qs.values("id", "original_url")[offset: offset + batch_size])
+        chunk = list(qs.values("id", "original_url", "platform_slug")[offset: offset + batch_size])
         if not chunk:
             break
         if max_jobs and offset >= max_jobs:
@@ -1262,34 +1536,58 @@ def validate_raw_job_urls_task(
 
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             futures = {
-                pool.submit(check_url, row["id"], row["original_url"]): row["id"]
+                pool.submit(check_url, row["id"], row["original_url"], row.get("platform_slug") or platform_slug or ""): row["id"]
                 for row in chunk
             }
             dead_ids = []
+            inactive_reasons: dict[int, str] = {}
             for future in as_completed(futures):
-                job_id, is_alive = future.result()
+                job_id, result = future.result()
                 checked += 1
-                if is_alive:
+                reason = (getattr(result, "reason", "") or "unknown").strip()[:120]
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                if bool(result.is_live):
                     alive += 1
                 else:
-                    dead += 1
-                    dead_ids.append(job_id)
+                    if is_definitive_inactive(result):
+                        dead += 1
+                        dead_ids.append(job_id)
+                        inactive_reasons[job_id] = reason
+                    else:
+                        inconclusive += 1
 
-            # Mark dead jobs inactive in one batch update
+            # Mark definitively closed jobs inactive in one batch update.
             if dead_ids:
                 RawJob.objects.filter(pk__in=dead_ids).update(is_active=False)
+                # Store reason metadata for auditability on detail page.
+                for raw in RawJob.objects.filter(pk__in=dead_ids).only("id", "raw_payload"):
+                    payload = dict(raw.raw_payload or {})
+                    payload["link_health"] = {
+                        "is_live": False,
+                        "reason": inactive_reasons.get(raw.id, "inactive"),
+                        "checked_at": timezone.now().isoformat(),
+                        "decisive": True,
+                    }
+                    raw.raw_payload = payload
+                    raw.save(update_fields=["raw_payload", "updated_at"])
 
         offset += batch_size
         update_task_progress(
             self, current=checked, total=total,
-            message=f"Checked {checked:,}/{total:,} — {alive:,} alive, {dead:,} dead",
+            message=f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive",
         )
 
     logger.info(
-        "validate_raw_job_urls: checked=%d alive=%d dead=%d errors=%d",
-        checked, alive, dead, errors,
+        "validate_raw_job_urls: checked=%d live=%d inactive=%d inconclusive=%d errors=%d reasons=%s",
+        checked, alive, dead, inconclusive, errors, reason_counts,
     )
-    return {"checked": checked, "alive": alive, "dead": dead}
+    return {
+        "checked": checked,
+        "live": alive,
+        "inactive": dead,
+        "inconclusive": inconclusive,
+        "reason_counts": reason_counts,
+    }
 
 
 @shared_task(name="harvest.cleanup_harvested_jobs")
@@ -1316,12 +1614,25 @@ def cleanup_harvested_jobs_task():
 
 
 @shared_task(bind=True, name="harvest.sync_harvested_to_pool")
-def sync_harvested_to_pool_task(self, max_jobs: int = 100):
-    """Promote pending RawJobs to the Job pool (Phase 5 — reads RawJob, not HarvestedJob)."""
+def sync_harvested_to_pool_task(
+    self,
+    max_jobs: int = 100,
+    qualified_only: bool = False,
+    chunk_size: int = 500,
+):
+    """
+    Promote RawJobs to the Job pool.
+
+    When ``qualified_only=True`` this task scans the full pending backlog and only
+    picks rows that already look vet-eligible, so a manual "Sync Qualified" run
+    moves meaningful jobs quickly across all pages instead of sampling just the
+    newest pending rows.
+    """
     from .models import RawJob
     from jobs.models import Job
     from jobs.dedup import find_existing_job_by_url
     from jobs.quality import compute_quality_score
+    from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
     from django.contrib.auth import get_user_model
     from django.utils import timezone as _tz
 
@@ -1331,66 +1642,247 @@ def sync_harvested_to_pool_task(self, max_jobs: int = 100):
         logger.error("No superuser found for sync task.")
         return {"synced": 0}
 
-    # Quality gate: only sync RawJobs that have a real description (>50 chars).
-    # This filters out stale/empty rows from the 100K backlog and keeps the pool clean.
-    pending = list(
+    max_jobs = int(max_jobs or 0)
+    if max_jobs < 0:
+        max_jobs = 0
+    chunk_size = max(50, min(int(chunk_size or 500), 2000))
+
+    base_qs = (
         RawJob.objects.filter(sync_status="PENDING", is_active=True, company__isnull=False)
         .exclude(original_url="")
-        .exclude(description="")
-        .filter(description__length__gt=50)
-        .order_by("-fetched_at")
-        .select_related("company", "job_platform")[:max_jobs]
     )
 
-    synced = skipped = failed = 0
-    total_n = len(pending)
-    if total_n:
-        update_task_progress(self, current=0, total=total_n, message="Sync RawJobs to pool…")
+    if qualified_only:
+        from .models import HarvestEngineConfig
 
-    for idx, rj in enumerate(pending, start=1):
-        existing = (
-            (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
-            or find_existing_job_by_url(rj.original_url)
-            or Job.objects.filter(original_link=rj.original_url).first()
+        cfg = HarvestEngineConfig.get()
+        min_words = max(1, int(getattr(cfg, "resume_jd_min_words", 80)))
+        min_chars = max(1, int(getattr(cfg, "resume_jd_min_chars", 400)))
+        min_conf = max(
+            0.0,
+            min(1.0, float(getattr(cfg, "resume_jd_min_classification_confidence", 0.35))),
         )
-        if existing:
-            RawJob.objects.filter(pk=rj.pk).update(sync_status="SKIPPED")
-            skipped += 1
-            continue
+        # Qualified-first prefilter: JD present + usable length + minimum classifier confidence.
+        # This is intentionally strict for the manual "Sync Qualified to Vet Queue" action.
+        base_qs = base_qs.filter(
+            has_description=True,
+            word_count__gte=min_words,
+            classification_confidence__gte=min_conf,
+        ).annotate(
+            _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
+        ).filter(_jd_len__gte=min_chars)
 
-        try:
-            platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
-            with transaction.atomic():
-                job = Job.objects.create(
-                    title=rj.title,
-                    company=rj.company_name or (rj.company.name if rj.company else ""),
-                    company_obj=rj.company,
-                    location=rj.location_raw or "",
-                    description=rj.description or rj.title,
-                    original_link=rj.original_url,
-                    salary_range=rj.salary_raw or "",
-                    job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
-                    status="POOL",
-                    stage=Job.Stage.VETTED,
-                    stage_changed_at=_tz.now(),
-                    url_hash=rj.url_hash or "",
-                    job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
-                    posted_by=system_user,
+    total_candidates = base_qs.count()
+    total_target = min(total_candidates, max_jobs) if max_jobs else total_candidates
+    synced = skipped = failed = processed = 0
+    if total_target:
+        update_task_progress(
+            self,
+            current=0,
+            total=total_target,
+            message=(
+                "Sync qualified RawJobs to Vet Queue…"
+                if qualified_only else
+                "Sync RawJobs to Vet Queue…"
+            ),
+        )
+
+    last_pk = None
+    while processed < total_target:
+        take = min(chunk_size, total_target - processed)
+        page_qs = base_qs
+        if last_pk is not None:
+            page_qs = page_qs.filter(pk__lt=last_pk)
+        batch = list(
+            page_qs.order_by("-pk")
+            .select_related("company", "job_platform", "platform_label", "platform_label__platform")[:take]
+        )
+        if not batch:
+            break
+        last_pk = batch[-1].pk
+        for rj in batch:
+            processed += 1
+            gate = evaluate_raw_job_gate(rj)
+
+            existing = (
+                (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
+                or find_existing_job_by_url(rj.original_url)
+                or Job.objects.filter(original_link=rj.original_url).first()
+            )
+            if existing:
+                payload = dict(rj.raw_payload or {})
+                payload["vet_gate"] = {
+                    "status": "duplicate",
+                    "reason_code": "DUPLICATE_EXISTING",
+                    "existing_job_id": existing.pk,
+                    "checked_at": _tz.now().isoformat(),
+                }
+                rj.sync_status = "SKIPPED"
+                rj.raw_payload = payload
+                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                skipped += 1
+                if total_target:
+                    update_task_progress(
+                        self,
+                        current=processed,
+                        total=total_target,
+                        message=(
+                            f"Qualified sync {processed:,}/{total_target:,}"
+                            if qualified_only
+                            else f"Sync {processed:,}/{total_target:,}"
+                        ),
+                    )
+                continue
+
+            if not gate.passed:
+                if qualified_only:
+                    # For qualified-only runs, keep non-passing rows pending so they can
+                    # be re-enriched/revalidated later instead of being force-failed here.
+                    skipped += 1
+                    if total_target:
+                        update_task_progress(
+                            self,
+                            current=processed,
+                            total=total_target,
+                            message=f"Qualified sync {processed:,}/{total_target:,}",
+                        )
+                    continue
+                payload = dict(rj.raw_payload or {})
+                payload["vet_gate"] = {
+                    "status": "blocked",
+                    "reason_code": gate.reason_code,
+                    "reasons": gate.reasons,
+                    "checks": gate.checks,
+                    "scores": {
+                        "data_quality": gate.data_quality_score,
+                        "trust": gate.trust_score,
+                        "candidate_fit": gate.candidate_fit_score,
+                        "vet_priority": gate.vet_priority_score,
+                    },
+                    "checked_at": _tz.now().isoformat(),
+                }
+                rj.sync_status = "FAILED"
+                rj.raw_payload = payload
+                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                failed += 1
+                if total_target:
+                    update_task_progress(
+                        self,
+                        current=processed,
+                        total=total_target,
+                        message=f"Sync {processed:,}/{total_target:,}",
+                    )
+                continue
+
+            try:
+                platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
+                with transaction.atomic():
+                    job = Job.objects.create(
+                        title=rj.title,
+                        company=rj.company_name or (rj.company.name if rj.company else ""),
+                        company_obj=rj.company,
+                        location=rj.location_raw or "",
+                        description=rj.description or rj.title,
+                        original_link=rj.original_url,
+                        salary_range=rj.salary_raw or "",
+                        job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
+                        status="POOL",
+                        stage=Job.Stage.VETTED,
+                        stage_changed_at=_tz.now(),
+                        url_hash=rj.url_hash or "",
+                        job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
+                        posted_by=system_user,
+                        source_raw_job=rj,
+                        queue_entered_at=_tz.now(),
+                    )
+                    apply_gate_result_to_job(job, gate)
+                    job.quality_score = compute_quality_score(job)
+                    job.validation_score = int(round(gate.vet_priority_score * 100))
+                    job.validation_result = {
+                        "score": job.validation_score,
+                        "lane": gate.lane,
+                        "gate_status": gate.status,
+                        "reason_code": gate.reason_code,
+                        "reasons": gate.reasons,
+                        "checks": gate.checks,
+                        "multi_score": {
+                            "data_quality": gate.data_quality_score,
+                            "trust": gate.trust_score,
+                            "candidate_fit": gate.candidate_fit_score,
+                            "vet_priority": gate.vet_priority_score,
+                        },
+                    }
+                    job.validation_run_at = _tz.now()
+                    job.gate_checked_at = _tz.now()
+                    job.save(
+                        update_fields=[
+                            "hard_gate_passed", "gate_status", "vet_lane",
+                            "pipeline_reason_code", "pipeline_reason_detail",
+                            "hard_gate_failures", "hard_gate_checks",
+                            "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
+                            "quality_score", "validation_score", "validation_result", "validation_run_at",
+                            "gate_checked_at",
+                        ]
+                    )
+                    payload = dict(rj.raw_payload or {})
+                    payload["vet_gate"] = {
+                        "status": "eligible",
+                        "lane": gate.lane,
+                        "reason_code": gate.reason_code,
+                        "checks": gate.checks,
+                        "scores": {
+                            "data_quality": gate.data_quality_score,
+                            "trust": gate.trust_score,
+                            "candidate_fit": gate.candidate_fit_score,
+                            "vet_priority": gate.vet_priority_score,
+                        },
+                        "job_id": job.pk,
+                        "checked_at": _tz.now().isoformat(),
+                    }
+                    rj.sync_status = "SYNCED"
+                    rj.raw_payload = payload
+                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    synced += 1
+            except Exception as e:
+                payload = dict(rj.raw_payload or {})
+                payload["vet_gate"] = {
+                    "status": "failed",
+                    "reason_code": "POOL_SYNC_ERROR",
+                    "error": str(e)[:240],
+                    "checked_at": _tz.now().isoformat(),
+                }
+                rj.sync_status = "FAILED"
+                rj.raw_payload = payload
+                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
+                failed += 1
+
+            if total_target:
+                update_task_progress(
+                    self,
+                    current=processed,
+                    total=total_target,
+                    message=(
+                        f"Qualified sync {processed:,}/{total_target:,}"
+                        if qualified_only
+                        else f"Sync {processed:,}/{total_target:,}"
+                    ),
                 )
-                job.quality_score = compute_quality_score(job)
-                Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
-                RawJob.objects.filter(pk=rj.pk).update(sync_status="SYNCED")
-                synced += 1
-        except Exception as e:
-            RawJob.objects.filter(pk=rj.pk).update(sync_status="FAILED")
-            logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
-            failed += 1
 
-        if total_n:
-            update_task_progress(self, current=idx, total=total_n, message=f"Sync {idx}/{total_n}")
-
-    logger.info("Sync: %d synced, %d skipped, %d failed.", synced, skipped, failed)
-    return {"synced": synced, "skipped": skipped, "failed": failed}
+    _invalidate_rawjobs_dashboard_cache()
+    logger.info(
+        "Sync complete: qualified_only=%s processed=%d synced=%d skipped=%d failed=%d target=%d candidates=%d",
+        qualified_only, processed, synced, skipped, failed, total_target, total_candidates,
+    )
+    return {
+        "qualified_only": bool(qualified_only),
+        "processed": processed,
+        "candidates": total_candidates,
+        "target": total_target,
+        "synced": synced,
+        "skipped": skipped,
+        "failed": failed,
+    }
 
 
 # ─── Job Jarvis — single-URL ingestion ───────────────────────────────────────
@@ -1406,6 +1898,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     """
     from .jarvis import JobJarvis
     from .models import RawJob, JobBoardPlatform
+    from .normalizer import compute_url_hash
 
     update_task_progress(self, current=0, total=3, message="Fetching job page…")
 
@@ -1421,7 +1914,6 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     update_task_progress(self, current=2, total=3, message="Saving to database…")
 
     # ── Resolve Company (smart matching) ─────────────────────────────────────
-    from companies.models import Company
     company_name = (data.get("company_name") or "").strip()
     if not company_name:
         company_name = _extract_company_from_url(url)
@@ -1436,31 +1928,53 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     detected_ats = data.get("platform_slug") or ""
     job_platform = None
     if detected_ats:
-        try:
-            job_platform = JobBoardPlatform.objects.get(slug=detected_ats)
-        except JobBoardPlatform.DoesNotExist:
-            pass
+        job_platform = JobBoardPlatform.objects.filter(slug=detected_ats).first()
+        if not job_platform and detected_ats == "dayforce":
+            job_platform, _ = JobBoardPlatform.objects.get_or_create(
+                slug="dayforce",
+                defaults={
+                    "name": "Dayforce",
+                    "url_patterns": ["jobs.dayforcehcm.com", "dayforcehcm.com"],
+                    "api_type": JobBoardPlatform.ApiType.UNKNOWN,
+                    "notes": "Auto-created by Jarvis from Dayforce import detection.",
+                },
+            )
 
     # ── Build RawJob ──────────────────────────────────────────────────────────
     import hashlib
     from datetime import timedelta
     original_url = data.get("original_url") or url
-    url_hash = hashlib.sha256(original_url.strip().encode()).hexdigest()
+    url_hash = compute_url_hash(original_url)
+
+    # ── Resolve company label context for fetch-all workflows ───────────────
+    platform_label, board_ctx = _jarvis_ensure_company_platform_label(
+        company=company,
+        detected_ats=detected_ats,
+        source_url=original_url,
+        job_platform=job_platform,
+    )
 
     # Parse posted_date
     posted_date = _jarvis_parse_date(data.get("posted_date_raw", ""))
     closing_date = _jarvis_parse_date(data.get("closing_date_raw", ""))
 
-    # Truncate description to avoid DB limits (TEXT is fine but be safe)
-    description = (data.get("description") or "")[:20000]
-    requirements = (data.get("requirements") or "")[:5000]
-    benefits = (data.get("benefits") or "")[:5000]
+    from .enrichments import clean_job_content, clean_job_text
+
+    # Normalize HTML-heavy scraped content into cleaner plain text.
+    desc_meta = clean_job_content(data.get("description") or "", max_len=50000)
+    description = desc_meta["clean_text"]
+    requirements = clean_job_text(data.get("requirements") or "", max_len=20000)
+    benefits = clean_job_text(data.get("benefits") or "", max_len=10000)
 
     # Enrich raw_payload with Jarvis metadata
     raw_payload = data.get("raw_payload") or {}
     raw_payload["jarvis_detected_ats"] = detected_ats
     raw_payload["jarvis_strategy"] = data.get("strategy", "")
     raw_payload["jarvis_source_url"] = url
+    raw_payload["jarvis_tenant_id"] = board_ctx.get("tenant_id") or ""
+    raw_payload["jarvis_company_jobs_url"] = board_ctx.get("company_jobs_url") or ""
+    raw_payload["jarvis_platform_label_id"] = platform_label.pk if platform_label else None
+    raw_payload["jarvis_fetch_all_supported"] = bool(board_ctx.get("fetch_all_supported"))
 
     # ── Run enrichment extraction ─────────────────────────────────────────
     from .enrichments import extract_enrichments
@@ -1478,45 +1992,134 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "posted_date": posted_date,
     })
 
-    raw_job, created = RawJob.objects.update_or_create(
-        url_hash=url_hash,
-        defaults={
-            "company": company,
-            "job_platform": job_platform,
-            "platform_slug": platform_slug,
-            "external_id": (data.get("external_id") or "")[:512],
-            "original_url": original_url[:1024],
-            "apply_url": (data.get("apply_url") or original_url)[:1024],
-            "title": (data.get("title") or "Untitled")[:512],
-            "company_name": company_name[:256] if company_name else "",
-            "department": (data.get("department") or "")[:256],
-            "team": (data.get("team") or "")[:256],
-            "location_raw": (data.get("location_raw") or "")[:512],
-            "city": (data.get("city") or "")[:128],
-            "state": (data.get("state") or "")[:128],
-            "country": (data.get("country") or "")[:128],
-            "is_remote": bool(data.get("is_remote")),
-            "location_type": data.get("location_type") or "UNKNOWN",
-            "employment_type": data.get("employment_type") or "UNKNOWN",
-            "experience_level": data.get("experience_level") or "UNKNOWN",
-            "salary_min": data.get("salary_min"),
-            "salary_max": data.get("salary_max"),
-            "salary_currency": (data.get("salary_currency") or "USD")[:8],
-            "salary_period": (data.get("salary_period") or "")[:16],
-            "salary_raw": (data.get("salary_raw") or "")[:256],
-            "description": description,
-            "requirements": requirements,
-            "benefits": benefits,
-            "posted_date": posted_date,
-            "closing_date": closing_date,
-            "raw_payload": raw_payload,
-            "sync_status": "PENDING",
-            "is_active": True,
-            "expires_at": timezone.now() + timedelta(days=30),
-            # ── enrichment fields ─────────────────────────────────────────
-            **enriched,
-        },
-    )
+    external_id = (data.get("external_id") or "").strip()[:512]
+    raw_job_defaults = {
+        "company": company,
+        "platform_label": platform_label,
+        "job_platform": job_platform,
+        "platform_slug": platform_slug,
+        "external_id": external_id,
+        "original_url": original_url[:1024],
+        "apply_url": (data.get("apply_url") or original_url)[:1024],
+        "title": (data.get("title") or "Untitled")[:512],
+        "company_name": company_name[:256] if company_name else "",
+        "department": (data.get("department") or "")[:256],
+        "team": (data.get("team") or "")[:256],
+        "location_raw": (data.get("location_raw") or "")[:512],
+        "city": (data.get("city") or "")[:128],
+        "state": (data.get("state") or "")[:128],
+        "country": (data.get("country") or "")[:128],
+        "is_remote": bool(data.get("is_remote")),
+        "location_type": data.get("location_type") or "UNKNOWN",
+        "employment_type": data.get("employment_type") or "UNKNOWN",
+        "experience_level": data.get("experience_level") or "UNKNOWN",
+        "salary_min": data.get("salary_min"),
+        "salary_max": data.get("salary_max"),
+        "salary_currency": (data.get("salary_currency") or "USD")[:8],
+        "salary_period": (data.get("salary_period") or "")[:16],
+        "salary_raw": (data.get("salary_raw") or "")[:256],
+        "description": description,
+        "description_clean": (enriched.get("description_clean") or description)[:50000],
+        "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+        "has_html_content": bool(desc_meta.get("has_html_content")),
+        "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+        "requirements": requirements,
+        "benefits": benefits,
+        "posted_date": posted_date,
+        "closing_date": closing_date,
+        "raw_payload": raw_payload,
+        "sync_status": "PENDING",
+        "is_active": True,
+        "expires_at": timezone.now() + timedelta(days=30),
+        **_company_snapshot_fields(company),
+        # ── enrichment fields ─────────────────────────────────────────
+        **enriched,
+    }
+
+    raw_job = None
+    created = False
+
+    # Secondary dedupe guard by external_id within the resolved company+platform.
+    if external_id:
+        ext_match_qs = RawJob.objects.filter(
+            company=company,
+            external_id=external_id,
+        )
+        if job_platform:
+            ext_match_qs = ext_match_qs.filter(
+                Q(job_platform=job_platform)
+                | Q(platform_slug=job_platform.slug)
+                | Q(job_platform__isnull=True)
+            )
+        ext_match = ext_match_qs.order_by("pk").first()
+        if ext_match:
+            hash_owned_elsewhere = (
+                RawJob.objects.filter(url_hash=url_hash)
+                .exclude(pk=ext_match.pk)
+                .values_list("pk", flat=True)
+                .first()
+            )
+            if not hash_owned_elsewhere:
+                for field, val in raw_job_defaults.items():
+                    setattr(ext_match, field, val)
+                ext_match.url_hash = url_hash
+                ext_match.save()
+                raw_job = ext_match
+
+    # Query-variant reconciliation: same job path with old tracking query hash.
+    if raw_job is None:
+        base_url = original_url.split("?", 1)[0].strip()
+        if base_url:
+            variant_qs = RawJob.objects.filter(
+                company=company,
+                original_url__startswith=base_url,
+            )
+            if job_platform:
+                variant_qs = variant_qs.filter(
+                    Q(job_platform=job_platform)
+                    | Q(platform_slug=job_platform.slug)
+                    | Q(job_platform__isnull=True)
+                )
+            variant_row = variant_qs.order_by("pk").first()
+            if variant_row and variant_row.url_hash != url_hash:
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=variant_row.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if not hash_owned_elsewhere:
+                    for field, val in raw_job_defaults.items():
+                        setattr(variant_row, field, val)
+                    variant_row.url_hash = url_hash
+                    variant_row.save()
+                    raw_job = variant_row
+
+    # Legacy hash reconciliation so old rows are updated instead of duplicated.
+    if raw_job is None:
+        legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest()
+        if legacy_hash and legacy_hash != url_hash:
+            legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
+            if legacy_row:
+                hash_owned_elsewhere = (
+                    RawJob.objects.filter(url_hash=url_hash)
+                    .exclude(pk=legacy_row.pk)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if not hash_owned_elsewhere:
+                    for field, val in raw_job_defaults.items():
+                        setattr(legacy_row, field, val)
+                    legacy_row.url_hash = url_hash
+                    legacy_row.save()
+                    raw_job = legacy_row
+
+    if raw_job is None:
+        raw_job, created = RawJob.objects.update_or_create(
+            url_hash=url_hash,
+            defaults=raw_job_defaults,
+        )
+    _invalidate_rawjobs_dashboard_cache()
 
     update_task_progress(self, current=3, total=3, message="Done ✓")
 
@@ -1535,15 +2138,195 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "company_id": company.pk,
         "platform_slug": platform_slug,
         "strategy": data.get("strategy", ""),
+        "detected_ats": detected_ats,
+        "tenant_id": board_ctx.get("tenant_id") or "",
+        "company_jobs_url": board_ctx.get("company_jobs_url") or "",
+        "platform_label_id": platform_label.pk if platform_label else None,
+        "fetch_all_supported": bool(board_ctx.get("fetch_all_supported")),
         "data": {k: v for k, v in data.items() if k != "raw_payload"},
     }
 
 
+def _jarvis_company_jobs_url(platform_slug: str, tenant_id: str) -> str:
+    """Build a user-facing company jobs URL from platform + tenant."""
+    if not platform_slug or not tenant_id:
+        return ""
+    try:
+        # Dayforce board root is cleaner than /jobs for user navigation.
+        if platform_slug == "dayforce":
+            if "|" in tenant_id:
+                tenant, board = tenant_id.split("|", 1)
+                tenant = (tenant or "").strip()
+                board = (board or "").strip() or "CANDIDATEPORTAL"
+                if tenant:
+                    return f"https://jobs.dayforcehcm.com/en-US/{tenant}/{board}"
+            t = tenant_id.strip()
+            if t:
+                return f"https://jobs.dayforcehcm.com/en-US/{t}/CANDIDATEPORTAL"
+
+        from .career_url import build_career_url
+        return build_career_url(platform_slug, tenant_id)
+    except Exception:
+        return ""
+
+
+def _jarvis_ensure_company_platform_label(*, company, detected_ats: str, source_url: str, job_platform=None):
+    """
+    Ensure CompanyPlatformLabel exists for Jarvis-ingested company.
+
+    Returns ``(label_or_none, board_context_dict)`` where board_context includes:
+      - tenant_id
+      - company_jobs_url
+      - fetch_all_supported
+      - platform_slug
+    """
+    from .detectors import extract_tenant
+    from .harvesters import get_harvester
+    from .models import CompanyPlatformLabel, JobBoardPlatform
+
+    platform_slug = (detected_ats or "").strip().lower()
+    tenant_id = extract_tenant(platform_slug, source_url) if platform_slug and source_url else ""
+    company_jobs_url = _jarvis_company_jobs_url(platform_slug, tenant_id)
+    board_ctx = {
+        "platform_slug": platform_slug,
+        "tenant_id": tenant_id,
+        "company_jobs_url": company_jobs_url,
+        "fetch_all_supported": False,
+    }
+    if not company:
+        return None, board_ctx
+
+    now_ts = timezone.now()
+
+    platform = job_platform if getattr(job_platform, "slug", "") == platform_slug else None
+    if not platform and platform_slug:
+        platform = JobBoardPlatform.objects.filter(slug=platform_slug).first()
+    if not platform and platform_slug == "dayforce":
+        platform, _ = JobBoardPlatform.objects.get_or_create(
+            slug="dayforce",
+            defaults={
+                "name": "Dayforce",
+                "url_patterns": ["jobs.dayforcehcm.com", "dayforcehcm.com"],
+                "api_type": JobBoardPlatform.ApiType.UNKNOWN,
+                "notes": "Auto-created by Jarvis from Dayforce import detection.",
+            },
+        )
+
+    # Prefer an existing label that matches the detected platform/tenant instead
+    # of taking an arbitrary first label for the company.
+    label = None
+    company_labels = CompanyPlatformLabel.objects.filter(company=company)
+    if platform:
+        label = (
+            company_labels
+            .filter(platform=platform)
+            .order_by("-is_verified", "pk")
+            .first()
+        )
+    if not label and tenant_id:
+        label = (
+            company_labels
+            .filter(tenant_id=tenant_id)
+            .order_by("-is_verified", "pk")
+            .first()
+        )
+    if not label:
+        label = company_labels.order_by("-is_verified", "pk").first()
+    if not label and not platform_slug:
+        return None, board_ctx
+    if not label:
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id=tenant_id,
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            detected_at=now_ts if platform else None,
+            last_checked_at=now_ts,
+        )
+
+    changed: list[str] = []
+    is_manual_locked = bool(
+        label.is_verified
+        or label.detection_method == CompanyPlatformLabel.DetectionMethod.MANUAL
+    )
+
+    # Jarvis URL should correct stale auto-detected platform labels unless manually locked.
+    if platform:
+        if not label.platform_id:
+            label.platform = platform
+            changed.append("platform")
+        elif label.platform_id != platform.pk and not is_manual_locked:
+            label.platform = platform
+            changed.append("platform")
+
+    # Prefer extracted tenant when we have one. If platform changed, refresh tenant too.
+    if tenant_id:
+        platform_changed = "platform" in changed
+        if not (label.tenant_id or "").strip() or platform_changed or (label.tenant_id != tenant_id and not is_manual_locked):
+            label.tenant_id = tenant_id
+            changed.append("tenant_id")
+
+    # Keep detection metadata healthy for auto-detected labels.
+    if platform and label.detection_method == CompanyPlatformLabel.DetectionMethod.UNDETECTED:
+        label.detection_method = CompanyPlatformLabel.DetectionMethod.URL_PATTERN
+        changed.append("detection_method")
+    if platform and not label.detected_at:
+        label.detected_at = now_ts
+        changed.append("detected_at")
+    label.last_checked_at = now_ts
+    changed.append("last_checked_at")
+
+    if changed:
+        # Preserve field order while removing duplicates.
+        deduped_fields = list(dict.fromkeys(changed))
+        label.save(update_fields=deduped_fields)
+
+    resolved_platform_slug = (
+        (label.platform.slug if label.platform else "")
+        or platform_slug
+        or ""
+    )
+    resolved_tenant = (label.tenant_id or "").strip() or tenant_id
+    resolved_company_jobs_url = (
+        _jarvis_company_jobs_url(resolved_platform_slug, resolved_tenant)
+        or label.career_page_url
+        or company_jobs_url
+        or ""
+    )
+
+    if resolved_company_jobs_url and not (company.career_site_url or "").strip():
+        company.career_site_url = resolved_company_jobs_url
+        company.save(update_fields=["career_site_url", "updated_at"])
+
+    board_ctx["platform_slug"] = resolved_platform_slug
+    board_ctx["tenant_id"] = resolved_tenant
+    board_ctx["company_jobs_url"] = resolved_company_jobs_url
+    board_ctx["fetch_all_supported"] = bool(
+        resolved_platform_slug
+        and resolved_tenant
+        and get_harvester(resolved_platform_slug) is not None
+    )
+    return label, board_ctx
+
+
 def _extract_company_from_url(url: str) -> str:
     """Best-effort: pull a human-readable company name from the URL hostname."""
+    import re as _re
     from urllib.parse import urlparse
     try:
-        host = urlparse(url).netloc.lower()
+        parsed = urlparse(url)
+        host = parsed.netloc.lower()
+
+        # Dayforce URLs include tenant in path: /en-US/{tenant}/{board}/jobs/{id}
+        # Use tenant as the company fallback instead of the ATS hostname.
+        if "dayforcehcm.com" in host:
+            parts = [p for p in parsed.path.split("/") if p]
+            if len(parts) >= 2 and _re.match(r"^[a-z]{2}-[a-z]{2}$", parts[0], _re.I):
+                tenant = parts[1]
+                if tenant:
+                    return tenant.replace("-", " ").replace("_", " ").title().strip()
+
         # Strip www. / jobs. / careers. prefixes
         for prefix in ("www.", "jobs.", "careers.", "boards."):
             if host.startswith(prefix):
@@ -1552,9 +2335,17 @@ def _extract_company_from_url(url: str) -> str:
         for suffix in (
             ".greenhouse.io", ".lever.co", ".ashbyhq.com",
             ".myworkdayjobs.com", ".workable.com", ".bamboohr.com",
+            ".dayforcehcm.com", ".icims.com", ".smartrecruiters.com",
+            ".taleo.net", ".jobvite.com", ".zohorecruit.com",
         ):
+            suffix_root = suffix.lstrip(".")
+            if host == suffix_root:
+                host = ""
+                break
             if host.endswith(suffix):
                 host = host[: -len(suffix)]
+        if host in {"dayforcehcm.com", "greenhouse.io", "lever.co", "ashbyhq.com"}:
+            return "Unknown"
         # Convert hyphens/dots to spaces, title-case
         company = host.replace("-", " ").replace(".", " ").title()
         return company.strip() or "Unknown"
@@ -1566,6 +2357,23 @@ def _root_url(url: str) -> str:
     from urllib.parse import urlparse
     try:
         p = urlparse(url)
+        host = (p.netloc or "").lower()
+        ats_hosts = (
+            "dayforcehcm.com",
+            "greenhouse.io",
+            "lever.co",
+            "ashbyhq.com",
+            "myworkdayjobs.com",
+            "workable.com",
+            "bamboohr.com",
+            "smartrecruiters.com",
+            "icims.com",
+            "taleo.net",
+            "jobvite.com",
+            "zohorecruit.com",
+        )
+        if any(host == d or host.endswith("." + d) for d in ats_hosts):
+            return ""
         return f"{p.scheme}://{p.netloc}"
     except Exception:
         return ""
@@ -1587,6 +2395,35 @@ def _jarvis_parse_date(raw: str):
     return None
 
 
+def _jarvis_company_name_key(raw: str) -> str:
+    """Normalize name for duplicate checks (ignore punctuation/legal suffix noise)."""
+    import re as _re
+
+    if not raw:
+        return ""
+    text = raw.strip().lower().replace("&", " and ")
+    text = _re.sub(r"[^a-z0-9]+", " ", text)
+    tokens = [t for t in text.split() if t]
+    if not tokens:
+        return ""
+    stop = {
+        "the", "inc", "incorporated", "llc", "ltd", "ltda", "corp", "corporation",
+        "co", "company", "group", "holdings", "plc", "gmbh",
+        "sa", "bv", "srl", "pte", "and", "of", "for", "a", "an", "do", "de", "da",
+    }
+    reduced = [t for t in tokens if t not in stop] or tokens
+    return " ".join(reduced)
+
+
+def _jarvis_clean_company_name(raw: str) -> str:
+    import re as _re
+
+    text = (raw or "").strip()
+    if not text:
+        return ""
+    return _re.sub(r"\s+", " ", text).strip(" -_,.")
+
+
 def _jarvis_resolve_company(company_name: str, job_url: str):
     """
     Smart company lookup for Jarvis imports.
@@ -1599,9 +2436,11 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
                           e.g. "Bayview" ↔ "Bayview Asset Management"
       4. Create new     — only when all matching strategies fail
     """
-    from urllib.parse import urlparse
     from django.db.models import Q
     from companies.models import Company
+    from urllib.parse import urlparse
+
+    company_name = _jarvis_clean_company_name(company_name)
 
     # ── 1. Domain match ──────────────────────────────────────────────────────
     root_domain = ""
@@ -1618,9 +2457,11 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             ".greenhouse.io", ".lever.co", ".ashbyhq.com",
             ".myworkdayjobs.com", ".workable.com", ".bamboohr.com",
             ".icims.com", ".taleo.net", ".jobvite.com", ".smartrecruiters.com",
+            ".dayforcehcm.com",
         )
         for ats in ATS_DOMAINS:
-            if host.endswith(ats):
+            ats_root = ats.lstrip(".")
+            if host == ats_root or host.endswith(ats):
                 host = ""
                 break
         if host:
@@ -1639,7 +2480,40 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             logger.info("Jarvis company match by domain: %s → %s", root_domain, match.name)
             return match
 
-    # ── 2. Word-by-word fuzzy scan ───────────────────────────────────────────
+    # ── 2. Exact match (case-insensitive) + normalized key match ───────────
+    if company_name:
+        exact = (
+            Company.objects.filter(Q(name__iexact=company_name) | Q(alias__iexact=company_name))
+            .order_by(Length("name"), "name")
+            .first()
+        )
+        if exact:
+            logger.info("Jarvis exact company match: '%s' → '%s'", company_name, exact.name)
+            return exact
+
+        key = _jarvis_company_name_key(company_name)
+        compact = key.replace(" ", "")
+        if key:
+            token_q = Q()
+            for tok in key.split()[:3]:
+                token_q |= Q(name__icontains=tok) | Q(alias__icontains=tok)
+            candidate_qs = Company.objects.filter(token_q) if token_q else Company.objects.all()
+            best = None
+            for cand in candidate_qs.only("id", "name", "alias").order_by("name")[:300]:
+                for cand_name in (cand.name, cand.alias):
+                    cand_key = _jarvis_company_name_key(cand_name or "")
+                    if not cand_key:
+                        continue
+                    cand_compact = cand_key.replace(" ", "")
+                    if cand_key == key or (compact and cand_compact == compact):
+                        if best is None or len(cand.name) < len(best.name):
+                            best = cand
+                        break
+            if best:
+                logger.info("Jarvis normalized company match: '%s' → '%s'", company_name, best.name)
+                return best
+
+    # ── 3. Word-by-word fuzzy scan ───────────────────────────────────────────
     # NOTE: intentionally skipping a plain exact-name match here.
     # If a previous Jarvis run created a stub company (e.g. "Bayview Asset
     # Management"), an exact match would return that stub instead of the
@@ -1695,8 +2569,9 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             return best
 
     # ── 4. Create new ────────────────────────────────────────────────────────
+    clean_name = company_name or "Unknown (Jarvis Import)"
     company, created = Company.objects.get_or_create(
-        name=company_name or "Unknown (Jarvis Import)",
+        name=clean_name,
         defaults={"website": _root_url(job_url)},
     )
     if created:
@@ -2454,11 +3329,11 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
         "description": update_fields.get("description") or job.description,
         "requirements": update_fields.get("requirements") or job.requirements,
         "benefits": update_fields.get("benefits") or job.benefits,
-        "department": job.department,
-        "location_raw": job.location_raw,
-        "employment_type": job.employment_type,
-        "experience_level": job.experience_level,
-        "salary_raw": job.salary_raw,
+        "department": update_fields.get("department") or job.department,
+        "location_raw": update_fields.get("location_raw") or job.location_raw,
+        "employment_type": update_fields.get("employment_type") or job.employment_type,
+        "experience_level": update_fields.get("experience_level") or job.experience_level,
+        "salary_raw": update_fields.get("salary_raw") or job.salary_raw,
         "company_name": job.company_name,
         "posted_date": str(job.posted_date) if job.posted_date else "",
     }))
@@ -2923,11 +3798,20 @@ def enrich_existing_jobs_task(
 
     ENRICH_FIELDS = [
         "skills", "tech_stack", "job_category",
+        "normalized_title", "title_keywords",
         "years_required", "years_required_max", "education_required",
-        "visa_sponsorship", "work_authorization", "clearance_required",
+        "visa_sponsorship", "work_authorization", "clearance_required", "clearance_level",
         "salary_equity", "signing_bonus", "relocation_assistance",
-        "travel_required", "certifications", "benefits_list",
-        "languages_required", "word_count", "quality_score",
+        "travel_required", "travel_pct_min", "travel_pct_max",
+        "schedule_type", "shift_schedule", "shift_details", "hours_hint", "weekend_required",
+        "certifications", "licenses_required", "benefits_list",
+        "languages_required", "encouraged_to_apply",
+        "job_keywords", "department_normalized",
+        "word_count", "quality_score", "jd_quality_score",
+        "classification_confidence", "classification_provenance",
+        "field_confidence", "field_provenance",
+        "resume_ready_score", "description_clean", "description_raw_html",
+        "has_html_content", "cleaning_version",
     ]
 
     for idx, job in enumerate(jobs, start=1):
@@ -2987,4 +3871,143 @@ def enrich_existing_jobs_task(
         "remaining":       max(0, total - (offset + len(jobs))),
     }
     logger.info("Enrich existing jobs complete: %s", result)
+    return result
+
+
+@shared_task(bind=True, name="harvest.backfill_resume_contract")
+def backfill_resume_contract_task(
+    self,
+    batch_size: int = 1500,
+    offset: int = 0,
+):
+    """
+    Backfill new resume-classification contract fields for historical rows.
+    Safe to run repeatedly and in chunks.
+    """
+    from .enrichments import clean_job_content, extract_enrichments, normalize_job_title
+    from .models import RawJob
+
+    qs = RawJob.objects.select_related("company").order_by("pk")
+    total = qs.count()
+    if total == 0:
+        return {"message": "No RawJobs found.", "updated": 0}
+
+    jobs = list(qs[offset: offset + batch_size])
+    if not jobs:
+        return {"message": "No jobs in requested chunk.", "updated": 0, "remaining": 0}
+
+    update_task_progress(
+        self,
+        current=0,
+        total=len(jobs),
+        message=f"Backfilling resume contract ({len(jobs)} jobs)…",
+    )
+
+    updated = 0
+    CHUNK = 300
+    bulk_updates: list[RawJob] = []
+    update_fields = [
+        "description_clean",
+        "description_raw_html",
+        "has_html_content",
+        "cleaning_version",
+        "normalized_title",
+        "title_keywords",
+        "schedule_type",
+        "shift_details",
+        "hours_hint",
+        "weekend_required",
+        "clearance_level",
+        "travel_pct_min",
+        "travel_pct_max",
+        "licenses_required",
+        "jd_quality_score",
+        "classification_confidence",
+        "classification_provenance",
+        "field_confidence",
+        "field_provenance",
+        "resume_ready_score",
+        "company_industry",
+        "company_stage",
+        "company_funding",
+        "company_size",
+        "company_employee_count_band",
+        "company_founding_year",
+    ]
+
+    for idx, job in enumerate(jobs, start=1):
+        desc_meta = clean_job_content(job.description or "", max_len=50000)
+        enriched = extract_enrichments(
+            {
+                "title": job.title or "",
+                "description": job.description or "",
+                "requirements": job.requirements or "",
+                "benefits": job.benefits or "",
+                "department": job.department or "",
+                "location_raw": job.location_raw or "",
+                "employment_type": job.employment_type or "",
+                "experience_level": job.experience_level or "",
+                "salary_raw": job.salary_raw or "",
+                "company_name": job.company_name or "",
+                "country": job.country or "",
+                "state": job.state or "",
+                "posted_date": str(job.posted_date) if job.posted_date else "",
+            }
+        )
+        company = job.company
+        job.description_clean = (enriched.get("description_clean") or desc_meta["clean_text"] or "")[:50000]
+        job.description_raw_html = (enriched.get("description_raw_html") or desc_meta["raw_html"] or "")[:120000]
+        job.has_html_content = bool(enriched.get("has_html_content", desc_meta["has_html_content"]))
+        job.cleaning_version = (enriched.get("cleaning_version") or "v2")[:20]
+        job.normalized_title = (enriched.get("normalized_title") or normalize_job_title(job.title or ""))[:255]
+        job.title_keywords = enriched.get("title_keywords") or job.title_keywords or []
+        job.schedule_type = (enriched.get("schedule_type") or job.schedule_type or "")[:32]
+        job.shift_details = (enriched.get("shift_details") or job.shift_details or "")[:255]
+        job.hours_hint = (enriched.get("hours_hint") or job.hours_hint or "")[:64]
+        job.weekend_required = enriched.get("weekend_required", job.weekend_required)
+        job.clearance_level = (enriched.get("clearance_level") or job.clearance_level or "")[:64]
+        job.travel_pct_min = enriched.get("travel_pct_min", job.travel_pct_min)
+        job.travel_pct_max = enriched.get("travel_pct_max", job.travel_pct_max)
+        job.licenses_required = enriched.get("licenses_required") or job.licenses_required or []
+        job.jd_quality_score = enriched.get("jd_quality_score", job.jd_quality_score)
+        job.classification_confidence = enriched.get("classification_confidence", job.classification_confidence)
+        job.classification_provenance = enriched.get("classification_provenance") or job.classification_provenance or {}
+        job.field_confidence = enriched.get("field_confidence") or job.field_confidence or {}
+        job.field_provenance = enriched.get("field_provenance") or job.field_provenance or {}
+        job.resume_ready_score = enriched.get("resume_ready_score", job.resume_ready_score)
+        job.company_industry = ((job.company_industry or "") or (company.industry if company else "") or "")[:255]
+        job.company_stage = ((job.company_stage or "") or (company.funding_stage if company else "") or "")[:64]
+        job.company_funding = ((job.company_funding or "") or (company.funding_amount if company else "") or "")[:128]
+        job.company_size = ((job.company_size or "") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64]
+        job.company_employee_count_band = ((job.company_employee_count_band or "") or (company.employee_count_band if company else "") or (company.headcount_range if company else "") or "")[:64]
+        job.company_founding_year = job.company_founding_year or (company.founding_year if company else None)
+        bulk_updates.append(job)
+        updated += 1
+
+        if len(bulk_updates) >= CHUNK:
+            RawJob.objects.bulk_update(bulk_updates, update_fields)
+            bulk_updates.clear()
+
+        if idx % 100 == 0:
+            update_task_progress(
+                self,
+                current=idx,
+                total=len(jobs),
+                message=f"Backfilled {idx}/{len(jobs)} jobs…",
+            )
+
+    if bulk_updates:
+        RawJob.objects.bulk_update(bulk_updates, update_fields)
+
+    _invalidate_rawjobs_dashboard_cache()
+    processed = len(jobs)
+    remaining = max(0, total - (offset + processed))
+    result = {
+        "updated": updated,
+        "total_processed": processed,
+        "total_eligible": total,
+        "remaining": remaining,
+        "next_offset": offset + processed,
+    }
+    logger.info("Backfill resume contract complete: %s", result)
     return result
