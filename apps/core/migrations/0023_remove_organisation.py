@@ -12,7 +12,7 @@ class Migration(migrations.Migration):
             model_name="broadcastmessage",
             name="organisation",
         ),
-        migrations.DeleteModel(
-            name="Organisation",
-        ),
+        # Keep Organisation in migration state for legacy cross-app migrations
+        # (users/messaging) that still reference core.organisation historically.
+        # Runtime code no longer uses this model.
     ]
