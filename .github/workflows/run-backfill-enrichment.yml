@@ -1,0 +1,25 @@
+name: Run — Backfill Enrichment (category_confidence)
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Jobs per batch"
+        default: "500"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run migrate + enrich backfill via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from harvest.tasks import enrich_existing_jobs_task; task = enrich_existing_jobs_task.delay(only_unenriched=True, batch_size=${{ github.event.inputs.batch_size }}); print(f'Enrichment backfill queued: {task.id}')"
