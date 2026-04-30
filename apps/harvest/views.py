@@ -246,7 +246,7 @@ _ALLOWED_RETURN_VIEWS = {
 def _resolve_return_target(
     request,
     *,
-    default_view: str = "harvest-rawjobs",
+    default_view: str = "jobs-pipeline",
     default_pipeline_tab: str = "raw",
 ) -> tuple[str, dict | None]:
     """
@@ -258,6 +258,8 @@ def _resolve_return_target(
     return_to = (request.POST.get("return_to", "") or "").strip() or default_view
     if return_to not in _ALLOWED_RETURN_VIEWS:
         return_to = default_view
+    if return_to == "harvest-rawjobs":
+        return_to = "jobs-pipeline"
 
     extra_query: dict | None = None
     if return_to == "jobs-pipeline":
@@ -691,7 +693,7 @@ class RunBulkSyncView(SuperuserRequiredMixin, View):
             f"Bulk sync started — up to 20,000 pending jobs → pool (Task: {task.id[:8]}…). "
             "This runs in the background. Refresh to see progress.",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -712,7 +714,7 @@ class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
             f"Retry failed fetches queued (Task: {task.id[:8]}…). "
             "This will re-run failed company fetches in the background.",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -754,7 +756,7 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
             f"Link-health validation queued (Task: {task.id[:8]}…). "
             "Soft-404 pages will be marked inactive before vet sync.",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -770,7 +772,7 @@ class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
         raw_ids = request.POST.get("raw_job_ids", "").strip()
         if not raw_ids:
             messages.error(request, "No rows selected for sync.")
-            return redirect("harvest-rawjobs")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
         parts = [p.strip() for p in raw_ids.split(",") if p.strip()]
         ids: list[int] = []
@@ -780,7 +782,7 @@ class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
         ids = ids[:500]
         if not ids:
             messages.error(request, "Selected ids were invalid.")
-            return redirect("harvest-rawjobs")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
         qs = RawJob.objects.select_related("company", "job_platform").filter(pk__in=ids)
         synced = skipped = failed = 0
@@ -802,7 +804,7 @@ class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
         if skipped_reasons:
             msg += " Sample blocked reasons: " + " | ".join(skipped_reasons)
         messages.success(request, msg)
-        return redirect("harvest-rawjobs")
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
 
 class RunCleanupNowView(SuperuserRequiredMixin, View):
@@ -1272,7 +1274,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 f"Quick Sync started — fetching new/updated jobs from the last 25h "
                 f"(Task: {task.id[:8]}…). Much faster than a full crawl.",
             )
-            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
             return redirect_with_task_progress(
                 return_to,
                 task.id,
@@ -1294,7 +1296,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                         f"Wait {mins}m {secs}s before starting another full crawl. "
                         f"Use Quick Sync (25h) for an incremental update now.",
                     )
-                    return_to, _ = _resolve_return_target(request, default_view="harvest-rawjobs")
+                    return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
                     return redirect(return_to)
             ts = timezone.now().strftime("%Y-%m-%d %H:%M")
             task = fetch_raw_jobs_batch_task.delay(
@@ -1310,7 +1312,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 f"Full Crawl started — fetching ALL jobs from every platform "
                 f"(Task: {task.id[:8]}…). This may take 30–60+ minutes.",
             )
-            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
             return redirect_with_task_progress(
                 return_to,
                 task.id,
@@ -1335,7 +1337,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 request,
                 f"Platform check started — {companies_per_platform} co/platform, up to {test_max_jobs} jobs each{skip_note} (Task: {task.id[:8]}…)",
             )
-            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
             return redirect_with_task_progress(
                 return_to,
                 task.id,
@@ -1358,7 +1360,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
             + (f" for platform '{platform_slug}'" if platform_slug else " for all platforms")
             + f" (Task: {task.id[:8]}...)",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -1372,7 +1374,7 @@ class StopBatchView(SuperuserRequiredMixin, View):
 
     def get(self, request):
         """Direct browser navigation → just go to the batch list page."""
-        return redirect("harvest-rawjobs")
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
     def post(self, request):
         from celery import current_app
@@ -1387,13 +1389,13 @@ class StopBatchView(SuperuserRequiredMixin, View):
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
                 return JsonResponse({"ok": False, "error": "No running batch found."}, status=404)
             messages.warning(request, "No running batch found.")
-            return redirect("harvest-rawjobs")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
         if batch.status not in ("RUNNING", "PENDING"):
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
                 return JsonResponse({"ok": False, "error": f"Batch is already {batch.status}."})
             messages.warning(request, f"Batch #{batch.pk} is already {batch.status}.")
-            return redirect("harvest-rawjobs")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
         # 1. Revoke the main batch orchestration task (if it's still queued/running)
         if batch.task_id:
@@ -1425,7 +1427,7 @@ class StopBatchView(SuperuserRequiredMixin, View):
             return JsonResponse({"ok": True, "batch_id": batch.pk, "revoked": len(task_ids)})
 
         messages.success(request, f"Batch #{batch.pk} cancelled — {len(task_ids)} pending tasks revoked.")
-        return redirect("harvest-rawjobs")
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
 
 class RunEnrichExistingView(SuperuserRequiredMixin, View):
@@ -1448,7 +1450,7 @@ class RunEnrichExistingView(SuperuserRequiredMixin, View):
             request,
             f"Enrichment started ({label}, batch={batch_size:,}, unenriched_only={only_unenriched}) — Task {task.id[:8]}…",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -1470,7 +1472,7 @@ class RunBackfillResumeContractView(SuperuserRequiredMixin, View):
             request,
             f"Resume contract backfill started (batch={batch_size:,}, offset={offset:,}) — Task {task.id[:8]}…",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -1506,7 +1508,7 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
             request,
             f"Description {mode} started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
         )
-        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(
             return_to,
             task.id,
@@ -1737,8 +1739,8 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
         if wants_json:
             return JsonResponse(payload)
 
-        # HTML stats view is now consolidated into the Raw Jobs command center.
-        return redirect("harvest-rawjobs")
+        # HTML stats view is consolidated into Jobs Pipeline (tab=raw).
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
 
 @method_decorator(never_cache, name="dispatch")
@@ -2142,7 +2144,7 @@ class JarvisFetchProgressView(SuperuserRequiredMixin, TemplateView):
         ctx["platform_slug"] = self.request.GET.get("platform_slug", "").strip()
         ctx["company_jobs_url"] = self.request.GET.get("company_jobs_url", "").strip()
         ctx["jarvis_url"] = reverse("harvest-jarvis")
-        ctx["rawjobs_url"] = f"{reverse('harvest-rawjobs')}?_subtab=jobs"
+        ctx["rawjobs_url"] = f"{reverse('jobs-pipeline')}?tab=raw"
         ctx["progress_api_url"] = reverse("harvest-jarvis-fetch-all-progress-api")
         return ctx
 
@@ -2244,7 +2246,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
             ]
 
             rawjobs_qs = {
-                "_subtab": "jobs",
+                "tab": "raw",
                 "q": run.label.company.name if run.label and run.label.company else "",
             }
             if run.label and run.label.company_id:
@@ -2253,7 +2255,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                 rawjobs_qs["platform"] = run.label.platform.slug
             if run.label_id:
                 rawjobs_qs["label_pk"] = str(run.label_id)
-            rawjobs_url = f"{reverse('harvest-rawjobs')}?{urlencode(rawjobs_qs)}"
+            rawjobs_url = f"{reverse('jobs-pipeline')}?{urlencode(rawjobs_qs)}"
 
             return JsonResponse(
                 {
@@ -2308,7 +2310,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                     "message": message,
                     "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 0},
                     "recent_jobs": [],
-                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+                    "rawjobs_url": f"{reverse('jobs-pipeline')}?tab=raw",
                 }
             )
 
@@ -2333,7 +2335,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                         "failed": int(result.get("jobs_failed", 0) or 0),
                     },
                     "recent_jobs": [],
-                    "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+                    "rawjobs_url": f"{reverse('jobs-pipeline')}?tab=raw",
                 }
             )
 
@@ -2350,7 +2352,7 @@ class JarvisFetchProgressApiView(SuperuserRequiredMixin, View):
                 "message": err,
                 "counts": {"found": 0, "new": 0, "updated": 0, "duplicate": 0, "skipped": 0, "failed": 1},
                 "recent_jobs": [],
-                "rawjobs_url": f"{reverse('harvest-rawjobs')}?_subtab=jobs",
+                "rawjobs_url": f"{reverse('jobs-pipeline')}?tab=raw",
             }
         )
 

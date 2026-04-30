@@ -1086,7 +1086,7 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         self.assertIn("recent_jobs", body)
         parsed = urlparse(body["rawjobs_url"])
         qs = parse_qs(parsed.query)
-        self.assertEqual(qs.get("_subtab"), ["jobs"])
+        self.assertEqual(qs.get("tab"), ["raw"])
         self.assertEqual(qs.get("platform"), ["dayforce"])
         self.assertEqual(qs.get("company_id"), [str(self.company.pk)])
         self.assertEqual(qs.get("label_pk"), [str(label.pk)])
