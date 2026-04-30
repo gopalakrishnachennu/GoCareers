@@ -163,6 +163,15 @@ TASKS = [
         "schedule_label": "Daily midnight UTC",
         "kwargs": {},
     },
+    {
+        "name": "Harvest — validate raw job URLs",
+        "task": "harvest.validate_raw_job_urls",
+        "category": "harvest",
+        "description": "Checks active RawJob URLs for liveness and marks expired jobs inactive. Handles SPA-based ATS (Oracle HCM, Workday) via API, not brittle HTML scraping.",
+        "cron": {"minute": "0", "hour": "3", "day_of_week": "*", "day_of_month": "*", "month_of_year": "*"},
+        "schedule_label": "Daily 03:00 UTC",
+        "kwargs": {"batch_size": 200, "concurrency": 20},
+    },
 ]
 
 CATEGORY_ORDER = ["email", "submissions", "jobs", "companies", "reports", "analytics", "harvest"]
