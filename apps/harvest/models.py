@@ -673,6 +673,11 @@ class RawJob(models.Model):
 
         Flow: Fetched -> Parsed -> Enriched -> Classified -> Ready -> Synced
         """
+        effective_conf = (
+            self.category_confidence
+            if self.category_confidence is not None
+            else self.classification_confidence
+        ) or 0
         if self.sync_status == self.SyncStatus.SYNCED:
             return "SYNCED"
         if self.sync_status == self.SyncStatus.FAILED:
@@ -682,11 +687,11 @@ class RawJob(models.Model):
         if (
             self.has_description
             and self.is_resume_jd_usable()
-            and (self.classification_confidence or 0) >= 0.55
+            and effective_conf >= 0.55
             and self.is_active
         ):
             return "READY"
-        if (self.classification_confidence or 0) > 0:
+        if effective_conf > 0:
             return "CLASSIFIED"
         if self.quality_score is not None or self.jd_quality_score is not None:
             return "ENRICHED"

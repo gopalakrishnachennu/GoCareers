@@ -1671,7 +1671,7 @@ def sync_harvested_to_pool_task(
     newest pending rows.
     """
     from .models import RawJob
-    from jobs.models import Job
+    from jobs.models import Job, PipelineEvent
     from jobs.dedup import find_existing_job_by_url
     from jobs.quality import compute_quality_score
     from jobs.gating import apply_gate_result_to_job, evaluate_raw_job_gate
@@ -1700,18 +1700,13 @@ def sync_harvested_to_pool_task(
         cfg = HarvestEngineConfig.get()
         min_words = max(1, int(getattr(cfg, "resume_jd_min_words", 80)))
         min_chars = max(1, int(getattr(cfg, "resume_jd_min_chars", 400)))
-        min_conf = max(
-            0.0,
-            min(1.0, float(getattr(cfg, "resume_jd_min_classification_confidence", 0.35))),
-        )
-        # Require JD present + usable length. Allow NULL classification_confidence
-        # (jobs enriched before that field existed) — evaluate_raw_job_gate() is the
-        # real quality gate applied per-job below.
+        # Only pre-filter by substantive JD text. Do NOT pre-filter by classification
+        # confidence here; the real gate (evaluate_raw_job_gate) decides pass/fail/lane.
+        # Pre-filtering by confidence was silently excluding large volumes and made
+        # "Sync Qualified to Vet Queue" look capped even when max_jobs=0 (all).
         base_qs = base_qs.filter(
             has_description=True,
             word_count__gte=min_words,
-        ).filter(
-            Q(classification_confidence__isnull=True) | Q(classification_confidence__gte=min_conf)
         ).annotate(
             _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
         ).filter(_jd_len__gte=min_chars)
@@ -1719,6 +1714,7 @@ def sync_harvested_to_pool_task(
     total_candidates = base_qs.count()
     total_target = min(total_candidates, max_jobs) if max_jobs else total_candidates
     synced = skipped = failed = processed = 0
+    skipped_reasons: dict[str, int] = {}
     # Always report progress at start so Ops Center shows the task even if 0 candidates.
     update_task_progress(
         self,
@@ -1733,7 +1729,15 @@ def sync_harvested_to_pool_task(
 
     if total_target == 0:
         logger.info("Sync task: 0 qualifying candidates. qualified_only=%s", qualified_only)
-        return {"qualified_only": bool(qualified_only), "processed": 0, "candidates": total_candidates, "synced": 0, "skipped": 0, "failed": 0}
+        return {
+            "qualified_only": bool(qualified_only),
+            "processed": 0,
+            "candidates": total_candidates,
+            "synced": 0,
+            "skipped": 0,
+            "failed": 0,
+            "skipped_reasons": {},
+        }
 
     last_pk = None
     while processed < total_target:
@@ -1768,6 +1772,20 @@ def sync_harvested_to_pool_task(
                 rj.sync_status = "SKIPPED"
                 rj.raw_payload = payload
                 rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                PipelineEvent.record(
+                    job=existing,
+                    url_hash=rj.url_hash or "",
+                    from_stage=getattr(existing, "stage", "") or "",
+                    to_stage=getattr(existing, "stage", "") or "",
+                    task_name="harvest.sync_harvested_to_pool",
+                    celery_id=getattr(self.request, "id", "") or "",
+                    status=PipelineEvent.Status.SKIPPED,
+                    meta={
+                        "raw_job_id": rj.pk,
+                        "qualified_only": bool(qualified_only),
+                        "reason_code": "DUPLICATE_EXISTING",
+                    },
+                )
                 skipped += 1
                 if total_target:
                     update_task_progress(
@@ -1786,6 +1804,8 @@ def sync_harvested_to_pool_task(
                 if qualified_only:
                     # For qualified-only runs, keep non-passing rows pending so they can
                     # be re-enriched/revalidated later instead of being force-failed here.
+                    reason_key = (gate.reason_code or "UNKNOWN").strip() or "UNKNOWN"
+                    skipped_reasons[reason_key] = skipped_reasons.get(reason_key, 0) + 1
                     skipped += 1
                     if total_target:
                         update_task_progress(
@@ -1890,6 +1910,27 @@ def sync_harvested_to_pool_task(
                     rj.sync_status = "SYNCED"
                     rj.raw_payload = payload
                     rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    PipelineEvent.record(
+                        job=job,
+                        from_stage=Job.Stage.ENRICHED,
+                        to_stage=Job.Stage.VETTED,
+                        task_name="harvest.sync_harvested_to_pool",
+                        celery_id=getattr(self.request, "id", "") or "",
+                        status=PipelineEvent.Status.SUCCESS,
+                        meta={
+                            "raw_job_id": rj.pk,
+                            "qualified_only": bool(qualified_only),
+                            "gate_status": gate.status,
+                            "lane": gate.lane,
+                            "reason_code": gate.reason_code,
+                            "scores": {
+                                "data_quality": gate.data_quality_score,
+                                "trust": gate.trust_score,
+                                "candidate_fit": gate.candidate_fit_score,
+                                "vet_priority": gate.vet_priority_score,
+                            },
+                        },
+                    )
                     synced += 1
             except Exception as e:
                 payload = dict(rj.raw_payload or {})
@@ -1902,6 +1943,20 @@ def sync_harvested_to_pool_task(
                 rj.sync_status = "FAILED"
                 rj.raw_payload = payload
                 rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                PipelineEvent.record(
+                    url_hash=rj.url_hash or "",
+                    from_stage="ENRICHED",
+                    to_stage="ERROR",
+                    task_name="harvest.sync_harvested_to_pool",
+                    celery_id=getattr(self.request, "id", "") or "",
+                    status=PipelineEvent.Status.FAILED,
+                    error=str(e)[:240],
+                    meta={
+                        "raw_job_id": rj.pk,
+                        "qualified_only": bool(qualified_only),
+                        "reason_code": "POOL_SYNC_ERROR",
+                    },
+                )
                 logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
                 failed += 1
 
@@ -1919,8 +1974,8 @@ def sync_harvested_to_pool_task(
 
     _invalidate_rawjobs_dashboard_cache()
     logger.info(
-        "Sync complete: qualified_only=%s processed=%d synced=%d skipped=%d failed=%d target=%d candidates=%d",
-        qualified_only, processed, synced, skipped, failed, total_target, total_candidates,
+        "Sync complete: qualified_only=%s processed=%d synced=%d skipped=%d failed=%d target=%d candidates=%d skipped_reasons=%s",
+        qualified_only, processed, synced, skipped, failed, total_target, total_candidates, skipped_reasons,
     )
     return {
         "qualified_only": bool(qualified_only),
@@ -1930,6 +1985,7 @@ def sync_harvested_to_pool_task(
         "synced": synced,
         "skipped": skipped,
         "failed": failed,
+        "skipped_reasons": skipped_reasons,
     }
 
 

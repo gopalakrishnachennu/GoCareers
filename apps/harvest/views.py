@@ -41,6 +41,21 @@ logger = logging.getLogger(__name__)
 _FULL_CRAWL_COOLDOWN_HOURS = 2
 
 
+def _effective_classification_q(min_conf: float = 0.01) -> Q:
+    """
+    Effective classification confidence filter.
+    Prefer category_confidence when present; fallback to legacy classification_confidence.
+    """
+    return Q(category_confidence__gte=min_conf) | (
+        Q(category_confidence__isnull=True) & Q(classification_confidence__gte=min_conf)
+    )
+
+
+def _ready_stage_q(min_conf: float = 0.55) -> Q:
+    """READY rows for workflow board (active + JD present + effective confidence)."""
+    return Q(has_description=True, is_active=True) & _effective_classification_q(min_conf=min_conf)
+
+
 def _find_existing_live_job_for_rawjob(raw_job):
     """Find existing non-archived Job mapped to a RawJob URL hash/link."""
     from jobs.dedup import find_existing_job_by_url
@@ -293,8 +308,8 @@ def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
     # clicking a funnel card applies the same predicate in Jobs Browser.
     parsed = base.filter(has_description=True).count()
     enriched = base.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)).count()
-    classified = base.filter(classification_confidence__gte=0.01).count()
-    ready = base.filter(has_description=True, classification_confidence__gte=0.55, is_active=True).count()
+    classified = base.filter(_effective_classification_q(min_conf=0.01)).count()
+    ready = base.filter(_ready_stage_q(min_conf=0.55)).count()
     synced = base.filter(sync_status=RawJob.SyncStatus.SYNCED).count()
 
     pending_qs = base.filter(sync_status=RawJob.SyncStatus.PENDING)
@@ -316,7 +331,10 @@ def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
 
     missing_jd = base.filter(has_description=False).count()
     html_heavy = base.filter(has_html_content=True).count()
-    low_confidence = base.filter(Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True)).count()
+    low_confidence = base.filter(
+        Q(category_confidence__lt=0.55)
+        | (Q(category_confidence__isnull=True) & (Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True)))
+    ).count()
     missing_salary = base.filter(salary_min__isnull=True, salary_max__isnull=True).count()
     missing_location = base.filter(
         Q(location_raw="") & Q(city="") & Q(state="") & Q(country="")
@@ -1242,7 +1260,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         conf_min_f = self.request.GET.get("classification_min_conf", "").strip()
         try:
             if conf_min_f:
-                qs = qs.filter(classification_confidence__gte=float(conf_min_f))
+                qs = qs.filter(_effective_classification_q(min_conf=float(conf_min_f)))
         except ValueError:
             pass
 
@@ -1267,9 +1285,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         elif stage_f == "ENRICHED":
             qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False))
         elif stage_f == "CLASSIFIED":
-            qs = qs.filter(classification_confidence__gte=0.01)
+            qs = qs.filter(_effective_classification_q(min_conf=0.01))
         elif stage_f == "READY":
-            qs = qs.filter(has_description=True, classification_confidence__gte=0.55, is_active=True)
+            qs = qs.filter(_ready_stage_q(min_conf=0.55))
         elif stage_f == "SYNCED":
             qs = qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
         elif stage_f == "FAILED":
@@ -1301,9 +1319,10 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 has_description=True,
                 is_active=True,
                 word_count__gte=max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80))),
-                classification_confidence__gte=float(
-                    getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35)
-                ),
+            ).filter(
+                _effective_classification_q(
+                    min_conf=float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
+                )
             )
         elif resume_jd_f == "blocked":
             min_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
@@ -1312,8 +1331,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 Q(has_description=False)
                 | Q(is_active=False)
                 | Q(word_count__lt=min_words)
-                | Q(classification_confidence__lt=min_conf)
-                | Q(classification_confidence__isnull=True)
+                | Q(category_confidence__lt=min_conf)
+                | (Q(category_confidence__isnull=True) & (Q(classification_confidence__lt=min_conf) | Q(classification_confidence__isnull=True)))
             )
 
         # Fetched-date range — uses the indexed fetched_at column so these are

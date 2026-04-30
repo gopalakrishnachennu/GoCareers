@@ -14,7 +14,7 @@ import csv
 import io
 import logging
 
-from .models import Job
+from .models import Job, PipelineEvent
 from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
 
 logger = logging.getLogger(__name__)
@@ -863,6 +863,18 @@ class JobApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         job.validated_by = request.user
         job.validation_run_at = timezone.now()
         job.save(update_fields=['status', 'stage', 'stage_changed_at', 'vet_approved_at', 'validated_by', 'validation_run_at', 'updated_at'])
+        PipelineEvent.record(
+            job=job,
+            from_stage=Job.Stage.VETTED,
+            to_stage=Job.Stage.LIVE,
+            task_name="jobs.vet_approve",
+            status=PipelineEvent.Status.SUCCESS,
+            meta={
+                "actor_user_id": request.user.id,
+                "gate_status": job.gate_status,
+                "vet_lane": job.vet_lane,
+            },
+        )
         try:
             from .notify import notify_new_open_job_to_consultants, notify_job_pool_status
             notify_new_open_job_to_consultants(job)
@@ -906,6 +918,18 @@ class JobRejectView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'pipeline_reason_code', 'pipeline_reason_detail',
             'rejection_reason', 'rejected_by', 'rejected_at', 'updated_at'
         ])
+        PipelineEvent.record(
+            job=job,
+            from_stage=Job.Stage.VETTED,
+            to_stage=Job.Stage.ARCHIVED,
+            task_name="jobs.vet_reject",
+            status=PipelineEvent.Status.SUCCESS,
+            meta={
+                "actor_user_id": request.user.id,
+                "reason_code": "REJECTED_BY_REVIEWER",
+                "reason": reason[:240],
+            },
+        )
         try:
             from .notify import notify_job_pool_status
             notify_job_pool_status(job, approved=False, actor=request.user)
@@ -957,6 +981,18 @@ class JobBulkApproveView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                     'status', 'stage', 'stage_changed_at', 'vet_approved_at',
                     'validated_by', 'validation_run_at', 'updated_at'
                 ])
+                PipelineEvent.record(
+                    job=job,
+                    from_stage=Job.Stage.VETTED,
+                    to_stage=Job.Stage.LIVE,
+                    task_name="jobs.bulk_vet_approve",
+                    status=PipelineEvent.Status.SUCCESS,
+                    meta={
+                        "actor_user_id": request.user.id,
+                        "gate_status": job.gate_status,
+                        "vet_lane": job.vet_lane,
+                    },
+                )
                 try:
                     from .notify import notify_new_open_job_to_consultants
                     notify_new_open_job_to_consultants(job)
