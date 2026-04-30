@@ -845,7 +845,6 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         """JSON path for infinite-scroll: ?page=N with X-Requested-With:XMLHttpRequest"""
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             from django.core.paginator import Paginator
-            from django.urls import reverse
             # Fetch only the columns rendered in the list — skips description /
             # raw_payload blobs which can be 10–50 KB each and are never shown here.
             qs = self.get_queryset().only(
@@ -938,7 +937,20 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
                 "total": paginator.count,
                 "num_pages": paginator.num_pages,
             })
-        return super().get(request, *args, **kwargs)
+        # HTML Raw Jobs command center is consolidated into /jobs/pipeline/?tab=raw
+        # while this endpoint remains for legacy XHR table consumers.
+        query_pairs: list[tuple[str, str]] = [("tab", "raw")]
+        for key, values in request.GET.lists():
+            if key in {"tab", "_subtab"}:
+                continue
+            for value in values:
+                value_s = str(value or "").strip()
+                if value_s:
+                    query_pairs.append((key, value_s))
+        target = reverse("jobs-pipeline")
+        if query_pairs:
+            target = f"{target}?{urlencode(query_pairs)}"
+        return redirect(target)
 
     def get_queryset(self):
         # No select_related — JOINs add 20x overhead on 122k rows; all displayed
@@ -1130,8 +1142,8 @@ class FetchBatchListView(SuperuserRequiredMixin, ListView):
                     "created_at": b.created_at.strftime("%Y-%m-%d %H:%M") if b.created_at else "",
                 })
             return JsonResponse({"batches": batches})
-        # HTML batch history is consolidated into the Raw Jobs command center.
-        return redirect(f"{reverse('harvest-rawjobs')}?_subtab=batches")
+        # HTML batch history is consolidated into Jobs Pipeline (tab=raw).
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -1175,8 +1187,8 @@ class CompanyFetchStatusView(SuperuserRequiredMixin, ListView):
                     "started_at": run.started_at.strftime("%Y-%m-%d %H:%M") if run.started_at else "",
                 })
             return JsonResponse({"runs": runs})
-        # HTML company status view is consolidated into the Raw Jobs command center.
-        return redirect(f"{reverse('harvest-rawjobs')}?_subtab=companies")
+        # HTML company status view is consolidated into Jobs Pipeline (tab=raw).
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)

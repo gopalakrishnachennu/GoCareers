@@ -424,8 +424,8 @@
     <p class="section-subtitle">Jobs scraped from ATS platforms — only qualified jobs (active + JD + confidence) should move to Vet Queue</p>
   </div>
   <div class="flex gap-2 flex-wrap items-center">
-    <a href="{% url 'harvest-rawjobs' %}?_subtab=batches" class="btn-secondary btn-sm">View Batches</a>
-    <a href="{% url 'harvest-rawjobs' %}#pipeline-funnel-strip" class="btn-secondary btn-sm">Stats</a>
+    <a href="{% url 'jobs-pipeline' %}?tab=raw#raw-jobs-table" class="btn-secondary btn-sm">Raw Table</a>
+    <a href="{% url 'ops-center' %}#pipelines" class="btn-secondary btn-sm">Run Monitor</a>
     <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
       <input type="hidden" name="qualified_only" value="1">
       <input type="hidden" name="max_jobs" value="0">
@@ -446,32 +446,32 @@
     <div class="text-[11px] text-slate-500">Click any stage to open matching jobs in this table</div>
   </div>
   <div class="grid grid-cols-2 lg:grid-cols-6 gap-2">
-    <a href="?tab=raw#raw-jobs-table" class="p-2.5 rounded-lg border {% if not raw_selected_stage %}border-slate-500 bg-slate-50{% else %}border-slate-200 hover:border-slate-300{% endif %}">
+    <a href="?{{ raw_stage_links.FETCHED }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if not raw_selected_stage %}border-slate-500 bg-slate-50{% else %}border-slate-200 hover:border-slate-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Fetched</div>
       <div class="text-xl font-bold text-slate-900">{{ raw_funnel.fetched }}</div>
       <div class="text-[11px] text-slate-500">100%</div>
     </a>
-    <a href="?tab=raw&stage=PARSED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'PARSED' %}border-sky-400 bg-sky-50{% else %}border-slate-200 hover:border-sky-300{% endif %}">
+    <a href="?{{ raw_stage_links.PARSED }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'PARSED' %}border-sky-400 bg-sky-50{% else %}border-slate-200 hover:border-sky-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Parsed</div>
       <div class="text-xl font-bold text-sky-600">{{ raw_funnel.parsed }}</div>
       <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.parsed raw_funnel.fetched 100 %}%</div>
     </a>
-    <a href="?tab=raw&stage=ENRICHED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'ENRICHED' %}border-violet-400 bg-violet-50{% else %}border-slate-200 hover:border-violet-300{% endif %}">
+    <a href="?{{ raw_stage_links.ENRICHED }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'ENRICHED' %}border-violet-400 bg-violet-50{% else %}border-slate-200 hover:border-violet-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Enriched</div>
       <div class="text-xl font-bold text-violet-600">{{ raw_funnel.enriched }}</div>
       <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.enriched raw_funnel.fetched 100 %}%</div>
     </a>
-    <a href="?tab=raw&stage=CLASSIFIED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'CLASSIFIED' %}border-amber-400 bg-amber-50{% else %}border-slate-200 hover:border-amber-300{% endif %}">
+    <a href="?{{ raw_stage_links.CLASSIFIED }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'CLASSIFIED' %}border-amber-400 bg-amber-50{% else %}border-slate-200 hover:border-amber-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Classified</div>
       <div class="text-xl font-bold text-amber-600">{{ raw_funnel.classified }}</div>
       <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.classified raw_funnel.fetched 100 %}%</div>
     </a>
-    <a href="?tab=raw&stage=READY#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'READY' %}border-emerald-400 bg-emerald-50{% else %}border-slate-200 hover:border-emerald-300{% endif %}">
+    <a href="?{{ raw_stage_links.READY }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'READY' %}border-emerald-400 bg-emerald-50{% else %}border-slate-200 hover:border-emerald-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Ready</div>
       <div class="text-xl font-bold text-emerald-600">{{ raw_funnel.ready }}</div>
       <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.ready raw_funnel.fetched 100 %}%</div>
     </a>
-    <a href="?tab=raw&stage=SYNCED#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'SYNCED' %}border-teal-400 bg-teal-50{% else %}border-slate-200 hover:border-teal-300{% endif %}">
+    <a href="?{{ raw_stage_links.SYNCED }}#raw-jobs-table" class="p-2.5 rounded-lg border {% if raw_selected_stage == 'SYNCED' %}border-teal-400 bg-teal-50{% else %}border-slate-200 hover:border-teal-300{% endif %}">
       <div class="text-[10px] uppercase text-slate-500">Synced</div>
       <div class="text-xl font-bold text-teal-600">{{ raw_funnel.synced }}</div>
       <div class="text-[11px] text-slate-500">{% widthratio raw_funnel.synced raw_funnel.fetched 100 %}%</div>
@@ -480,31 +480,31 @@
   {% if raw_selected_stage %}
   <div class="mt-2 text-xs text-slate-600">
     Filter active: <span class="font-semibold">{{ raw_selected_stage }}</span>.
-    <a href="?tab=raw#raw-jobs-table" class="text-indigo-600 hover:underline">Clear stage filter</a>
+    <a href="?{{ raw_stage_links.FETCHED }}#raw-jobs-table" class="text-indigo-600 hover:underline">Clear stage filter</a>
   </div>
   {% endif %}
 </div>
 
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
-  <a href="?tab=raw&stage=READY&sync_status=PENDING#raw-jobs-table"
+  <a href="?{{ raw_blocker_links.qualified_pending }}#raw-jobs-table"
      class="p-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:border-emerald-300 transition">
     <div class="text-[11px] uppercase text-emerald-700">Qualified Pending</div>
     <div class="text-2xl font-bold text-emerald-800">{{ raw_gate_summary.qualified_pending }}</div>
     <div class="text-[11px] text-emerald-700 mt-0.5">eligible to sync now</div>
   </a>
-  <a href="?tab=raw&sync_status=PENDING&has_jd=0#raw-jobs-table"
+  <a href="?{{ raw_blocker_links.blocked_missing_jd }}#raw-jobs-table"
      class="p-3 rounded-lg border border-amber-200 bg-amber-50 hover:border-amber-300 transition">
     <div class="text-[11px] uppercase text-amber-700">Blocked: Missing JD</div>
     <div class="text-2xl font-bold text-amber-800">{{ raw_gate_summary.blocked_missing_jd }}</div>
     <div class="text-[11px] text-amber-700 mt-0.5">no usable description</div>
   </a>
-  <a href="?tab=raw&sync_status=PENDING&is_active=0#raw-jobs-table"
+  <a href="?{{ raw_blocker_links.blocked_inactive }}#raw-jobs-table"
      class="p-3 rounded-lg border border-rose-200 bg-rose-50 hover:border-rose-300 transition">
     <div class="text-[11px] uppercase text-rose-700">Blocked: Inactive</div>
     <div class="text-2xl font-bold text-rose-800">{{ raw_gate_summary.blocked_inactive }}</div>
     <div class="text-[11px] text-rose-700 mt-0.5">posting no longer live</div>
   </a>
-  <a href="?tab=raw&sync_status=PENDING&classification_bucket=low#raw-jobs-table"
+  <a href="?{{ raw_blocker_links.blocked_low_conf }}#raw-jobs-table"
      class="p-3 rounded-lg border border-indigo-200 bg-indigo-50 hover:border-indigo-300 transition">
     <div class="text-[11px] uppercase text-indigo-700">Blocked: Low Confidence</div>
     <div class="text-2xl font-bold text-indigo-800">{{ raw_gate_summary.blocked_low_conf }}</div>

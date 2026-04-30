@@ -13,6 +13,7 @@ import json
 import csv
 import io
 import logging
+from urllib.parse import urlencode
 
 from .models import Job, PipelineEvent
 from config.pagination import PAGE_SIZE_OPTIONS, get_page_size, build_pagination_window
@@ -1125,6 +1126,19 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         score_tab = "all"
         gate_tab = "all"
         raw_filter_passthrough: list[tuple[str, str]] = []
+        raw_stage_links: dict[str, str] = {}
+        raw_blocker_links: dict[str, str] = {}
+
+        def _raw_query_with_overrides(
+            base_pairs: list[tuple[str, str]],
+            overrides: dict[str, str],
+            remove_keys: set[str] | None = None,
+        ) -> str:
+            remove = set(remove_keys or set())
+            remove.update(overrides.keys())
+            pairs = [(k, v) for (k, v) in base_pairs if k not in remove]
+            pairs.extend((k, v) for k, v in overrides.items() if v != "")
+            return urlencode(pairs)
 
         if tab == 'raw':
             qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
@@ -1135,6 +1149,40 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 value = (request.GET.get(key) or "").strip()
                 if value:
                     raw_filter_passthrough.append((key, value))
+            raw_base_pairs: list[tuple[str, str]] = [("tab", "raw")]
+            if q:
+                raw_base_pairs.append(("q", q))
+            raw_base_pairs.extend(raw_filter_passthrough)
+            raw_stage_links = {
+                "FETCHED": _raw_query_with_overrides(raw_base_pairs, {}, remove_keys={"stage"}),
+                "PARSED": _raw_query_with_overrides(raw_base_pairs, {"stage": "PARSED"}, remove_keys={"stage"}),
+                "ENRICHED": _raw_query_with_overrides(raw_base_pairs, {"stage": "ENRICHED"}, remove_keys={"stage"}),
+                "CLASSIFIED": _raw_query_with_overrides(raw_base_pairs, {"stage": "CLASSIFIED"}, remove_keys={"stage"}),
+                "READY": _raw_query_with_overrides(raw_base_pairs, {"stage": "READY"}, remove_keys={"stage"}),
+                "SYNCED": _raw_query_with_overrides(raw_base_pairs, {"stage": "SYNCED"}, remove_keys={"stage"}),
+            }
+            raw_blocker_links = {
+                "qualified_pending": _raw_query_with_overrides(
+                    raw_base_pairs,
+                    {"stage": "READY", "sync_status": "PENDING"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                ),
+                "blocked_missing_jd": _raw_query_with_overrides(
+                    raw_base_pairs,
+                    {"sync_status": "PENDING", "has_jd": "0"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                ),
+                "blocked_inactive": _raw_query_with_overrides(
+                    raw_base_pairs,
+                    {"sync_status": "PENDING", "is_active": "0"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                ),
+                "blocked_low_conf": _raw_query_with_overrides(
+                    raw_base_pairs,
+                    {"sync_status": "PENDING", "classification_bucket": "low"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                ),
+            }
             tab_raw = qs[:200]
 
         elif tab == 'pool':
@@ -1252,6 +1300,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'q': q,
             'raw_selected_stage': raw_selected_stage,
             'raw_filter_passthrough': raw_filter_passthrough,
+            'raw_stage_links': raw_stage_links,
+            'raw_blocker_links': raw_blocker_links,
             'active_filter_chips': active_filter_chips,
             'raw_total': raw_total,
             'raw_funnel': raw_funnel,

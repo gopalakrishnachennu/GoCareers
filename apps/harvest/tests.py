@@ -1176,13 +1176,13 @@ class RawJobPipelineUnificationTests(TestCase):
             )
 
     def test_rawjobs_stage_page_count_matches_shared_filter(self):
-        from harvest.models import RawJob
-        from harvest.services.rawjob_query import apply_rawjob_filters
-
         response = self.client.get(reverse("harvest-rawjobs"), {"stage": "CLASSIFIED"})
-        self.assertEqual(response.status_code, 200)
-        expected = apply_rawjob_filters(RawJob.objects.all(), {"stage": "CLASSIFIED"}).count()
-        self.assertEqual(response.context["paginator"].count, expected)
+        self.assertEqual(response.status_code, 302)
+        parsed = urlparse(response["Location"])
+        self.assertEqual(parsed.path, reverse("jobs-pipeline"))
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("tab"), ["raw"])
+        self.assertEqual(qs.get("stage"), ["CLASSIFIED"])
 
     def test_jobs_pipeline_uses_shared_raw_total_snapshot(self):
         from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
@@ -1231,8 +1231,18 @@ class RawJobPipelineUnificationTests(TestCase):
         self.assertEqual(actual_ids, expected_ids)
 
         html = response.content.decode("utf-8")
-        self.assertIn("?tab=raw&stage=CLASSIFIED#raw-jobs-table", html)
-        self.assertIn("?tab=raw&sync_status=PENDING&has_jd=0#raw-jobs-table", html)
+        self.assertIn("?tab=raw&amp;stage=CLASSIFIED#raw-jobs-table", html)
+        self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;has_jd=0#raw-jobs-table", html)
+
+    def test_jobs_pipeline_raw_stage_links_preserve_current_raw_filters(self):
+        response = self.client.get(
+            reverse("jobs-pipeline"),
+            {"tab": "raw", "sync_status": "PENDING", "is_active": "1", "stage": "PARSED"},
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode("utf-8")
+        self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;is_active=1&amp;stage=CLASSIFIED#raw-jobs-table", html)
+        self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;has_jd=0#raw-jobs-table", html)
 
     def test_jobs_pipeline_pool_gate_filter(self):
         from jobs.models import Job
@@ -1300,9 +1310,9 @@ class HarvestPhase3NavigationTests(TestCase):
     def test_rawjobs_batches_html_redirects_to_rawjobs_subtab(self):
         response = self.client.get(reverse("harvest-rawjobs-batches"))
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], f"{reverse('harvest-rawjobs')}?_subtab=batches")
+        self.assertEqual(response["Location"], f"{reverse('jobs-pipeline')}?tab=raw")
 
     def test_rawjobs_company_status_html_redirects_to_rawjobs_subtab(self):
         response = self.client.get(reverse("harvest-rawjobs-company-status"))
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], f"{reverse('harvest-rawjobs')}?_subtab=companies")
+        self.assertEqual(response["Location"], f"{reverse('jobs-pipeline')}?tab=raw")
