@@ -1063,7 +1063,13 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     template_name = 'jobs/pipeline.html'
 
     def get(self, request):
-        tab = request.GET.get('tab', 'pool')
+        tab = (request.GET.get('tab', '') or '').strip().lower()
+        if not tab:
+            legacy_subtab = (request.GET.get('_subtab', '') or '').strip().lower()
+            if legacy_subtab in {"jobs", "batches", "companies", "stats", "insights"}:
+                tab = "raw"
+        if tab not in {"pool", "raw", "live", "archived"}:
+            tab = "pool"
         q = (request.GET.get('q') or '').strip()
         raw_selected_stage = (request.GET.get("stage") or "").strip().upper()
 
@@ -1149,36 +1155,53 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 value = (request.GET.get(key) or "").strip()
                 if value:
                     raw_filter_passthrough.append((key, value))
-            raw_base_pairs: list[tuple[str, str]] = [("tab", "raw")]
-            if q:
-                raw_base_pairs.append(("q", q))
-            raw_base_pairs.extend(raw_filter_passthrough)
+            # Funnel clicks should show canonical stage cohorts. Preserve only scope filters
+            # (search/platform/company/date), and clear mutually-exclusive gate filters.
+            scope_keys = {
+                "q",
+                "platform",
+                "company_id",
+                "label_pk",
+                "date_from",
+                "date_to",
+                "last_hours",
+                "fetched_from",
+                "fetched_to",
+            }
+            raw_scope_pairs: list[tuple[str, str]] = [("tab", "raw")]
+            for key, values in request.GET.lists():
+                if key not in scope_keys:
+                    continue
+                for value in values:
+                    value_s = (value or "").strip()
+                    if value_s:
+                        raw_scope_pairs.append((key, value_s))
             raw_stage_links = {
-                "FETCHED": _raw_query_with_overrides(raw_base_pairs, {}, remove_keys={"stage"}),
-                "PARSED": _raw_query_with_overrides(raw_base_pairs, {"stage": "PARSED"}, remove_keys={"stage"}),
-                "ENRICHED": _raw_query_with_overrides(raw_base_pairs, {"stage": "ENRICHED"}, remove_keys={"stage"}),
-                "CLASSIFIED": _raw_query_with_overrides(raw_base_pairs, {"stage": "CLASSIFIED"}, remove_keys={"stage"}),
-                "READY": _raw_query_with_overrides(raw_base_pairs, {"stage": "READY"}, remove_keys={"stage"}),
-                "SYNCED": _raw_query_with_overrides(raw_base_pairs, {"stage": "SYNCED"}, remove_keys={"stage"}),
+                "FETCHED": _raw_query_with_overrides(raw_scope_pairs, {}, remove_keys={"stage"}),
+                "PARSED": _raw_query_with_overrides(raw_scope_pairs, {"stage": "PARSED"}, remove_keys={"stage"}),
+                "ENRICHED": _raw_query_with_overrides(raw_scope_pairs, {"stage": "ENRICHED"}, remove_keys={"stage"}),
+                "CLASSIFIED": _raw_query_with_overrides(raw_scope_pairs, {"stage": "CLASSIFIED"}, remove_keys={"stage"}),
+                "READY": _raw_query_with_overrides(raw_scope_pairs, {"stage": "READY"}, remove_keys={"stage"}),
+                "SYNCED": _raw_query_with_overrides(raw_scope_pairs, {"stage": "SYNCED"}, remove_keys={"stage"}),
             }
             raw_blocker_links = {
                 "qualified_pending": _raw_query_with_overrides(
-                    raw_base_pairs,
+                    raw_scope_pairs,
                     {"stage": "READY", "sync_status": "PENDING"},
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),
                 "blocked_missing_jd": _raw_query_with_overrides(
-                    raw_base_pairs,
+                    raw_scope_pairs,
                     {"sync_status": "PENDING", "has_jd": "0"},
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),
                 "blocked_inactive": _raw_query_with_overrides(
-                    raw_base_pairs,
+                    raw_scope_pairs,
                     {"sync_status": "PENDING", "is_active": "0"},
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),
                 "blocked_low_conf": _raw_query_with_overrides(
-                    raw_base_pairs,
+                    raw_scope_pairs,
                     {"sync_status": "PENDING", "classification_bucket": "low"},
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),

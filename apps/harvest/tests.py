@@ -1241,8 +1241,17 @@ class RawJobPipelineUnificationTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         html = response.content.decode("utf-8")
-        self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;is_active=1&amp;stage=CLASSIFIED#raw-jobs-table", html)
+        self.assertIn("?tab=raw&amp;stage=CLASSIFIED#raw-jobs-table", html)
         self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;has_jd=0#raw-jobs-table", html)
+
+    def test_jobs_pipeline_supports_legacy_subtab_raw_links(self):
+        response = self.client.get(
+            reverse("jobs-pipeline"),
+            {"_subtab": "jobs", "stage": "CLASSIFIED"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["tab"], "raw")
+        self.assertEqual(response.context["raw_selected_stage"], "CLASSIFIED")
 
     def test_jobs_pipeline_pool_gate_filter(self):
         from jobs.models import Job
