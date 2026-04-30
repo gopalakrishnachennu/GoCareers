@@ -1,7 +1,7 @@
 from django.test import TestCase, Client
 from django.urls import reverse
 from users.models import User, UserEmailNotificationPreferences
-from .models import PlatformConfig, LLMConfig, AuditLog, Organisation, Notification, BroadcastMessage
+from .models import PlatformConfig, LLMConfig, AuditLog, Notification, BroadcastMessage
 from .notification_utils import create_notification, sanitize_internal_link
 from .broadcast_utils import _recipient_queryset
 
@@ -48,13 +48,6 @@ class LLMConfigTests(TestCase):
         config.temperature = 0.5
         config.save()
         self.assertEqual(config.versions.count(), 2)
-
-
-class OrganisationTests(TestCase):
-    def test_create_org(self):
-        org = Organisation.objects.create(name="TestOrg", slug="test-org")
-        self.assertEqual(str(org), "TestOrg")
-        self.assertTrue(org.is_active)
 
 
 class AuditLogTests(TestCase):

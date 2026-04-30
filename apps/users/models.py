@@ -16,15 +16,6 @@ class User(AbstractUser):
         default=Role.CONSULTANT,
     )
 
-    organisation = models.ForeignKey(
-        'core.Organisation',
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name='users',
-        help_text=_("Organisation / tenant for white-label mode (optional)."),
-    )
-
     # Add profile photo or other common fields here if needed
     avatar = models.ImageField(upload_to='avatars/', blank=True, null=True)
     timezone = models.CharField(

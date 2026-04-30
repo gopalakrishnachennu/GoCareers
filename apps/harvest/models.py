@@ -554,9 +554,6 @@ class RawJob(models.Model):
     # Parallel JD backfill: set while a worker holds the row (cleared when done).
     # Stale locks are reclaimed after BACKFILL_LOCK_STALE_MINUTES in tasks.
     jd_backfill_locked_at = models.DateTimeField(null=True, blank=True, db_index=True)
-    # Denormalized flag: True when description has meaningful content (len > 1 after strip).
-    # Kept in sync by save() and all backfill update paths. Indexed for fast backfill queries.
-    has_description = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         ordering = ["-fetched_at"]
@@ -654,10 +651,6 @@ class RawJob(models.Model):
         if self.is_expired_listing():
             return "expired"
         return "no"
-
-    def save(self, *args, **kwargs):
-        self.has_description = self.has_meaningful_description()
-        super().save(*args, **kwargs)
 
     def resume_jd_gate(self) -> dict:
         """Resume-generation JD gate with reason and thresholds."""

@@ -7,27 +7,6 @@ from users.models import User, ConsultantProfile
 from jobs.models import Job
 
 
-class Organisation(models.Model):
-    """
-    Lightweight organisation/tenant for future white-label support.
-    Currently optional and single-instance; safe to ignore when unused.
-    """
-    name = models.CharField(max_length=150, unique=True)
-    slug = models.SlugField(max_length=160, unique=True)
-    logo_url = models.URLField(blank=True)
-    primary_color = models.CharField(max_length=20, blank=True, help_text="Tailwind color token or hex (e.g. 'blue-600' or '#0f172a').")
-    accent_color = models.CharField(max_length=20, blank=True)
-    is_active = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        verbose_name = "Organisation"
-        verbose_name_plural = "Organisations"
-
-    def __str__(self):
-        return self.name
-
 
 class PlatformConfig(models.Model):
     """
@@ -298,13 +277,6 @@ class BroadcastMessage(models.Model):
         choices=Audience.choices,
         default=Audience.EMPLOYEES_AND_CONSULTANTS,
         help_text='Who receives this broadcast (respects optional organisation filter below).',
-    )
-    organisation = models.ForeignKey(
-        'core.Organisation',
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        help_text='Optional: limit recipients to this tenant.',
     )
     created_by = models.ForeignKey(
         'users.User',

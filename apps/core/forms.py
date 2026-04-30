@@ -1,5 +1,5 @@
 from django import forms
-from .models import PlatformConfig, LLMConfig, BroadcastMessage, Organisation
+from .models import PlatformConfig, LLMConfig, BroadcastMessage
 from .security import encrypt_value, decrypt_value
 
 
@@ -96,7 +96,7 @@ class BroadcastForm(forms.ModelForm):
 
     class Meta:
         model = BroadcastMessage
-        fields = ['title', 'body', 'link', 'kind', 'audience', 'organisation']
+        fields = ['title', 'body', 'link', 'kind', 'audience']
         help_texts = {
             'audience': (
                 'Employees only = internal staff. Consultants only = candidates. '
@@ -111,11 +111,8 @@ class BroadcastForm(forms.ModelForm):
             ),
             'kind': forms.Select(attrs={'class': 'w-full px-3 py-2 border rounded-lg'}),
             'audience': forms.Select(attrs={'class': 'w-full px-3 py-2 border rounded-lg'}),
-            'organisation': forms.Select(attrs={'class': 'w-full px-3 py-2 border rounded-lg'}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields['organisation'].required = False
-        self.fields['organisation'].queryset = Organisation.objects.order_by('name')
         self.fields['link'].required = False

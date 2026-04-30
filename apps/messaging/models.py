@@ -14,13 +14,6 @@ class Thread(models.Model):
         ORG_SHARED = "org_shared", _("Organisation team thread")
 
     participants = models.ManyToManyField(settings.AUTH_USER_MODEL, related_name="threads")
-    organisation = models.ForeignKey(
-        "core.Organisation",
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="message_threads",
-    )
     thread_type = models.CharField(
         max_length=20,
         choices=ThreadType.choices,
@@ -66,10 +59,10 @@ class Message(models.Model):
         if self.sender_id == user.pk:
             return True
         thread = self.thread
-        if thread.thread_type == Thread.ThreadType.ORG_SHARED and thread.organisation_id:
+        if thread.thread_type == Thread.ThreadType.ORG_SHARED:
             if user.is_superuser:
                 return True
-            if user.role in ("ADMIN", "EMPLOYEE") and user.organisation_id == thread.organisation_id:
+            if user.role in ("ADMIN", "EMPLOYEE"):
                 return True
         return False
 

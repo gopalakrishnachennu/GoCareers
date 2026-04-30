@@ -56,6 +56,12 @@ app.conf.beat_schedule = {
         "kwargs": {"stale_days": 30},
     },
 
+    # ── ANALYTICS ────────────────────────────────────────────────────────────
+    "analytics-daily-snapshot": {
+        "task": "analytics.tasks.take_daily_snapshot_task",
+        "schedule": crontab(hour=23, minute=30),      # daily 23:30 UTC
+    },
+
     # ── REPORTS & DIGESTS ─────────────────────────────────────────────────────
     "weekly-consultant-pipeline-digest": {
         "task": "core.tasks.send_weekly_consultant_pipeline_digest_task",

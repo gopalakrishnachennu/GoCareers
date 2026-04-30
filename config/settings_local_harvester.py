@@ -62,7 +62,6 @@ INSTALLED_APPS = [
     "messaging.apps.MessagingConfig",
     "analytics.apps.AnalyticsConfig",
     "interviews_app.apps.InterviewsAppConfig",
-    "prompts_app.apps.PromptsAppConfig",
 ]
 
 AUTH_USER_MODEL = "users.User"
