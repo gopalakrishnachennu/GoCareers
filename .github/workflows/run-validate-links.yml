@@ -1,0 +1,31 @@
+name: Run — Validate Live Links Now
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_size:
+        description: "Batch size per chunk"
+        default: "200"
+      concurrency:
+        description: "Parallel HTTP threads"
+        default: "20"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fire validate_raw_job_urls via Celery
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "
+from harvest.tasks import validate_raw_job_urls_task
+task = validate_raw_job_urls_task.delay(batch_size=${{ github.event.inputs.batch_size }}, concurrency=${{ github.event.inputs.concurrency }})
+print(f'Validate task queued: {task.id}')
+"
