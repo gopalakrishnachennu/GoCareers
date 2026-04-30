@@ -1232,6 +1232,36 @@ class RawJobPipelineUnificationTests(TestCase):
 
         html = response.content.decode("utf-8")
         self.assertIn("?tab=raw&stage=CLASSIFIED#raw-jobs-table", html)
+        self.assertIn("?tab=raw&sync_status=PENDING&has_jd=0#raw-jobs-table", html)
+
+    def test_jobs_pipeline_pool_gate_filter(self):
+        from jobs.models import Job
+
+        posted_by = self.user
+        Job.objects.create(
+            title="Pool eligible",
+            company="UnifyCo",
+            description="good",
+            status=Job.Status.POOL,
+            posted_by=posted_by,
+            gate_status=Job.GateStatus.ELIGIBLE,
+            vet_lane=Job.VetLane.AUTO,
+        )
+        Job.objects.create(
+            title="Pool blocked",
+            company="UnifyCo",
+            description="bad",
+            status=Job.Status.POOL,
+            posted_by=posted_by,
+            gate_status=Job.GateStatus.BLOCKED,
+            vet_lane=Job.VetLane.BLOCKED,
+        )
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "pool", "gate": "BLOCKED"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["gate_tab"], "BLOCKED")
+        rows = list(response.context["tab_jobs"])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].title, "Pool blocked")
 
 
 class HarvestPhase3NavigationTests(TestCase):

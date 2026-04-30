@@ -1070,6 +1070,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         from harvest.models import RawJob, FetchBatch
         from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
         from harvest.services.rawjob_query import (
+            FILTER_STATE_KEYS,
             apply_rawjob_filters,
             build_funnel_counts,
             effective_classification_q,
@@ -1120,15 +1121,26 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         # ── Tab-specific data ────────────────────────────────────────────────
         tab_jobs = None
         tab_raw = None
+        lane_tab = "all"
+        score_tab = "all"
+        gate_tab = "all"
+        raw_filter_passthrough: list[tuple[str, str]] = []
 
         if tab == 'raw':
             qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
             qs = apply_rawjob_filters(qs, request.GET)
+            for key in FILTER_STATE_KEYS:
+                if key == "q":
+                    continue
+                value = (request.GET.get(key) or "").strip()
+                if value:
+                    raw_filter_passthrough.append((key, value))
             tab_raw = qs[:200]
 
         elif tab == 'pool':
             score_tab = request.GET.get('score', 'all')
             lane_tab = request.GET.get('lane', 'all')
+            gate_tab = request.GET.get('gate', 'all').upper()
             qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
             if q:
                 qs = qs.filter(Q(title__icontains=q) | Q(company__icontains=q))
@@ -1164,6 +1176,12 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 qs = qs.filter(vet_lane=Job.VetLane.BLOCKED)
             elif lane_tab == 'aging':
                 qs = qs.filter(queue_entered_at__lt=age_24h)
+            if gate_tab == Job.GateStatus.ELIGIBLE:
+                qs = qs.filter(gate_status=Job.GateStatus.ELIGIBLE)
+            elif gate_tab == Job.GateStatus.REVIEW:
+                qs = qs.filter(gate_status=Job.GateStatus.REVIEW)
+            elif gate_tab == Job.GateStatus.BLOCKED:
+                qs = qs.filter(gate_status=Job.GateStatus.BLOCKED)
             if lane_tab == 'approved_recent':
                 approved_qs = Job.objects.filter(status=Job.Status.OPEN, is_archived=False, vet_approved_at__isnull=False)
                 if q:
@@ -1174,6 +1192,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             pool_extra = {
                 'score_tab': score_tab,
                 'lane_tab': lane_tab,
+                'gate_tab': gate_tab,
                 'pool_high': pool_high,
                 'pool_review': pool_review,
                 'pool_flagged': pool_flagged,
@@ -1202,10 +1221,38 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 qs = qs.filter(Q(title__icontains=q) | Q(company__icontains=q))
             tab_jobs = qs.select_related('posted_by').order_by('-archived_at')[:200]
 
+        active_filter_chips: list[tuple[str, str]] = []
+        if q:
+            active_filter_chips.append(("Search", q))
+        if tab == "raw":
+            raw_label_map = {
+                "stage": "Stage",
+                "sync_status": "Sync",
+                "is_active": "Active",
+                "has_jd": "JD",
+                "classification_bucket": "Conf",
+                "resume_jd": "Resume JD",
+                "pending_age_bucket": "Pending age",
+                "platform": "Platform",
+                "country": "Country",
+                "state": "State",
+            }
+            for key, value in raw_filter_passthrough:
+                active_filter_chips.append((raw_label_map.get(key, key.replace("_", " ").title()), value))
+        if tab == "pool":
+            if gate_tab != "all":
+                active_filter_chips.append(("Gate", gate_tab))
+            if lane_tab != "all":
+                active_filter_chips.append(("Lane", lane_tab))
+            if score_tab != "all":
+                active_filter_chips.append(("Score", score_tab))
+
         ctx = {
             'tab': tab,
             'q': q,
             'raw_selected_stage': raw_selected_stage,
+            'raw_filter_passthrough': raw_filter_passthrough,
+            'active_filter_chips': active_filter_chips,
             'raw_total': raw_total,
             'raw_funnel': raw_funnel,
             'raw_gate_summary': raw_gate_summary,

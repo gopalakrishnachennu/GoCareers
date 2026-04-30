@@ -115,8 +115,16 @@
   <!-- Search — right-aligned in the same row -->
   <form method="get" class="flex items-center gap-2 ml-auto shrink-0">
     <input type="hidden" name="tab" value="{{ tab }}">
-    {% if tab == 'raw' and raw_selected_stage %}
-      <input type="hidden" name="stage" value="{{ raw_selected_stage }}">
+    {% if tab == 'raw' %}
+      {% for k, v in raw_filter_passthrough %}
+        {% if k != 'q' %}
+        <input type="hidden" name="{{ k }}" value="{{ v }}">
+        {% endif %}
+      {% endfor %}
+    {% elif tab == 'pool' %}
+      {% if lane_tab %}<input type="hidden" name="lane" value="{{ lane_tab }}">{% endif %}
+      {% if score_tab %}<input type="hidden" name="score" value="{{ score_tab }}">{% endif %}
+      {% if gate_tab %}<input type="hidden" name="gate" value="{{ gate_tab }}">{% endif %}
     {% endif %}
     <div class="relative">
       <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -129,6 +137,20 @@
     {% if q %}<a href="?tab={{ tab }}" class="btn-ghost btn-sm">✕</a>{% endif %}
   </form>
 </div>
+
+{% if active_filter_chips %}
+<div class="mb-4 p-3 rounded-xl border border-indigo-100 bg-indigo-50/60">
+  <div class="flex items-center gap-2 flex-wrap">
+    <span class="text-sm font-semibold text-indigo-700">Filtered:</span>
+    {% for name, value in active_filter_chips %}
+      <span class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-semibold bg-white border border-indigo-200 text-indigo-700">
+        {{ name }}: {{ value }}
+      </span>
+    {% endfor %}
+    <a href="?tab={{ tab }}" class="ml-auto text-sm text-indigo-700 hover:text-indigo-900 hover:underline">Clear filters</a>
+  </div>
+</div>
+{% endif %}
 
 <!-- ══════════════════════════════════════════════════════════════════════════ -->
 <!-- TAB: VET QUEUE (pool)                                                     -->
@@ -152,34 +174,34 @@
 </div>
 
 <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2 mb-3">
-  <div class="p-3 rounded-lg border border-emerald-200 bg-emerald-50"><div class="text-[11px] uppercase text-emerald-700">Eligible</div><div class="text-xl font-bold text-emerald-800">{{ vet_gate_summary.eligible }}</div></div>
-  <div class="p-3 rounded-lg border border-blue-200 bg-blue-50"><div class="text-[11px] uppercase text-blue-700">Needs Review</div><div class="text-xl font-bold text-blue-800">{{ vet_gate_summary.review }}</div></div>
-  <div class="p-3 rounded-lg border border-rose-200 bg-rose-50"><div class="text-[11px] uppercase text-rose-700">Blocked</div><div class="text-xl font-bold text-rose-800">{{ vet_gate_summary.blocked }}</div></div>
-  <div class="p-3 rounded-lg border border-emerald-200 bg-white"><div class="text-[11px] uppercase text-slate-500">Auto Lane</div><div class="text-xl font-bold text-emerald-700">{{ vet_gate_summary.auto_lane }}</div></div>
-  <div class="p-3 rounded-lg border border-blue-200 bg-white"><div class="text-[11px] uppercase text-slate-500">Human Lane</div><div class="text-xl font-bold text-blue-700">{{ vet_gate_summary.human_lane }}</div></div>
-  <div class="p-3 rounded-lg border border-rose-200 bg-white"><div class="text-[11px] uppercase text-slate-500">Blocked Lane</div><div class="text-xl font-bold text-rose-700">{{ vet_gate_summary.blocked_lane }}</div></div>
+  <a href="?tab=pool&gate=ELIGIBLE&lane={{ lane_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if gate_tab == 'ELIGIBLE' %}border-emerald-400 bg-emerald-100{% else %}border-emerald-200 bg-emerald-50 hover:border-emerald-300{% endif %}"><div class="text-[11px] uppercase text-emerald-700">Eligible</div><div class="text-xl font-bold text-emerald-800">{{ vet_gate_summary.eligible }}</div></a>
+  <a href="?tab=pool&gate=REVIEW&lane={{ lane_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if gate_tab == 'REVIEW' %}border-blue-400 bg-blue-100{% else %}border-blue-200 bg-blue-50 hover:border-blue-300{% endif %}"><div class="text-[11px] uppercase text-blue-700">Needs Review</div><div class="text-xl font-bold text-blue-800">{{ vet_gate_summary.review }}</div></a>
+  <a href="?tab=pool&gate=BLOCKED&lane={{ lane_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if gate_tab == 'BLOCKED' %}border-rose-400 bg-rose-100{% else %}border-rose-200 bg-rose-50 hover:border-rose-300{% endif %}"><div class="text-[11px] uppercase text-rose-700">Blocked</div><div class="text-xl font-bold text-rose-800">{{ vet_gate_summary.blocked }}</div></a>
+  <a href="?tab=pool&lane=auto&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if lane_tab == 'auto' %}border-emerald-400 bg-emerald-50{% else %}border-emerald-200 bg-white hover:border-emerald-300{% endif %}"><div class="text-[11px] uppercase text-slate-500">Auto Lane</div><div class="text-xl font-bold text-emerald-700">{{ vet_gate_summary.auto_lane }}</div></a>
+  <a href="?tab=pool&lane=human&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if lane_tab == 'human' %}border-blue-400 bg-blue-50{% else %}border-blue-200 bg-white hover:border-blue-300{% endif %}"><div class="text-[11px] uppercase text-slate-500">Human Lane</div><div class="text-xl font-bold text-blue-700">{{ vet_gate_summary.human_lane }}</div></a>
+  <a href="?tab=pool&lane=blocked&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="p-3 rounded-lg border {% if lane_tab == 'blocked' %}border-rose-400 bg-rose-50{% else %}border-rose-200 bg-white hover:border-rose-300{% endif %}"><div class="text-[11px] uppercase text-slate-500">Blocked Lane</div><div class="text-xl font-bold text-rose-700">{{ vet_gate_summary.blocked_lane }}</div></a>
 </div>
 
 <!-- Smart lane filters -->
 <div class="mb-3 p-3 bg-slate-50 rounded-xl border border-slate-200">
   <div class="text-[11px] text-slate-500 font-semibold uppercase tracking-wide mb-2">Vetting lanes</div>
   <div class="flex flex-wrap gap-2">
-    <a href="?tab=pool&lane=all&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'all' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'all' %}background:#334155;{% endif %}">
+    <a href="?tab=pool&lane=all&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'all' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'all' %}background:#334155;{% endif %}">
       All Queue <span class="{% if lane_tab == 'all' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_total }}</span>
     </a>
-    <a href="?tab=pool&lane=auto&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'auto' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'auto' %}background:#059669;{% endif %}">
+    <a href="?tab=pool&lane=auto&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'auto' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'auto' %}background:#059669;{% endif %}">
       Auto-Approve <span class="{% if lane_tab == 'auto' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_auto_lane }}</span>
     </a>
-    <a href="?tab=pool&lane=human&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'human' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'human' %}background:#2563eb;{% endif %}">
+    <a href="?tab=pool&lane=human&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'human' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'human' %}background:#2563eb;{% endif %}">
       Needs Review <span class="{% if lane_tab == 'human' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_human_lane }}</span>
     </a>
-    <a href="?tab=pool&lane=blocked&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'blocked' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'blocked' %}background:#dc2626;{% endif %}">
+    <a href="?tab=pool&lane=blocked&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'blocked' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'blocked' %}background:#dc2626;{% endif %}">
       Blocked <span class="{% if lane_tab == 'blocked' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_blocked_lane }}</span>
     </a>
-    <a href="?tab=pool&lane=aging&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'aging' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'aging' %}background:#a16207;{% endif %}">
+    <a href="?tab=pool&lane=aging&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'aging' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'aging' %}background:#a16207;{% endif %}">
       Aging &gt;24h <span class="{% if lane_tab == 'aging' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_aging_gt_24h }}</span>
     </a>
-    <a href="?tab=pool&lane=approved_recent&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'approved_recent' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'approved_recent' %}background:#0f766e;{% endif %}">
+    <a href="?tab=pool&lane=approved_recent&gate={{ gate_tab }}&score={{ score_tab }}{% if q %}&q={{ q }}{% endif %}" class="{% if lane_tab == 'approved_recent' %}score-tab score-tab-active{% else %}score-tab score-tab-inactive{% endif %}" style="{% if lane_tab == 'approved_recent' %}background:#0f766e;{% endif %}">
       Recently Approved
     </a>
   </div>
@@ -190,44 +212,44 @@
   <span class="text-xs text-gray-400 font-medium self-center mr-1">Filter by quality:</span>
 
   {% if score_tab == 'all' %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=all{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#4f46e5;">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=all{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#4f46e5;">
   {% else %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=all{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=all{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
   {% endif %}
     All <span class="{% if score_tab == 'all' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_total }}</span>
   </a>
 
   {% if score_tab == 'high' %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=high{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#16a34a;">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=high{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#16a34a;">
   {% else %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=high{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=high{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
   {% endif %}
     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
     High ≥80 <span class="{% if score_tab == 'high' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_high }}</span>
   </a>
 
   {% if score_tab == 'review' %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=review{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#d97706;">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=review{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#d97706;">
   {% else %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=review{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=review{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
   {% endif %}
     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
     Needs Review <span class="{% if score_tab == 'review' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_review }}</span>
   </a>
 
   {% if score_tab == 'flagged' %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=flagged{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#dc2626;">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=flagged{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#dc2626;">
   {% else %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=flagged{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=flagged{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
   {% endif %}
     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
     Flagged &lt;50 <span class="{% if score_tab == 'flagged' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_flagged }}</span>
   </a>
 
   {% if score_tab == 'unscored' %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=unscored{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#4b5563;">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=unscored{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-active" style="background:#4b5563;">
   {% else %}
-  <a href="?tab=pool&lane={{ lane_tab }}&score=unscored{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
+  <a href="?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score=unscored{% if q %}&q={{ q }}{% endif %}" class="score-tab score-tab-inactive">
   {% endif %}
     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/></svg>
     Unscored <span class="{% if score_tab == 'unscored' %}bg-white/20{% else %}bg-gray-100{% endif %} px-1.5 py-0.5 rounded-full font-bold">{{ pool_unscored }}</span>
@@ -328,7 +350,7 @@
               {% if lane_tab != 'approved_recent' %}
                 <form method="post" action="{% url 'job-approve' job.pk %}">
                   {% csrf_token %}
-                  <input type="hidden" name="next" value="{% url 'jobs-pipeline' %}?tab=pool&lane={{ lane_tab }}&score={{ score_tab }}">
+                  <input type="hidden" name="next" value="{% url 'jobs-pipeline' %}?tab=pool&lane={{ lane_tab }}&gate={{ gate_tab }}&score={{ score_tab }}">
                   <button type="submit" class="btn-success btn-xs">Approve</button>
                 </form>
                 <button type="button" @click="$dispatch('open-reject-modal', { jobId: {{ job.pk }}, jobTitle: '{{ job.title|escapejs }}' })"
@@ -354,7 +376,7 @@
   <svg class="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
   <p class="text-gray-700 text-sm font-semibold mb-1">Vetting queue is clear{% if score_tab != 'all' or lane_tab != 'all' %} for this filter{% endif %}.</p>
   <p class="text-gray-400 text-xs">Jobs will appear here once harvested.
-    <a href="{% url 'harvest-rawjobs' %}" class="text-indigo-600 hover:underline">Check Raw Jobs</a> or
+    <a href="?tab=raw" class="text-indigo-600 hover:underline">Check Raw Jobs</a> or
     <a href="{% url 'harvest-run-fetch-batch' %}" class="text-indigo-600 hover:underline">run a harvest</a>.
   </p>
 </div>
@@ -464,25 +486,25 @@
 </div>
 
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
-  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&stage=READY&sync_status=PENDING"
+  <a href="?tab=raw&stage=READY&sync_status=PENDING#raw-jobs-table"
      class="p-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:border-emerald-300 transition">
     <div class="text-[11px] uppercase text-emerald-700">Qualified Pending</div>
     <div class="text-2xl font-bold text-emerald-800">{{ raw_gate_summary.qualified_pending }}</div>
     <div class="text-[11px] text-emerald-700 mt-0.5">eligible to sync now</div>
   </a>
-  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&has_jd=0"
+  <a href="?tab=raw&sync_status=PENDING&has_jd=0#raw-jobs-table"
      class="p-3 rounded-lg border border-amber-200 bg-amber-50 hover:border-amber-300 transition">
     <div class="text-[11px] uppercase text-amber-700">Blocked: Missing JD</div>
     <div class="text-2xl font-bold text-amber-800">{{ raw_gate_summary.blocked_missing_jd }}</div>
     <div class="text-[11px] text-amber-700 mt-0.5">no usable description</div>
   </a>
-  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&is_active=0"
+  <a href="?tab=raw&sync_status=PENDING&is_active=0#raw-jobs-table"
      class="p-3 rounded-lg border border-rose-200 bg-rose-50 hover:border-rose-300 transition">
     <div class="text-[11px] uppercase text-rose-700">Blocked: Inactive</div>
     <div class="text-2xl font-bold text-rose-800">{{ raw_gate_summary.blocked_inactive }}</div>
     <div class="text-[11px] text-rose-700 mt-0.5">posting no longer live</div>
   </a>
-  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&classification_bucket=low"
+  <a href="?tab=raw&sync_status=PENDING&classification_bucket=low#raw-jobs-table"
      class="p-3 rounded-lg border border-indigo-200 bg-indigo-50 hover:border-indigo-300 transition">
     <div class="text-[11px] uppercase text-indigo-700">Blocked: Low Confidence</div>
     <div class="text-2xl font-bold text-indigo-800">{{ raw_gate_summary.blocked_low_conf }}</div>
