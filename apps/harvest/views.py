@@ -234,6 +234,39 @@ def _full_crawl_cooldown_ctx() -> dict:
     return {"last_full_batch": last_full_batch, "cooldown_remaining_sec": cooldown_remaining_sec}
 
 
+_ALLOWED_RETURN_VIEWS = {
+    "harvest-rawjobs",
+    "jobs-pipeline",
+    "ops-center",
+    "harvest-labels",
+    "harvest-schedule",
+}
+
+
+def _resolve_return_target(
+    request,
+    *,
+    default_view: str = "harvest-rawjobs",
+    default_pipeline_tab: str = "raw",
+) -> tuple[str, dict | None]:
+    """
+    Normalize ``return_to`` from form posts and optional ``return_tab``.
+
+    When returning to jobs pipeline, keep tab context so long-running task actions
+    do not bounce users into a different section.
+    """
+    return_to = (request.POST.get("return_to", "") or "").strip() or default_view
+    if return_to not in _ALLOWED_RETURN_VIEWS:
+        return_to = default_view
+
+    extra_query: dict | None = None
+    if return_to == "jobs-pipeline":
+        return_tab = (request.POST.get("return_tab", "") or "").strip() or default_pipeline_tab
+        extra_query = {"tab": return_tab}
+
+    return return_to, extra_query
+
+
 def raw_jobs_missing_description_count() -> int:
     return _svc_raw_jobs_missing_description_count()
 
@@ -635,10 +668,17 @@ class RunSyncNowView(SuperuserRequiredMixin, View):
             f"Vet sync started ({scope_txt}, Task: {task.id[:8]}…). "
             "This scans across the backlog and updates multi-page results.",
         )
-        return_to = (request.POST.get("return_to", "") or "").strip() or "harvest-rawjobs"
-        if return_to not in {"harvest-rawjobs", "harvest-monitor", "jobs-pipeline", "harvest-schedule"}:
-            return_to = "harvest-rawjobs"
-        return redirect_with_task_progress(return_to, task.id, "Sync Qualified to Vet Queue")
+        return_to, extra_query = _resolve_return_target(
+            request,
+            default_view="jobs-pipeline",
+            default_pipeline_tab="raw",
+        )
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            "Sync Qualified to Vet Queue",
+            extra_query=extra_query,
+        )
 
 
 class RunBulkSyncView(SuperuserRequiredMixin, View):
@@ -651,7 +691,13 @@ class RunBulkSyncView(SuperuserRequiredMixin, View):
             f"Bulk sync started — up to 20,000 pending jobs → pool (Task: {task.id[:8]}…). "
             "This runs in the background. Refresh to see progress.",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, "Bulk sync (20k jobs)")
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            "Bulk sync (20k jobs)",
+            extra_query=extra_query,
+        )
 
 
 class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
@@ -666,7 +712,13 @@ class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
             f"Retry failed fetches queued (Task: {task.id[:8]}…). "
             "This will re-run failed company fetches in the background.",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, "Retry failed fetches")
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            "Retry failed fetches",
+            extra_query=extra_query,
+        )
 
 
 class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
@@ -702,7 +754,13 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
             f"Link-health validation queued (Task: {task.id[:8]}…). "
             "Soft-404 pages will be marked inactive before vet sync.",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, "Validate Raw Job URLs")
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            "Validate Raw Job URLs",
+            extra_query=extra_query,
+        )
 
 
 class RunSyncSelectedRawJobsView(SuperuserRequiredMixin, View):
@@ -1072,7 +1130,8 @@ class FetchBatchListView(SuperuserRequiredMixin, ListView):
                     "created_at": b.created_at.strftime("%Y-%m-%d %H:%M") if b.created_at else "",
                 })
             return JsonResponse({"batches": batches})
-        return super().get(request, *args, **kwargs)
+        # HTML batch history is consolidated into the Raw Jobs command center.
+        return redirect(f"{reverse('harvest-rawjobs')}?_subtab=batches")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -1116,7 +1175,8 @@ class CompanyFetchStatusView(SuperuserRequiredMixin, ListView):
                     "started_at": run.started_at.strftime("%Y-%m-%d %H:%M") if run.started_at else "",
                 })
             return JsonResponse({"runs": runs})
-        return super().get(request, *args, **kwargs)
+        # HTML company status view is consolidated into the Raw Jobs command center.
+        return redirect(f"{reverse('harvest-rawjobs')}?_subtab=companies")
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -1200,7 +1260,13 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 f"Quick Sync started — fetching new/updated jobs from the last 25h "
                 f"(Task: {task.id[:8]}…). Much faster than a full crawl.",
             )
-            return redirect_with_task_progress("harvest-rawjobs", task.id, "Quick Sync (25h)")
+            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return redirect_with_task_progress(
+                return_to,
+                task.id,
+                "Quick Sync (25h)",
+                extra_query=extra_query,
+            )
 
         # ── Mode: Full Crawl — enforce 2-hour cooldown ────────────────────────
         if fetch_mode == "full":
@@ -1216,7 +1282,8 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                         f"Wait {mins}m {secs}s before starting another full crawl. "
                         f"Use Quick Sync (25h) for an incremental update now.",
                     )
-                    return redirect("harvest-rawjobs")
+                    return_to, _ = _resolve_return_target(request, default_view="harvest-rawjobs")
+                    return redirect(return_to)
             ts = timezone.now().strftime("%Y-%m-%d %H:%M")
             task = fetch_raw_jobs_batch_task.delay(
                 platform_slug=platform_slug or None,
@@ -1231,7 +1298,13 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 f"Full Crawl started — fetching ALL jobs from every platform "
                 f"(Task: {task.id[:8]}…). This may take 30–60+ minutes.",
             )
-            return redirect_with_task_progress("harvest-rawjobs", task.id, "Full Crawl")
+            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return redirect_with_task_progress(
+                return_to,
+                task.id,
+                "Full Crawl",
+                extra_query=extra_query,
+            )
 
         # ── Mode: Test / Platform Check ───────────────────────────────────────
         if test_mode or fetch_mode == "test":
@@ -1250,7 +1323,13 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 request,
                 f"Platform check started — {companies_per_platform} co/platform, up to {test_max_jobs} jobs each{skip_note} (Task: {task.id[:8]}…)",
             )
-            return redirect_with_task_progress("harvest-rawjobs", task.id, f"Platform check ({test_max_jobs} jobs/platform)")
+            return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+            return redirect_with_task_progress(
+                return_to,
+                task.id,
+                f"Platform check ({test_max_jobs} jobs/platform)",
+                extra_query=extra_query,
+            )
 
         # ── Mode: Filtered Batch (platform selector form) ─────────────────────
         task = fetch_raw_jobs_batch_task.delay(
@@ -1267,7 +1346,13 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
             + (f" for platform '{platform_slug}'" if platform_slug else " for all platforms")
             + f" (Task: {task.id[:8]}...)",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, "Raw jobs batch fetch")
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            "Raw jobs batch fetch",
+            extra_query=extra_query,
+        )
 
 
 class StopBatchView(SuperuserRequiredMixin, View):
@@ -1351,9 +1436,12 @@ class RunEnrichExistingView(SuperuserRequiredMixin, View):
             request,
             f"Enrichment started ({label}, batch={batch_size:,}, unenriched_only={only_unenriched}) — Task {task.id[:8]}…",
         )
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
         return redirect_with_task_progress(
-            "harvest-rawjobs", task.id,
+            return_to,
+            task.id,
             f"Enrich existing jobs ({label})",
+            extra_query=extra_query,
         )
 
 
@@ -1370,10 +1458,12 @@ class RunBackfillResumeContractView(SuperuserRequiredMixin, View):
             request,
             f"Resume contract backfill started (batch={batch_size:,}, offset={offset:,}) — Task {task.id[:8]}…",
         )
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
         return redirect_with_task_progress(
-            "harvest-rawjobs",
+            return_to,
             task.id,
             "Backfill resume contract fields",
+            extra_query=extra_query,
         )
 
 
@@ -1404,7 +1494,13 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
             request,
             f"Description {mode} started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
         )
-        return redirect_with_task_progress("harvest-rawjobs", task.id, f"{'Deep Scan' if force_jarvis else 'Backfill'} descriptions ({label})")
+        return_to, extra_query = _resolve_return_target(request, default_view="harvest-rawjobs")
+        return redirect_with_task_progress(
+            return_to,
+            task.id,
+            f"{'Deep Scan' if force_jarvis else 'Backfill'} descriptions ({label})",
+            extra_query=extra_query,
+        )
 
 
 class TaskMonitorView(SuperuserRequiredMixin, TemplateView):

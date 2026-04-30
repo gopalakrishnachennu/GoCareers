@@ -15,6 +15,7 @@ def redirect_with_task_progress(
     *,
     args: tuple | None = None,
     kwargs: dict | None = None,
+    extra_query: dict | None = None,
 ):
     """
     Redirect to a named URL with ``?tp=<celery task id>&tpl=<label>`` for the global progress bar.
@@ -22,5 +23,8 @@ def redirect_with_task_progress(
     ``label`` is shown in the UI (keep short).
     """
     path = reverse(viewname, args=args or [], kwargs=kwargs or {})
-    q = urlencode({"tp": task_id, "tpl": label})
+    query = {"tp": task_id, "tpl": label}
+    if extra_query:
+        query.update(extra_query)
+    q = urlencode(query)
     return redirect(f"{path}?{q}")

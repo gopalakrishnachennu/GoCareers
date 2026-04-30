@@ -1191,3 +1191,47 @@ class RawJobPipelineUnificationTests(TestCase):
         self.assertEqual(response.status_code, 200)
         stats = load_rawjobs_dashboard_stats(force_refresh=False)
         self.assertEqual(response.context["raw_total"], stats["total"])
+
+
+class HarvestPhase3NavigationTests(TestCase):
+    def setUp(self):
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="phase3_nav_admin",
+            email="phase3_nav_admin@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.client.force_login(self.user)
+
+    @patch("apps.harvest.tasks.sync_harvested_to_pool_task.delay")
+    def test_run_sync_redirects_back_to_pipeline_raw_tab(self, mock_delay):
+        mock_delay.return_value = MagicMock(id="task-1234-abcd")
+        response = self.client.post(
+            reverse("harvest-run-sync"),
+            {
+                "qualified_only": "1",
+                "max_jobs": "0",
+                "chunk_size": "500",
+                "return_to": "jobs-pipeline",
+                "return_tab": "raw",
+            },
+        )
+        self.assertEqual(response.status_code, 302)
+        parsed = urlparse(response["Location"])
+        self.assertEqual(parsed.path, reverse("jobs-pipeline"))
+        qs = parse_qs(parsed.query)
+        self.assertEqual(qs.get("tab"), ["raw"])
+        self.assertEqual(qs.get("tp"), ["task-1234-abcd"])
+        self.assertEqual(qs.get("tpl"), ["Sync Qualified to Vet Queue"])
+
+    def test_rawjobs_batches_html_redirects_to_rawjobs_subtab(self):
+        response = self.client.get(reverse("harvest-rawjobs-batches"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"{reverse('harvest-rawjobs')}?_subtab=batches")
+
+    def test_rawjobs_company_status_html_redirects_to_rawjobs_subtab(self):
+        response = self.client.get(reverse("harvest-rawjobs-company-status"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], f"{reverse('harvest-rawjobs')}?_subtab=companies")
