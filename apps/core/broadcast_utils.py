@@ -14,9 +14,6 @@ logger = logging.getLogger(__name__)
 
 def _recipient_queryset(message: BroadcastMessage):
     qs = User.objects.filter(is_active=True)
-    if message.organisation_id:
-        qs = qs.filter(organisation_id=message.organisation_id)
-
     aud = message.audience
     if aud == BroadcastMessage.Audience.EMPLOYEES_ONLY:
         qs = qs.filter(role=User.Role.EMPLOYEE)

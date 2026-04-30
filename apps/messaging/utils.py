@@ -38,20 +38,14 @@ def is_staff_user(user: User) -> bool:
 
 
 def users_may_message_each_other(a: User, b: User) -> bool:
-    if a.pk == b.pk:
-        return False
-    if a.organisation_id and b.organisation_id and a.organisation_id != b.organisation_id:
-        return False
-    return True
+    return a.pk != b.pk
 
 
 def user_can_access_thread(user: User, thread: Thread) -> bool:
     if thread.participants.filter(pk=user.pk).exists():
         return True
-    if thread.thread_type == Thread.ThreadType.ORG_SHARED and thread.organisation_id:
-        if user.is_superuser:
-            return True
-        if is_staff_user(user) and user.organisation_id == thread.organisation_id:
+    if thread.thread_type == Thread.ThreadType.ORG_SHARED:
+        if user.is_superuser or is_staff_user(user):
             return True
     return False
 
@@ -69,12 +63,7 @@ def inbox_threads_base_queryset(user: User):
     )
     uid = user.id
     if is_staff_user(user):
-        q = Q(participants=user)
-        if user.organisation_id:
-            q |= Q(
-                thread_type=Thread.ThreadType.ORG_SHARED,
-                organisation_id=user.organisation_id,
-            )
+        q = Q(participants=user) | Q(thread_type=Thread.ThreadType.ORG_SHARED)
         qs = Thread.objects.filter(q).distinct()
     else:
         qs = user.threads.all()

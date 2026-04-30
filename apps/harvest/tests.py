@@ -650,7 +650,20 @@ class SyncRawJobsToPoolTests(TestCase):
             title="Engineer",
             url_hash=h,
             original_url=url,
-            description="Build things.",
+            description=(
+                "We are hiring a platform engineer to design, build, and maintain "
+                "reliable cloud infrastructure, automation pipelines, observability "
+                "dashboards, incident response processes, and secure deployment "
+                "patterns across distributed systems. You will collaborate with "
+                "engineering and operations teams, improve CI/CD workflows, enforce "
+                "best practices, and support production services with clear runbooks "
+                "and operational excellence. The role includes Linux operations, "
+                "infrastructure as code, monitoring, alert tuning, service-level "
+                "objectives, incident retrospectives, secure networking, and "
+                "change management. Candidates should demonstrate scripting ability, "
+                "cloud platform experience, strong communication, and ownership of "
+                "production reliability initiatives across multiple environments."
+            ),
             sync_status="PENDING",
         )
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
@@ -708,15 +721,13 @@ class JarvisPlatformLabelRepairTests(TestCase):
         from harvest.models import CompanyPlatformLabel, JobBoardPlatform
 
         self.company = Company.objects.create(name="Appliedsystems")
-        self.greenhouse = JobBoardPlatform.objects.create(
-            name="Greenhouse",
+        self.greenhouse, _ = JobBoardPlatform.objects.get_or_create(
             slug="greenhouse",
-            is_enabled=True,
+            defaults={"name": "Greenhouse", "is_enabled": True},
         )
-        self.icims = JobBoardPlatform.objects.create(
-            name="iCIMS",
+        self.icims, _ = JobBoardPlatform.objects.get_or_create(
             slug="icims",
-            is_enabled=True,
+            defaults={"name": "iCIMS", "is_enabled": True},
         )
         self.label = CompanyPlatformLabel.objects.create(
             company=self.company,
@@ -775,12 +786,14 @@ class JarvisPlatformLabelRepairTests(TestCase):
         from harvest.models import CompanyPlatformLabel
         from harvest.tasks import _jarvis_ensure_company_platform_label
 
-        icims_label = CompanyPlatformLabel.objects.create(
-            company=self.company,
-            platform=self.icims,
-            tenant_id="careers-appliedsystems",
-            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
-            confidence=CompanyPlatformLabel.Confidence.HIGH,
+        # CompanyPlatformLabel is OneToOne(company). Re-point the existing row to
+        # iCIMS and verify Jarvis reuses it instead of creating anything new.
+        self.label.platform = self.icims
+        self.label.tenant_id = "careers-appliedsystems"
+        self.label.detection_method = CompanyPlatformLabel.DetectionMethod.URL_PATTERN
+        self.label.confidence = CompanyPlatformLabel.Confidence.HIGH
+        self.label.save(
+            update_fields=["platform", "tenant_id", "detection_method", "confidence"]
         )
 
         label, board_ctx = _jarvis_ensure_company_platform_label(
@@ -789,7 +802,7 @@ class JarvisPlatformLabelRepairTests(TestCase):
             source_url="https://careers-appliedsystems.icims.com/jobs/search",
             job_platform=self.icims,
         )
-        self.assertEqual(label.pk, icims_label.pk)
+        self.assertEqual(label.pk, self.label.pk)
         self.assertEqual(label.platform.slug, "icims")
         self.assertEqual(board_ctx.get("platform_slug"), "icims")
 
@@ -812,7 +825,10 @@ class JarvisCompanyAndRawJobDedupeTests(TestCase):
         from harvest.tasks import fetch_raw_jobs_for_company_task
 
         company = Company.objects.create(name="Acme")
-        platform = JobBoardPlatform.objects.create(name="Greenhouse", slug="greenhouse", is_enabled=True)
+        platform, _ = JobBoardPlatform.objects.get_or_create(
+            slug="greenhouse",
+            defaults={"name": "Greenhouse", "is_enabled": True},
+        )
         label = CompanyPlatformLabel.objects.create(
             company=company,
             platform=platform,
@@ -968,10 +984,9 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         )
         self.client.force_login(self.user)
         self.company = Company.objects.create(name="Kestra")
-        self.platform = JobBoardPlatform.objects.create(
-            name="Dayforce",
+        self.platform, _ = JobBoardPlatform.objects.get_or_create(
             slug="dayforce",
-            is_enabled=True,
+            defaults={"name": "Dayforce", "is_enabled": True},
         )
         self.source_url = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn"
         h = hashlib.sha256(self.source_url.encode()).hexdigest()

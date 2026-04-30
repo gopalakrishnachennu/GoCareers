@@ -64,15 +64,10 @@ def feature_enabled_for(user, key: str) -> bool:
             return False
         if not flag.enabled_for_employees:
             return False
-        ep = getattr(user, 'employee_profile', None)
-        des = getattr(ep, 'designation', None) if ep else None
-        if not des:
-            from core.models import EmployeeDesignation
-
-            des = EmployeeDesignation.objects.filter(slug='recruiter', is_active=True).first()
-        if not des:
-            return False
-        return des.allowed_features.filter(pk=flag.pk).exists()
+        # Employee-level flags are enabled unless explicitly disabled by the
+        # flag itself or scoped away from employees. Designation-based RBAC is
+        # optional and should never hard-block baseline workflows.
+        return True
 
     return False
 

@@ -36,6 +36,7 @@ import hashlib
 import json
 import logging
 import os
+import ssl
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -68,6 +69,14 @@ def _chunk(lst: list, size: int):
         yield lst[i: i + size]
 
 
+def _ssl_ctx() -> ssl.SSLContext:
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
 def _push_batch(jobs: list[dict], push_url: str, push_token: str, dry_run: bool, stdout) -> dict:
     """POST one batch to the prod push API. Returns response dict."""
     if dry_run:
@@ -89,7 +98,7 @@ def _push_batch(jobs: list[dict], push_url: str, push_token: str, dry_run: bool,
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
+        with urllib.request.urlopen(req, timeout=120, context=_ssl_ctx()) as resp:
             return json.loads(resp.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         raise CommandError(
@@ -115,7 +124,7 @@ def _fetch_labels(push_url: str, push_token: str, platform: str, limit: int) -> 
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx()) as resp:
             data = json.loads(resp.read().decode("utf-8"))
             return data.get("labels", [])
     except urllib.error.HTTPError as exc:
@@ -132,7 +141,7 @@ def _harvest_one_company(label: dict, since_hours: int, fetch_all: bool) -> list
     Returns a list of enriched job dicts ready for pushing.
     Runs in a thread — all imports are inside the function to be thread-safe.
     """
-    from harvest.platform_engine import get_harvester
+    from harvest.harvesters import get_harvester
     from harvest.enrichments import extract_enrichments
 
     platform_slug = label.get("platform_slug", "")
@@ -391,21 +400,22 @@ class Command(BaseCommand):
         pending_batch: list[dict] = []
 
         def flush_batch():
-            nonlocal total_created, total_skipped, total_errors, pending_batch
-            if not pending_batch:
-                return
-            chunk = pending_batch[:]
-            pending_batch.clear()
-            result = _push_batch(chunk, push_url, push_token, options["dry_run"], self.stdout)
-            total_created += result.get("created", 0)
-            total_skipped += result.get("skipped", 0)
-            total_errors += result.get("errors", 0)
-            self.stdout.write(
-                f"    pushed {len(chunk)} → "
-                f"created={result.get('created', 0)} "
-                f"skipped={result.get('skipped', 0)} "
-                f"errors={result.get('errors', 0)}"
-            )
+            nonlocal total_created, total_skipped, total_errors
+            while pending_batch:
+                chunk = pending_batch[:batch_size]
+                del pending_batch[:batch_size]
+                result = _push_batch(chunk, push_url, push_token, options["dry_run"], self.stdout)
+                total_created += result.get("created", 0)
+                total_skipped += result.get("skipped", 0)
+                total_errors += result.get("errors", 0)
+                self.stdout.write(
+                    f"    pushed {len(chunk)} → "
+                    f"created={result.get('created', 0)} "
+                    f"skipped={result.get('skipped', 0)} "
+                    f"errors={result.get('errors', 0)}",
+                    ending="\n",
+                )
+                self.stdout.flush()
 
         t0 = time.monotonic()
 
@@ -447,9 +457,7 @@ class Command(BaseCommand):
                         f"→ 0 jobs"
                     )
 
-                # Push when batch is full
-                if len(pending_batch) >= batch_size:
-                    flush_batch()
+                flush_batch()
 
         # Push remainder
         flush_batch()

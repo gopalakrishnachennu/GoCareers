@@ -417,6 +417,13 @@ _PLATFORM_LIVENESS_REGISTRY: list[tuple[str, object]] = [
     ("bamboohr.com",          _bamboohr_liveness),
 ]
 
+_INCONCLUSIVE_API_REASONS = {
+    "workday_cxs_error",
+    "workday_cxs_http_error",
+    "workday_cxs_non_json",
+    "workday_cxs_empty",
+}
+
 
 def check_job_posting_live(
     url: str,
@@ -439,6 +446,11 @@ def check_job_posting_live(
         if hostname_fragment in url_lower:
             result = liveness_fn(url)
             if result is not None:
+                # Some API probes can fail for tenant/firewall reasons while the
+                # actual detail page is still available. Fall back to HTML checks
+                # for these inconclusive states instead of short-circuiting.
+                if (result.reason or "") in _INCONCLUSIVE_API_REASONS:
+                    break
                 return result
             break  # matched platform but API was inconclusive — fall through to HTML check
 

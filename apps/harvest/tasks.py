@@ -2546,6 +2546,11 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             for tok in key.split()[:3]:
                 token_q |= Q(name__icontains=tok) | Q(alias__icontains=tok)
             candidate_qs = Company.objects.filter(token_q) if token_q else Company.objects.all()
+            # Compact-name inputs like "Appliedsystems" should still match existing
+            # canonical rows like "Applied Systems". If the token filter returns
+            # nothing, widen the scan and rely on normalized compact comparison.
+            if token_q and not candidate_qs.exists():
+                candidate_qs = Company.objects.all()
             best = None
             for cand in candidate_qs.only("id", "name", "alias").order_by("name")[:300]:
                 for cand_name in (cand.name, cand.alias):

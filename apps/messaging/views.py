@@ -23,7 +23,7 @@ from .utils import (
     invalidate_messaging_unread_cache,
     messaging_search_rate_ok,
     user_can_access_thread,
-    users_may_message_each_other,
+
 )
 from users.models import User
 from core.feature_flags import feature_enabled_for
@@ -41,14 +41,6 @@ def _role_short_label(user: User) -> str:
 
 def _htmx(request) -> bool:
     return request.headers.get("HX-Request") == "true"
-
-
-def resolve_thread_organisation(u1: User, u2: User):
-    if u1.organisation_id:
-        return u1.organisation_id
-    if u2.organisation_id:
-        return u2.organisation_id
-    return None
 
 
 TYPING_CACHE_TTL = 8  # seconds
@@ -115,8 +107,6 @@ def recipient_search_queryset(viewer: User):
         qs = qs.filter(
             Q(role__in=(User.Role.ADMIN, User.Role.EMPLOYEE, User.Role.CONSULTANT)) | Q(is_superuser=True)
         )
-    if viewer.organisation_id:
-        qs = qs.filter(Q(organisation_id=viewer.organisation_id) | Q(organisation_id__isnull=True))
     return qs
 
 
@@ -208,16 +198,14 @@ class InboxView(MessagingFeatureGateMixin, LoginRequiredMixin, ListView):
                     history_q=history_q,
                 )
         context["messaging_search_staff_only"] = messaging_search_staff_only(self.request.user)
-        context["can_start_org_thread"] = (
-            self.request.user.role == User.Role.CONSULTANT and self.request.user.organisation_id
-        )
+        context["can_start_org_thread"] = False
         return context
 
 
 class ThreadDetailView(MessagingFeatureGateMixin, LoginRequiredMixin, View):
     def get(self, request, pk):
         thread = get_object_or_404(
-            Thread.objects.select_related("organisation").prefetch_related("participants"),
+            Thread.objects.prefetch_related("participants"),
             pk=pk,
         )
         if not user_can_access_thread(request.user, thread):
@@ -226,7 +214,7 @@ class ThreadDetailView(MessagingFeatureGateMixin, LoginRequiredMixin, View):
         if thread.participants.filter(pk=request.user.pk).exists():
             _mark_thread_read(thread, request.user)
         thread = (
-            Thread.objects.select_related("organisation")
+            Thread.objects
             .prefetch_related("participants")
             .get(pk=thread.pk)
         )
@@ -255,7 +243,7 @@ class ThreadDetailView(MessagingFeatureGateMixin, LoginRequiredMixin, View):
 
     def post(self, request, pk):
         thread = get_object_or_404(
-            Thread.objects.select_related("organisation").prefetch_related("participants"),
+            Thread.objects.prefetch_related("participants"),
             pk=pk,
         )
         if not user_can_access_thread(request.user, thread):
@@ -308,19 +296,11 @@ class StartThreadView(MessagingFeatureGateMixin, LoginRequiredMixin, View):
         if not recipient_search_queryset(request.user).filter(pk=other_user.pk).exists():
             django_messages.error(request, "You cannot start a conversation with that user.")
             return redirect("inbox")
-        if not users_may_message_each_other(request.user, other_user):
-            django_messages.error(request, "Messaging is limited to users in your organisation.")
-            return redirect("inbox")
-
         thread = Thread.objects.filter(participants=request.user).filter(participants=other_user).first()
 
         if not thread:
-            org_id = resolve_thread_organisation(request.user, other_user)
             with transaction.atomic():
-                thread = Thread.objects.create(
-                    organisation_id=org_id,
-                    thread_type=Thread.ThreadType.DIRECT,
-                )
+                thread = Thread.objects.create(thread_type=Thread.ThreadType.DIRECT)
                 thread.participants.add(request.user, other_user)
 
         return redirect(f"{reverse('inbox')}?thread={thread.pk}")
@@ -333,50 +313,7 @@ class StartOrgThreadView(MessagingFeatureGateMixin, LoginRequiredMixin, View):
         return redirect("inbox")
 
     def post(self, request):
-        user = request.user
-        if user.role != User.Role.CONSULTANT or not user.organisation_id:
-            return redirect("inbox")
-
-        from django.db.models import Case, When
-
-        staff = (
-            User.objects.filter(
-                organisation_id=user.organisation_id,
-                role__in=(User.Role.ADMIN, User.Role.EMPLOYEE),
-                is_active=True,
-            )
-            .annotate(
-                role_rank=Case(
-                    When(role=User.Role.ADMIN, then=0),
-                    default=1,
-                )
-            )
-            .order_by("role_rank", "pk")
-            .first()
-        )
-        if not staff:
-            django_messages.error(request, "No staff member is available for your organisation yet.")
-            return redirect("inbox")
-
-        existing = (
-            Thread.objects.filter(
-                thread_type=Thread.ThreadType.ORG_SHARED,
-                organisation_id=user.organisation_id,
-                participants=user,
-            )
-            .first()
-        )
-        if existing:
-            return redirect(f"{reverse('inbox')}?thread={existing.pk}")
-
-        with transaction.atomic():
-            thread = Thread.objects.create(
-                organisation_id=user.organisation_id,
-                thread_type=Thread.ThreadType.ORG_SHARED,
-            )
-            thread.participants.add(user, staff)
-
-        return redirect(f"{reverse('inbox')}?thread={thread.pk}")
+        return redirect("inbox")
 
 
 @method_decorator(require_POST, name="dispatch")
