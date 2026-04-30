@@ -41,7 +41,6 @@ from .views import (
     RunDetectNowView,
     RunEnrichExistingView,
     RunHarvestNowView,
-    RunMonitorView,
     RunSyncNowView,
     RunVerifyPortalsView,
     ScheduleConfigView,

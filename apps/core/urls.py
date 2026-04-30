@@ -28,7 +28,6 @@ from .views import (
     FeatureControlCenterView,
     MyFeaturesJsonView,
     # Task Scheduler
-    TaskSchedulerView,
     TaskToggleView,
     TaskEditScheduleView,
     TaskRunNowView,

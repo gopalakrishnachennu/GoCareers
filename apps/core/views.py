@@ -1583,57 +1583,6 @@ class SystemOpsCenterApiView(AdminRequiredMixin, View):
         return JsonResponse(_build_ops_snapshot(), encoder=DjangoJSONEncoder)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# TASK SCHEDULER GUI
-# Full GUI to view, toggle, edit, and manually trigger all periodic tasks.
-# Changes take effect immediately — Celery Beat polls the DB every ~5 seconds.
-# ─────────────────────────────────────────────────────────────────────────────
-
-TASK_CATEGORY_META = {
-    "email":       {"label": "Email",        "icon": "✉️",  "color": "blue"},
-    "submissions": {"label": "Submissions",  "icon": "📋",  "color": "purple"},
-    "jobs":        {"label": "Jobs",         "icon": "💼",  "color": "yellow"},
-    "companies":   {"label": "Companies",    "icon": "🏢",  "color": "teal"},
-    "reports":     {"label": "Reports",      "icon": "📊",  "color": "indigo"},
-    "harvest":     {"label": "Harvest",      "icon": "🌾",  "color": "green"},
-}
-
-TASK_NAME_TO_CATEGORY = {
-    "Email Ingest — IMAP poll":                  "email",
-    "Follow-up Reminders — send":                "submissions",
-    "Stale Submissions — detect":                "submissions",
-    "Job URLs — validate":                       "jobs",
-    "Stale Jobs — auto-close":                   "jobs",
-    "Company Links — validate":                  "companies",
-    "Companies — re-enrich stale":               "companies",
-    "Digest — weekly consultant pipeline":        "reports",
-    "Report — weekly executive summary":         "reports",
-    "Harvest — backfill labels from job URLs":    "harvest",
-    "Harvest — detect company platforms":        "harvest",
-    "Harvest — fetch new jobs":                  "harvest",
-    "Harvest — sync to job pool":                "harvest",
-    "Harvest — cleanup expired jobs":            "harvest",
-}
-
-
-def _get_schedule_label(task):
-    """Return a human-readable schedule string for a PeriodicTask."""
-    if task.crontab:
-        c = task.crontab
-        m, h, dow, dom, moy = c.minute, c.hour, c.day_of_week, c.day_of_month, c.month_of_year
-        if m.startswith("*/"):
-            return f"Every {m[2:]} min"
-        if h.startswith("*/"):
-            return f"Every {h[2:]} hours"
-        day_map = {"0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed", "4": "Thu", "5": "Fri", "6": "Sat"}
-        if dow != "*":
-            return f"{day_map.get(dow, dow)} {h.zfill(2)}:{m.zfill(2)} UTC"
-        return f"Daily {h.zfill(2)}:{m.zfill(2)} UTC"
-    if task.interval:
-        return f"Every {task.interval}"
-    return "—"
-
-
 def _ops_next_url(request, fallback_name="ops-center"):
     """Safe post-action redirect target."""
     candidate = (
@@ -1653,55 +1602,6 @@ def _ops_next_url(request, fallback_name="ops-center"):
 
 def _is_ajax_request(request):
     return request.headers.get("X-Requested-With") == "XMLHttpRequest"
-
-
-class TaskSchedulerView(AdminRequiredMixin, TemplateView):
-    template_name = "settings/task_scheduler.html"
-
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        from django_celery_beat.models import PeriodicTask
-
-        tasks = PeriodicTask.objects.select_related("crontab", "interval").order_by("name")
-
-        # Annotate with category + schedule label
-        enriched = []
-        for t in tasks:
-            cat_key = TASK_NAME_TO_CATEGORY.get(t.name, "other")
-            cat = TASK_CATEGORY_META.get(cat_key, {"label": "Other", "icon": "⚙️", "color": "gray"})
-            enriched.append({
-                "obj": t,
-                "category_key": cat_key,
-                "category_label": cat["label"],
-                "category_icon": cat["icon"],
-                "category_color": cat["color"],
-                "schedule_label": _get_schedule_label(t),
-                "kwargs_pretty": t.kwargs if t.kwargs and t.kwargs != "{}" else "—",
-            })
-
-        # Group by category
-        from collections import defaultdict
-        groups = defaultdict(list)
-        for item in enriched:
-            groups[item["category_key"]].append(item)
-
-        ordered_groups = []
-        for key in ["email", "submissions", "jobs", "companies", "reports", "harvest"]:
-            if key in groups:
-                meta = TASK_CATEGORY_META[key]
-                ordered_groups.append({
-                    "key": key,
-                    "label": meta["label"],
-                    "icon": meta["icon"],
-                    "color": meta["color"],
-                    "tasks": groups[key],
-                })
-
-        context["task_groups"] = ordered_groups
-        context["total_tasks"] = tasks.count()
-        context["active_tasks"] = tasks.filter(enabled=True).count()
-        context["paused_tasks"] = tasks.filter(enabled=False).count()
-        return context
 
 
 class TaskToggleView(AdminRequiredMixin, View):
