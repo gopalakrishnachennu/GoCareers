@@ -137,12 +137,14 @@ def _looks_like_detail_path(path: str, platform_slug: str) -> bool:
 
 def is_definitive_inactive(result: LinkHealthResult) -> bool:
     """
-    Conservative decision policy for flipping DB rows inactive.
+    Decision policy for flipping DB rows inactive.
 
-    We only deactivate on strong evidence to avoid false negatives:
-    - hard 404/410/451
-    - explicit soft-404 / no-match markers
-    - explicit redirect-to-search + dead markers
+    Fires on:
+    - Hard HTTP errors: 404/410/451
+    - Soft-404 markers detected in HTML
+    - Redirect-to-search with no live signals
+    - Platform API: job not found in API response (Workday, Oracle, Greenhouse,
+      Lever, Ashby, SmartRecruiters, BambooHR, iCIMS)
     """
     if result.is_live:
         return False
@@ -154,10 +156,23 @@ def is_definitive_inactive(result: LinkHealthResult) -> bool:
         "soft_404_marker",
         "redirected_to_search_soft404",
         "redirected_to_non_detail_no_live_signals",
+        # Workday
         "workday_cxs_not_found",
         "workday_search_no_match",
+        # Oracle HCM
         "oracle_hcm_not_found",
         "oracle_hcm_no_results",
+        # Greenhouse
+        "greenhouse_api_not_found",
+        # Lever
+        "lever_api_not_found",
+        # Ashby
+        "ashby_api_not_found",
+        # SmartRecruiters
+        "smartrecruiters_api_not_found",
+        # BambooHR
+        "bamboohr_api_not_found",
+        # iCIMS
         "icims_api_not_found",
     }:
         return True
@@ -287,6 +302,122 @@ def _oracle_hcm_liveness(url: str) -> "LinkHealthResult | None":
         return None
 
 
+def _greenhouse_liveness(url: str) -> "LinkHealthResult | None":
+    """Greenhouse boards-api: 404 = definitively closed."""
+    m = re.search(r"boards\.greenhouse\.io/([^/]+)/jobs/(\d+)", url, re.I)
+    if not m:
+        return None
+    board_token, job_id = m.group(1), m.group(2)
+    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}"
+    try:
+        resp = requests.get(api_url, headers={"Accept": "application/json", **_UA}, timeout=10)
+        status = int(resp.status_code or 0)
+        if status == 404:
+            return LinkHealthResult(False, status, "greenhouse_api_not_found", api_url)
+        if status >= 400:
+            return None  # inconclusive (rate limit, server error)
+        d = resp.json() if resp.content else {}
+        return LinkHealthResult(True, status, "greenhouse_api_live", api_url) if d.get("id") else None
+    except Exception:
+        return None
+
+
+def _lever_liveness(url: str) -> "LinkHealthResult | None":
+    """Lever public postings API: 404 = closed."""
+    m = re.search(r"jobs\.lever\.co/([^/]+)/([0-9a-f-]{36})", url, re.I)
+    if not m:
+        return None
+    company, posting_id = m.group(1), m.group(2)
+    api_url = f"https://api.lever.co/v0/postings/{company}/{posting_id}"
+    try:
+        resp = requests.get(api_url, headers={"Accept": "application/json", **_UA}, timeout=10)
+        status = int(resp.status_code or 0)
+        if status == 404:
+            return LinkHealthResult(False, status, "lever_api_not_found", api_url)
+        if status >= 400:
+            return None
+        d = resp.json() if resp.content else {}
+        return LinkHealthResult(True, status, "lever_api_live", api_url) if d.get("id") else None
+    except Exception:
+        return None
+
+
+def _ashby_liveness(url: str) -> "LinkHealthResult | None":
+    """Ashby board API: job missing from board = closed."""
+    m = re.search(r"jobs\.ashbyhq\.com/([^/]+)/([0-9a-f-]{36})", url, re.I)
+    if not m:
+        return None
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.ashbyhq.com/posting-api/job-board/{company}"
+    try:
+        resp = requests.get(api_url, headers={"Accept": "application/json", **_UA}, timeout=12)
+        status = int(resp.status_code or 0)
+        if status >= 400:
+            return None
+        jobs = (resp.json() if resp.content else {}).get("jobs") or []
+        match = next((j for j in jobs if (j.get("id") or "").lower() == job_id.lower()), None)
+        if match:
+            return LinkHealthResult(True, status, "ashby_api_live", api_url)
+        if jobs:
+            # Board returned results but this job wasn't in it → gone
+            return LinkHealthResult(False, status, "ashby_api_not_found", api_url)
+        return None  # empty board = inconclusive
+    except Exception:
+        return None
+
+
+def _smartrecruiters_liveness(url: str) -> "LinkHealthResult | None":
+    """SmartRecruiters public API: 404 = closed."""
+    m = re.search(r"(?:jobs\.smartrecruiters\.com|smartrecruiters\.com)/([^/]+)/(\d+)", url, re.I)
+    if not m:
+        return None
+    company, job_id = m.group(1), m.group(2)
+    api_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
+    try:
+        resp = requests.get(api_url, headers={"Accept": "application/json", **_UA}, timeout=12)
+        status = int(resp.status_code or 0)
+        if status == 404:
+            return LinkHealthResult(False, status, "smartrecruiters_api_not_found", api_url)
+        if status >= 400:
+            return None
+        d = resp.json() if resp.content else {}
+        return LinkHealthResult(True, status, "smartrecruiters_api_live", api_url) if d.get("id") else None
+    except Exception:
+        return None
+
+
+def _bamboohr_liveness(url: str) -> "LinkHealthResult | None":
+    """BambooHR careers page: 404 on detail URL = closed."""
+    m = re.search(r"([\w-]+)\.bamboohr\.com/(?:careers|jobs)/(\d+)", url, re.I)
+    if not m:
+        return None
+    subdomain, job_id = m.group(1), m.group(2)
+    api_url = f"https://{subdomain}.bamboohr.com/careers/json/jobs/{job_id}"
+    try:
+        resp = requests.get(api_url, headers={"Accept": "application/json", **_UA}, timeout=10)
+        status = int(resp.status_code or 0)
+        if status == 404:
+            return LinkHealthResult(False, status, "bamboohr_api_not_found", api_url)
+        if status >= 400:
+            return None
+        d = resp.json() if resp.content else {}
+        return LinkHealthResult(True, status, "bamboohr_api_live", api_url) if d.get("id") or d.get("title") else None
+    except Exception:
+        return None
+
+
+# Map URL hostname/pattern → liveness function for quick lookup
+_PLATFORM_LIVENESS_REGISTRY: list[tuple[str, object]] = [
+    ("myworkdayjobs.com",     _workday_cxs_liveness),
+    ("oraclecloud.com",       _oracle_hcm_liveness),
+    ("greenhouse.io",         _greenhouse_liveness),
+    ("lever.co",              _lever_liveness),
+    ("ashbyhq.com",           _ashby_liveness),
+    ("smartrecruiters.com",   _smartrecruiters_liveness),
+    ("bamboohr.com",          _bamboohr_liveness),
+]
+
+
 def check_job_posting_live(
     url: str,
     *,
@@ -301,17 +432,15 @@ def check_job_posting_live(
     if not urlparse(url).scheme:
         url = "https://" + url
 
-    # Workday: use canonical CXS endpoint first to avoid false positives from 200 soft-404 pages.
-    if (platform_slug or "").lower() == "workday" or "myworkdayjobs.com" in url.lower():
-        cxs = _workday_cxs_liveness(url)
-        if cxs is not None:
-            return cxs
-
-    # Oracle HCM: SPA pages — dead markers invisible to plain GET, use REST API instead.
-    if "oraclecloud.com" in url.lower():
-        oracle = _oracle_hcm_liveness(url)
-        if oracle is not None:
-            return oracle
+    # Platform-specific API checks first — these are definitive and avoid false positives
+    # from SPA soft-404 pages that serve HTTP 200 with a "job gone" message in JS.
+    url_lower = url.lower()
+    for hostname_fragment, liveness_fn in _PLATFORM_LIVENESS_REGISTRY:
+        if hostname_fragment in url_lower:
+            result = liveness_fn(url)
+            if result is not None:
+                return result
+            break  # matched platform but API was inconclusive — fall through to HTML check
 
     # HEAD first: fast path
     try:
