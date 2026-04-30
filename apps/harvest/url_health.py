@@ -156,6 +156,9 @@ def is_definitive_inactive(result: LinkHealthResult) -> bool:
         "redirected_to_non_detail_no_live_signals",
         "workday_cxs_not_found",
         "workday_search_no_match",
+        "oracle_hcm_not_found",
+        "oracle_hcm_no_results",
+        "icims_api_not_found",
     }:
         return True
     return False
@@ -236,6 +239,54 @@ def _workday_cxs_liveness(url: str) -> LinkHealthResult | None:
         return LinkHealthResult(False, 0, "workday_cxs_error", cxs_url)
 
 
+def _oracle_hcm_liveness(url: str) -> "LinkHealthResult | None":
+    """
+    Oracle HCM CX pages are SPAs — the 'This job is no longer available' message
+    is rendered by JavaScript and invisible to a plain GET request.
+
+    Instead, query the Oracle HCM REST API directly for the requisition.
+    Returns None if URL doesn't match Oracle HCM pattern.
+    """
+    m = re.search(
+        r"([\w.-]+\.oraclecloud\.com)/hcmUI/CandidateExperience/[^/]+/sites/([^/]+)/(?:requisitions?(?:/preview)?|jobs?)/(\d+)",
+        url,
+        re.I,
+    )
+    if not m:
+        return None
+
+    host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
+    api_url = (
+        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+        f"?onlyData=true&expand=requisitionList&limit=20"
+        f"&finder=findReqs;siteNumber={sites_id}"
+    )
+
+    try:
+        resp = requests.get(
+            api_url,
+            headers={"Accept": "application/json", **_UA},
+            timeout=15,
+        )
+        status = int(resp.status_code or 0)
+        if status >= 400:
+            # API not accessible — fall through to HTML check
+            return None
+        data = resp.json() if resp.content else {}
+        items = data.get("items") or []
+        req_list = items[0].get("requisitionList", []) if items else []
+        for req in req_list:
+            if str(req.get("Id") or "") == req_num:
+                return LinkHealthResult(True, status, "oracle_hcm_live", api_url)
+        # Job ID not in results — definitively gone
+        if req_list:
+            return LinkHealthResult(False, status, "oracle_hcm_not_found", api_url)
+        # Empty list could mean API pagination issue — inconclusive
+        return LinkHealthResult(False, status, "oracle_hcm_no_results", api_url)
+    except Exception:
+        return None
+
+
 def check_job_posting_live(
     url: str,
     *,
@@ -255,6 +306,12 @@ def check_job_posting_live(
         cxs = _workday_cxs_liveness(url)
         if cxs is not None:
             return cxs
+
+    # Oracle HCM: SPA pages — dead markers invisible to plain GET, use REST API instead.
+    if "oraclecloud.com" in url.lower():
+        oracle = _oracle_hcm_liveness(url)
+        if oracle is not None:
+            return oracle
 
     # HEAD first: fast path
     try:
