@@ -1662,12 +1662,14 @@ def sync_harvested_to_pool_task(
             0.0,
             min(1.0, float(getattr(cfg, "resume_jd_min_classification_confidence", 0.35))),
         )
-        # Qualified-first prefilter: JD present + usable length + minimum classifier confidence.
-        # This is intentionally strict for the manual "Sync Qualified to Vet Queue" action.
+        # Require JD present + usable length. Allow NULL classification_confidence
+        # (jobs enriched before that field existed) — evaluate_raw_job_gate() is the
+        # real quality gate applied per-job below.
         base_qs = base_qs.filter(
             has_description=True,
             word_count__gte=min_words,
-            classification_confidence__gte=min_conf,
+        ).filter(
+            Q(classification_confidence__isnull=True) | Q(classification_confidence__gte=min_conf)
         ).annotate(
             _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
         ).filter(_jd_len__gte=min_chars)
@@ -1675,17 +1677,21 @@ def sync_harvested_to_pool_task(
     total_candidates = base_qs.count()
     total_target = min(total_candidates, max_jobs) if max_jobs else total_candidates
     synced = skipped = failed = processed = 0
-    if total_target:
-        update_task_progress(
-            self,
-            current=0,
-            total=total_target,
-            message=(
-                "Sync qualified RawJobs to Vet Queue…"
-                if qualified_only else
-                "Sync RawJobs to Vet Queue…"
-            ),
-        )
+    # Always report progress at start so Ops Center shows the task even if 0 candidates.
+    update_task_progress(
+        self,
+        current=0,
+        total=max(total_target, 1),
+        message=(
+            f"Sync qualified RawJobs to Vet Queue — {total_candidates:,} candidates…"
+            if qualified_only else
+            f"Sync RawJobs to Vet Queue — {total_candidates:,} candidates…"
+        ),
+    )
+
+    if total_target == 0:
+        logger.info("Sync task: 0 qualifying candidates. qualified_only=%s", qualified_only)
+        return {"qualified_only": bool(qualified_only), "processed": 0, "candidates": total_candidates, "synced": 0, "skipped": 0, "failed": 0}
 
     last_pk = None
     while processed < total_target:
