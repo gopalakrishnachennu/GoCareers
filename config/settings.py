@@ -6,6 +6,7 @@ from decouple import config
 import dj_database_url
 import os
 import sys
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / 'apps'))
@@ -136,9 +137,15 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+_database_url = config('DATABASE_URL', default='').strip()
+if not _database_url:
+    raise ImproperlyConfigured(
+        "DATABASE_URL must be set. SQLite fallback has been removed; use a PostgreSQL URL."
+    )
+
 DATABASES = {
     'default': dj_database_url.config(
-        default=config('DATABASE_URL', default='sqlite:///db.sqlite3'),
+        default=_database_url,
         conn_max_age=600
     )
 }

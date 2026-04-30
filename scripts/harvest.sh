@@ -62,7 +62,7 @@ DATABASE_URL=postgres://consulting:PASTE_PROD_DB_PASSWORD_HERE@62.238.6.14:5432/
 
 # ───── MODE B: PUSH (uncomment if prod DB not reachable) ──────────────────
 # MODE=push
-# DATABASE_URL=sqlite:///local_harvest.db
+# DATABASE_URL=postgres://consulting:PASTE_PROD_DB_PASSWORD_HERE@62.238.6.14:5432/consulting
 # PUSH_URL=https://chennu.co
 # PUSH_TOKEN=PASTE_HARVEST_PUSH_SECRET_FROM_PROD
 

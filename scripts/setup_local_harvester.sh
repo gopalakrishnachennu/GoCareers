@@ -77,11 +77,11 @@ DJANGO_SETTINGS_MODULE=config.settings_local_harvester
 
 # ── Pick ONE mode ──────────────────────────────────────────────────────────
 # MODE A (direct): connect to prod DB directly — set DATABASE_URL below
-# MODE B (push):   harvest offline, push via API — set PUSH_URL + PUSH_TOKEN
+# MODE B (push):   harvest offline, push via API — still set PostgreSQL DATABASE_URL for lookups
 
 # Direct mode — production PostgreSQL connection string
 # DATABASE_URL=postgres://user:password@prod-host:5432/dbname
-DATABASE_URL=sqlite:///local_harvest.db
+DATABASE_URL=postgres://consulting:PASTE_PROD_DB_PASSWORD_HERE@62.238.6.14:5432/consulting
 
 # Push mode — prod server API
 # PUSH_URL=https://chennu.co

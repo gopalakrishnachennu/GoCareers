@@ -17,6 +17,7 @@ from decouple import config
 import dj_database_url
 import os
 import sys
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR / "apps"))
@@ -28,12 +29,16 @@ DEBUG = False
 ALLOWED_HOSTS = ["*"]
 
 # ── Database ──────────────────────────────────────────────────────────────────
-# direct mode → set DATABASE_URL to prod PostgreSQL connection string
-# push mode   → set DATABASE_URL to a local SQLite or any DB (only used for Company/Label lookups)
+# direct mode and push mode both require an explicit PostgreSQL DATABASE_URL.
+_database_url = config("DATABASE_URL", default="").strip()
+if not _database_url:
+    raise ImproperlyConfigured(
+        "DATABASE_URL must be set for local harvester settings. Use a PostgreSQL URL."
+    )
 
 DATABASES = {
     "default": dj_database_url.config(
-        default=config("DATABASE_URL", default="sqlite:///local_harvest.db"),
+        default=_database_url,
         conn_max_age=600,
     )
 }
