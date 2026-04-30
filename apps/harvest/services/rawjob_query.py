@@ -43,6 +43,7 @@ FILTER_STATE_KEYS = (
     "company_funding",
     "resume_ready_min",
     "classification_min_conf",
+    "classification_bucket",
     "founded_from",
     "founded_to",
     "sync_status",
@@ -290,6 +291,18 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
             qs = qs.filter(effective_classification_q(min_conf=float(conf_min_f)))
     except ValueError:
         pass
+
+    conf_bucket = _get(params, "classification_bucket").lower()
+    if conf_bucket:
+        low_cut = 0.55
+        any_classified_q = effective_classification_q(min_conf=0.01)
+        high_q = effective_classification_q(min_conf=low_cut)
+        if conf_bucket == "low":
+            qs = qs.filter(any_classified_q).exclude(high_q)
+        elif conf_bucket == "high":
+            qs = qs.filter(high_q)
+        elif conf_bucket == "missing":
+            qs = qs.exclude(any_classified_q)
 
     founded_from = _get(params, "founded_from")
     if founded_from.isdigit():

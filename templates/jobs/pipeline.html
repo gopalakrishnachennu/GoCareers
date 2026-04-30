@@ -396,7 +396,7 @@
 <div class="section-hdr">
   <div>
     <h2 class="section-title-sm">Harvested Raw Jobs</h2>
-    <p class="section-subtitle">Jobs scraped from ATS platforms — pending quality gate before vetting</p>
+    <p class="section-subtitle">Jobs scraped from ATS platforms — only qualified jobs (active + JD + confidence) should move to Vet Queue</p>
   </div>
   <div class="flex gap-2 flex-wrap items-center">
     <a href="{% url 'harvest-rawjobs' %}?_subtab=batches" class="btn-secondary btn-sm">View Batches</a>
@@ -413,6 +413,39 @@
       </button>
     </form>
   </div>
+</div>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&stage=READY&sync_status=PENDING"
+     class="p-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:border-emerald-300 transition">
+    <div class="text-[11px] uppercase text-emerald-700">Qualified Pending</div>
+    <div class="text-2xl font-bold text-emerald-800">{{ raw_gate_summary.qualified_pending }}</div>
+    <div class="text-[11px] text-emerald-700 mt-0.5">eligible to sync now</div>
+  </a>
+  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&has_jd=0"
+     class="p-3 rounded-lg border border-amber-200 bg-amber-50 hover:border-amber-300 transition">
+    <div class="text-[11px] uppercase text-amber-700">Blocked: Missing JD</div>
+    <div class="text-2xl font-bold text-amber-800">{{ raw_gate_summary.blocked_missing_jd }}</div>
+    <div class="text-[11px] text-amber-700 mt-0.5">no usable description</div>
+  </a>
+  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&is_active=0"
+     class="p-3 rounded-lg border border-rose-200 bg-rose-50 hover:border-rose-300 transition">
+    <div class="text-[11px] uppercase text-rose-700">Blocked: Inactive</div>
+    <div class="text-2xl font-bold text-rose-800">{{ raw_gate_summary.blocked_inactive }}</div>
+    <div class="text-[11px] text-rose-700 mt-0.5">posting no longer live</div>
+  </a>
+  <a href="{% url 'harvest-rawjobs' %}?_subtab=jobs&sync_status=PENDING&classification_bucket=low"
+     class="p-3 rounded-lg border border-indigo-200 bg-indigo-50 hover:border-indigo-300 transition">
+    <div class="text-[11px] uppercase text-indigo-700">Blocked: Low Confidence</div>
+    <div class="text-2xl font-bold text-indigo-800">{{ raw_gate_summary.blocked_low_conf }}</div>
+    <div class="text-[11px] text-indigo-700 mt-0.5">needs better classification</div>
+  </a>
+</div>
+<div class="mb-4 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-600">
+  Pending backlog: <strong class="text-slate-800">{{ raw_gate_summary.pending_total }}</strong> ·
+  Already synced from ready stage: <strong class="text-emerald-700">{{ raw_gate_summary.qualified_synced }}</strong> ·
+  Duplicate/skipped rows: <strong class="text-slate-800">{{ raw_gate_summary.duplicates }}</strong>.
+  Use the cards above to drill directly into each blocker cohort.
 </div>
 
 {% if tab_raw %}

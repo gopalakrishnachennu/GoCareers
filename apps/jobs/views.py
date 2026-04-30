@@ -1068,10 +1068,36 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         # ── Summary stats (always computed) ─────────────────────────────────
         from harvest.models import RawJob, FetchBatch
         from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
-        from harvest.services.rawjob_query import apply_rawjob_filters
+        from harvest.services.rawjob_query import (
+            apply_rawjob_filters,
+            effective_classification_q,
+            ready_stage_q,
+        )
 
         raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
         raw_total = raw_stats.get("total", 0)
+        raw_ready_q = ready_stage_q(min_conf=0.55)
+        raw_qualified_pending = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
+        raw_qualified_synced = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
+        raw_pending_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING).count()
+        raw_blocked_missing_jd = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=False).count()
+        raw_blocked_inactive = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, is_active=False).count()
+        raw_blocked_low_conf = (
+            RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=True, is_active=True)
+            .filter(effective_classification_q(min_conf=0.01))
+            .exclude(effective_classification_q(min_conf=0.55))
+            .count()
+        )
+        raw_duplicates_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
+        raw_gate_summary = {
+            "pending_total": raw_pending_total,
+            "qualified_pending": raw_qualified_pending,
+            "qualified_synced": raw_qualified_synced,
+            "blocked_missing_jd": raw_blocked_missing_jd,
+            "blocked_inactive": raw_blocked_inactive,
+            "blocked_low_conf": raw_blocked_low_conf,
+            "duplicates": raw_duplicates_total,
+        }
         pool_total = Job.objects.filter(status=Job.Status.POOL, is_archived=False).count()
         pool_qs_all = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
         live_total = Job.objects.filter(status=Job.Status.OPEN, is_archived=False).count()
@@ -1177,6 +1203,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'tab': tab,
             'q': q,
             'raw_total': raw_total,
+            'raw_gate_summary': raw_gate_summary,
             'pool_total': pool_total,
             'live_total': live_total,
             'archived_total': archived_total,

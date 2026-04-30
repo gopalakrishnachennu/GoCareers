@@ -1192,6 +1192,28 @@ class RawJobPipelineUnificationTests(TestCase):
         stats = load_rawjobs_dashboard_stats(force_refresh=False)
         self.assertEqual(response.context["raw_total"], stats["total"])
 
+    def test_classification_bucket_low_filter(self):
+        from harvest.models import RawJob
+        from harvest.services.rawjob_query import apply_rawjob_filters
+
+        low_qs = apply_rawjob_filters(
+            RawJob.objects.all(),
+            {"classification_bucket": "low"},
+        )
+        self.assertEqual(low_qs.count(), 1)
+        self.assertEqual(low_qs.first().title, "Role classified")
+
+    def test_jobs_pipeline_raw_gate_summary_counts(self):
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "raw"})
+        self.assertEqual(response.status_code, 200)
+        summary = response.context["raw_gate_summary"]
+        self.assertEqual(summary["pending_total"], 5)
+        self.assertEqual(summary["qualified_pending"], 1)
+        self.assertEqual(summary["qualified_synced"], 1)
+        self.assertEqual(summary["blocked_missing_jd"], 1)
+        self.assertEqual(summary["blocked_inactive"], 0)
+        self.assertEqual(summary["blocked_low_conf"], 1)
+
 
 class HarvestPhase3NavigationTests(TestCase):
     def setUp(self):
