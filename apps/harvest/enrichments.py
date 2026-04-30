@@ -294,6 +294,17 @@ def infer_country_from_location(location_raw: str, state: str = "", country: str
         if cand:
             return cand
 
+    # US state code/name embedded in location text (e.g., "Nashville, TN", "Boston-MA").
+    if loc:
+        upper_loc = f" {loc.upper().replace('-', ' ').replace('/', ' ')} "
+        for code in _US_STATE_CODES:
+            if f" {code} " in upper_loc:
+                return "United States"
+        lower_loc = f" {loc_l.replace('-', ' ').replace('/', ' ')} "
+        for st_name in _US_STATE_NAMES:
+            if f" {st_name} " in lower_loc:
+                return "United States"
+
     # Fallback: direct mention anywhere in location text.
     for alias, canonical in sorted(_COUNTRY_ALIASES.items(), key=lambda kv: len(kv[0]), reverse=True):
         if re.search(rf"\b{re.escape(alias)}\b", loc_l):
