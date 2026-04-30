@@ -11,14 +11,14 @@
             <p style="color:#64748b;font-size:12px;margin:2px 0 0;">Job Detail</p>
           </div>
         </div>
-        <a href="{% url 'harvest-rawjobs' %}" style="color:#94a3b8;font-size:12px;text-decoration:none;padding:6px 12px;border-radius:6px;border:1px solid #1e293b;">← Raw Jobs</a>
+        <a href="{% url 'jobs-pipeline' %}?tab=raw" style="color:#94a3b8;font-size:12px;text-decoration:none;padding:6px 12px;border-radius:6px;border:1px solid #1e293b;">← Raw Jobs</a>
       </div>
       <div style="display:flex;margin-top:20px;border-bottom:1px solid #1e293b;">
         <a href="{% url 'harvest-platforms' %}" style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;">🗂 Platform Registry</a>
         <a href="{% url 'harvest-schedule' %}" style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;">⏰ Schedule</a>
         <a href="{% url 'harvest-monitor' %}" style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;">📊 Run Monitor</a>
         <a href="{% url 'harvest-labels' %}" style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;">🏷 Company Labels</a>
-        <a href="{% url 'harvest-rawjobs' %}" style="padding:10px 20px;font-size:13px;font-weight:600;color:#38bdf8;text-decoration:none;border-bottom:2px solid #38bdf8;">📋 Raw Jobs</a>
+        <a href="{% url 'jobs-pipeline' %}?tab=raw" style="padding:10px 20px;font-size:13px;font-weight:600;color:#38bdf8;text-decoration:none;border-bottom:2px solid #38bdf8;">📋 Raw Jobs</a>
         <a href="{% url 'harvest-jarvis' %}" style="padding:10px 20px;font-size:13px;color:#64748b;text-decoration:none;border-bottom:2px solid transparent;">🤖 Jarvis</a>
       </div>
     </div>
@@ -187,7 +187,7 @@
           {% if rawjob.original_url %}
           <a href="{{ rawjob.original_url }}" target="_blank" rel="noopener" style="display:block;width:100%;padding:10px;background:#f1f5f9;color:#374151;border:1px solid #e2e8f0;border-radius:8px;font-size:13px;font-weight:600;text-decoration:none;text-align:center;margin-bottom:8px;box-sizing:border-box;">View Original Posting</a>
           {% endif %}
-          <a href="{% url 'harvest-rawjobs' %}" style="display:block;width:100%;padding:8px;color:#64748b;border-radius:8px;font-size:12px;text-decoration:none;text-align:center;">← Back to Jobs</a>
+          <a href="{% url 'jobs-pipeline' %}?tab=raw" style="display:block;width:100%;padding:8px;color:#64748b;border-radius:8px;font-size:12px;text-decoration:none;text-align:center;">← Back to Jobs</a>
         </div>
 
         <!-- Quality Score -->
