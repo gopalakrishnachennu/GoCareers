@@ -1067,7 +1067,11 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 
         # ── Summary stats (always computed) ─────────────────────────────────
         from harvest.models import RawJob, FetchBatch
-        raw_total = RawJob.objects.count()
+        from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
+        from harvest.services.rawjob_query import apply_rawjob_filters
+
+        raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
+        raw_total = raw_stats.get("total", 0)
         pool_total = Job.objects.filter(status=Job.Status.POOL, is_archived=False).count()
         pool_qs_all = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
         live_total = Job.objects.filter(status=Job.Status.OPEN, is_archived=False).count()
@@ -1090,8 +1094,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 
         if tab == 'raw':
             qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
-            if q:
-                qs = qs.filter(Q(title__icontains=q) | Q(company_name__icontains=q))
+            qs = apply_rawjob_filters(qs, request.GET)
             tab_raw = qs[:200]
 
         elif tab == 'pool':

@@ -1090,3 +1090,104 @@ class JarvisFetchAllCompanyViewTests(TestCase):
         self.assertEqual(qs.get("platform"), ["dayforce"])
         self.assertEqual(qs.get("company_id"), [str(self.company.pk)])
         self.assertEqual(qs.get("label_pk"), [str(label.pk)])
+
+
+class RawJobPipelineUnificationTests(TestCase):
+    def setUp(self):
+        import hashlib
+
+        from companies.models import Company
+        from harvest.models import RawJob
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="raw_unify_admin",
+            email="raw_unify_admin@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.client.force_login(self.user)
+        self.company = Company.objects.create(name="UnifyCo")
+
+        def _mk(
+            suffix: str,
+            *,
+            desc: str = "",
+            sync_status: str = RawJob.SyncStatus.PENDING,
+            quality_score=None,
+            jd_quality_score=None,
+            category_confidence=None,
+            classification_confidence=None,
+            is_active: bool = True,
+            word_count: int = 0,
+        ) -> RawJob:
+            url = f"https://example.com/jobs/{suffix}"
+            return RawJob.objects.create(
+                company=self.company,
+                company_name="UnifyCo",
+                title=f"Role {suffix}",
+                url_hash=hashlib.sha256(url.encode()).hexdigest(),
+                original_url=url,
+                description=desc,
+                sync_status=sync_status,
+                quality_score=quality_score,
+                jd_quality_score=jd_quality_score,
+                category_confidence=category_confidence,
+                classification_confidence=classification_confidence,
+                is_active=is_active,
+                word_count=word_count,
+            )
+
+        _mk("fetched", desc="")
+        _mk("parsed", desc="Parsed description text")
+        _mk("enriched", desc="Enriched text", quality_score=0.71)
+        _mk("classified", desc="Classified text", quality_score=0.81, category_confidence=0.24)
+        _mk("ready", desc="Ready text", quality_score=0.92, category_confidence=0.84, word_count=220)
+        _mk(
+            "synced",
+            desc="Synced text",
+            sync_status=RawJob.SyncStatus.SYNCED,
+            quality_score=0.95,
+            category_confidence=0.90,
+            word_count=260,
+        )
+
+    def test_funnel_counts_match_stage_filters(self):
+        from harvest.models import RawJob
+        from harvest.services.pipeline_snapshot import raw_jobs_workflow_insights
+        from harvest.services.rawjob_query import apply_rawjob_filters
+
+        insights = raw_jobs_workflow_insights(stale_pending_hours=6)
+        funnel = insights["funnel"]
+        stage_to_key = {
+            "FETCHED": "fetched",
+            "PARSED": "parsed",
+            "ENRICHED": "enriched",
+            "CLASSIFIED": "classified",
+            "READY": "ready",
+            "SYNCED": "synced",
+        }
+        for stage, key in stage_to_key.items():
+            expected = apply_rawjob_filters(RawJob.objects.all(), {"stage": stage}).count()
+            self.assertEqual(
+                funnel[key],
+                expected,
+                msg=f"Funnel mismatch for stage={stage}: {funnel[key]} != {expected}",
+            )
+
+    def test_rawjobs_stage_page_count_matches_shared_filter(self):
+        from harvest.models import RawJob
+        from harvest.services.rawjob_query import apply_rawjob_filters
+
+        response = self.client.get(reverse("harvest-rawjobs"), {"stage": "CLASSIFIED"})
+        self.assertEqual(response.status_code, 200)
+        expected = apply_rawjob_filters(RawJob.objects.all(), {"stage": "CLASSIFIED"}).count()
+        self.assertEqual(response.context["paginator"].count, expected)
+
+    def test_jobs_pipeline_uses_shared_raw_total_snapshot(self):
+        from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
+
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "raw"})
+        self.assertEqual(response.status_code, 200)
+        stats = load_rawjobs_dashboard_stats(force_refresh=False)
+        self.assertEqual(response.context["raw_total"], stats["total"])

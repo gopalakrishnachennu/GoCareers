@@ -32,6 +32,18 @@ from .models import (
 from .resume_profile import build_resume_job_profile
 from .jd_gate import evaluate_raw_job_resume_gate
 from .enrichments import infer_country_from_location
+from .services.pipeline_snapshot import (
+    load_rawjobs_dashboard_stats as _svc_load_rawjobs_dashboard_stats,
+    raw_jobs_missing_description_count as _svc_raw_jobs_missing_description_count,
+    raw_jobs_missing_jd_expired_count as _svc_raw_jobs_missing_jd_expired_count,
+    raw_jobs_workflow_insights as _svc_raw_jobs_workflow_insights,
+)
+from .services.rawjob_query import (
+    apply_rawjob_filters as _svc_apply_rawjob_filters,
+    effective_classification_q as _svc_effective_classification_q,
+    ready_stage_q as _svc_ready_stage_q,
+    rawjob_filter_state as _svc_rawjob_filter_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,18 +52,13 @@ _FULL_CRAWL_COOLDOWN_HOURS = 2
 
 
 def _effective_classification_q(min_conf: float = 0.01) -> Q:
-    """
-    Effective classification confidence filter.
-    Prefer category_confidence when present; fallback to legacy classification_confidence.
-    """
-    return Q(category_confidence__gte=min_conf) | (
-        Q(category_confidence__isnull=True) & Q(classification_confidence__gte=min_conf)
-    )
+    """Backward-compatible wrapper to shared query service."""
+    return _svc_effective_classification_q(min_conf=min_conf)
 
 
 def _ready_stage_q(min_conf: float = 0.55) -> Q:
-    """READY rows for workflow board (active + JD present + effective confidence)."""
-    return Q(has_description=True, is_active=True) & _effective_classification_q(min_conf=min_conf)
+    """Backward-compatible wrapper to shared query service."""
+    return _svc_ready_stage_q(min_conf=min_conf)
 
 
 def _find_existing_live_job_for_rawjob(raw_job):
@@ -85,41 +92,8 @@ def _invalidate_rawjobs_dashboard_cache() -> None:
 
 
 def _load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
-    """
-    Unified dashboard stats payload used by both HTML and JSON views.
-
-    Keeping this in one place avoids KPI drift between initial render and polling.
-    """
-    from django.utils.timezone import now as _now
-
-    stats_key = "rawjobs_dashboard_stats"
-    expired_key = "rawjobs_expired_missing_jd"
-    stats_ttl_sec = 20
-    expired_ttl_sec = 120
-
-    stats = None if force_refresh else cache.get(stats_key)
-    if stats is not None:
-        return stats
-
-    last_24h_cutoff = _now() - timedelta(hours=24)
-    agg = RawJob.objects.aggregate(
-        total=Count("id"),
-        active=Count("id", filter=Q(is_active=True)),
-        remote=Count("id", filter=Q(is_remote=True)),
-        synced=Count("id", filter=Q(sync_status="SYNCED")),
-        pending=Count("id", filter=Q(sync_status="PENDING")),
-        failed=Count("id", filter=Q(sync_status="FAILED")),
-        # Rolling 24h avoids timezone-midnight confusion for global users.
-        new_today=Count("id", filter=Q(fetched_at__gte=last_24h_cutoff)),
-        missing_jd=Count("id", filter=Q(has_description=False)),
-    )
-    expired_missing = None if force_refresh else cache.get(expired_key)
-    if expired_missing is None:
-        expired_missing = raw_jobs_missing_jd_expired_count()
-        cache.set(expired_key, expired_missing, expired_ttl_sec)
-    agg["expired_missing"] = expired_missing
-    cache.set(stats_key, agg, stats_ttl_sec)
-    return agg
+    """Backward-compatible wrapper to shared snapshot service."""
+    return _svc_load_rawjobs_dashboard_stats(force_refresh=force_refresh)
 
 
 def _sync_rawjob_to_pool(raw_job, *, posted_by):
@@ -261,188 +235,15 @@ def _full_crawl_cooldown_ctx() -> dict:
 
 
 def raw_jobs_missing_description_count() -> int:
-    """Count jobs with empty/trivial description that have a URL (backfill candidates)."""
-    from .tasks import BACKFILL_LOCK_STALE_MINUTES
-    return RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES).count()
+    return _svc_raw_jobs_missing_description_count()
 
 
 def raw_jobs_missing_jd_expired_count() -> int:
-    """Subset of missing-JD rows that look expired (aligned with RawJob.is_expired_listing)."""
-    from .tasks import BACKFILL_LOCK_STALE_MINUTES
-    today = timezone.now().date()
-    now = timezone.now()
-    stale_days = max(30, int(getattr(settings, "HARVEST_JD_STALE_DAYS", 120)))
-    stale_cutoff = today - timedelta(days=stale_days)
-    return (
-        RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
-        .filter(
-            Q(expires_at__lt=now)
-            | Q(closing_date__lt=today)
-            | Q(is_active=False)
-            | Q(raw_payload__active=False)
-            | Q(posted_date__lt=stale_cutoff),
-        )
-        .count()
-    )
+    return _svc_raw_jobs_missing_jd_expired_count()
 
 
 def _raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
-    """
-    Aggregate operational insights for the Raw Jobs workflow board.
-    """
-    cache_key = f"rawjobs_workflow_insights_{max(1, int(stale_pending_hours))}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        return cached
-
-    now = timezone.now()
-    stale_cutoff = now - timedelta(hours=max(1, int(stale_pending_hours)))
-    recent_cutoff = now - timedelta(hours=24)
-
-    base = RawJob.objects.all()
-    total = base.count()
-
-    # Funnel counts are intentionally "drill-down aligned":
-    # clicking a funnel card applies the same predicate in Jobs Browser.
-    parsed = base.filter(has_description=True).count()
-    enriched = base.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)).count()
-    classified = base.filter(_effective_classification_q(min_conf=0.01)).count()
-    ready = base.filter(_ready_stage_q(min_conf=0.55)).count()
-    synced = base.filter(sync_status=RawJob.SyncStatus.SYNCED).count()
-
-    pending_qs = base.filter(sync_status=RawJob.SyncStatus.PENDING)
-    pending_total = pending_qs.count()
-    pending_stale_qs = pending_qs.filter(fetched_at__lt=stale_cutoff)
-    pending_stale = pending_stale_qs.count()
-
-    pending_aging = {
-        "lt_1h": pending_qs.filter(fetched_at__gte=now - timedelta(hours=1)).count(),
-        "h_1_6": pending_qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6)).count(),
-        "h_6_24": pending_qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24)).count(),
-        "gt_24h": pending_qs.filter(fetched_at__lt=now - timedelta(hours=24)).count(),
-    }
-
-    completed_24h = base.filter(sync_status__in=[RawJob.SyncStatus.SYNCED, RawJob.SyncStatus.SKIPPED], updated_at__gte=recent_cutoff).count()
-    failed_24h = base.filter(sync_status=RawJob.SyncStatus.FAILED, updated_at__gte=recent_cutoff).count()
-    drain_per_hour = round(completed_24h / 24.0, 2) if completed_24h > 0 else 0.0
-    eta_hours = round(pending_total / drain_per_hour, 1) if drain_per_hour > 0 else None
-
-    missing_jd = base.filter(has_description=False).count()
-    html_heavy = base.filter(has_html_content=True).count()
-    low_confidence = base.filter(
-        Q(category_confidence__lt=0.55)
-        | (Q(category_confidence__isnull=True) & (Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True)))
-    ).count()
-    missing_salary = base.filter(salary_min__isnull=True, salary_max__isnull=True).count()
-    missing_location = base.filter(
-        Q(location_raw="") & Q(city="") & Q(state="") & Q(country="")
-    ).count()
-    missing_experience = base.filter(
-        Q(experience_level=RawJob.ExperienceLevel.UNKNOWN)
-        & Q(years_required__isnull=True)
-        & Q(years_required_max__isnull=True)
-    ).count()
-
-    # Duplicate = SKIPPED in current pipeline semantics (already in pool / URL hash match)
-    duplicate_total = base.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
-    duplicate_recent = base.filter(sync_status=RawJob.SyncStatus.SKIPPED, updated_at__gte=recent_cutoff).count()
-
-    blocked_companies = list(
-        pending_stale_qs.values("company_name")
-        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
-        .order_by("-count")[:10]
-    )
-    blocked_platforms = list(
-        pending_stale_qs.values("platform_slug")
-        .annotate(count=Count("id"), last_seen=Max("fetched_at"))
-        .order_by("-count")[:10]
-    )
-
-    stuck_queue = list(
-        pending_stale_qs.values("platform_label_id", "company_name", "platform_slug")
-        .annotate(count=Count("id"), oldest=Min("fetched_at"))
-        .order_by("-count")[:100]
-    )
-
-    # Platform health from per-company fetch runs in last 24h
-    recent_runs = CompanyFetchRun.objects.filter(started_at__gte=recent_cutoff)
-    platform_health = []
-    for row in (
-        recent_runs.values("label__platform__slug")
-        .annotate(
-            runs=Count("id"),
-            success=Count("id", filter=Q(status=CompanyFetchRun.Status.SUCCESS)),
-            partial=Count("id", filter=Q(status=CompanyFetchRun.Status.PARTIAL)),
-            failed=Count("id", filter=Q(status=CompanyFetchRun.Status.FAILED)),
-            avg_jobs_found=Avg("jobs_found"),
-            avg_jobs_new=Avg("jobs_new"),
-            avg_jobs_failed=Avg("jobs_failed"),
-            last_run=Max("started_at"),
-        )
-        .order_by("-runs")
-    ):
-        slug = (row.get("label__platform__slug") or "unknown").strip() or "unknown"
-        runs = int(row.get("runs") or 0)
-        success = int(row.get("success") or 0)
-        partial = int(row.get("partial") or 0)
-        failed = int(row.get("failed") or 0)
-        success_rate = round(((success + (partial * 0.5)) / runs) * 100, 1) if runs else 0.0
-        platform_health.append(
-            {
-                "platform_slug": slug,
-                "runs": runs,
-                "success": success,
-                "partial": partial,
-                "failed": failed,
-                "success_rate": success_rate,
-                "avg_jobs_found": round(float(row.get("avg_jobs_found") or 0.0), 1),
-                "avg_jobs_new": round(float(row.get("avg_jobs_new") or 0.0), 1),
-                "avg_jobs_failed": round(float(row.get("avg_jobs_failed") or 0.0), 1),
-                "last_run": row.get("last_run").isoformat() if row.get("last_run") else "",
-            }
-        )
-
-    payload = {
-        "funnel": {
-            "fetched": total,
-            "parsed": parsed,
-            "enriched": enriched,
-            "classified": classified,
-            "ready": ready,
-            "synced": synced,
-        },
-        "queue": {
-            "pending_total": pending_total,
-            "pending_stale": pending_stale,
-            "stale_pending_hours": max(1, int(stale_pending_hours)),
-            "aging": pending_aging,
-            "drain_per_hour": drain_per_hour,
-            "eta_hours": eta_hours,
-            "completed_24h": completed_24h,
-            "failed_24h": failed_24h,
-        },
-        "quality_debt": {
-            "missing_jd": missing_jd,
-            "html_heavy": html_heavy,
-            "low_confidence": low_confidence,
-            "missing_salary": missing_salary,
-            "missing_location": missing_location,
-            "missing_experience": missing_experience,
-        },
-        "duplicates": {
-            "total": duplicate_total,
-            "recent_24h": duplicate_recent,
-        },
-        "top_blocked": {
-            "companies": blocked_companies,
-            "platforms": blocked_platforms,
-        },
-        "stuck_queue": stuck_queue,
-        "platform_health": platform_health,
-        "generated_at": now.isoformat(),
-    }
-    cache.set(cache_key, payload, 20)
-    return payload
+    return _svc_raw_jobs_workflow_insights(stale_pending_hours=stale_pending_hours)
 
 
 class SuperuserRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
@@ -1085,302 +886,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         # No select_related — JOINs add 20x overhead on 122k rows; all displayed
         # fields (company_name, platform_slug) are denormalised directly on RawJob.
         qs = RawJob.objects.order_by("-fetched_at")
-
-        q = self.request.GET.get("q", "").strip()
-        if q:
-            qs = qs.filter(
-                Q(title__icontains=q)
-                | Q(company_name__icontains=q)
-                | Q(skills__icontains=q)
-                | Q(job_keywords__icontains=q)
-                | Q(title_keywords__icontains=q)
-                | Q(description_clean__icontains=q)
-            )
-
-        company_id_f = self.request.GET.get("company_id", "").strip()
-        if company_id_f.isdigit():
-            qs = qs.filter(company_id=int(company_id_f))
-
-        label_pk_f = self.request.GET.get("label_pk", "").strip()
-        if label_pk_f.isdigit():
-            qs = qs.filter(platform_label_id=int(label_pk_f))
-
-        platform_f = self.request.GET.get("platform", "").strip()
-        if platform_f:
-            qs = qs.filter(platform_slug=platform_f)
-
-        location_f = self.request.GET.get("location_type", "").strip()
-        if location_f:
-            qs = qs.filter(location_type=location_f)
-
-        employment_f = self.request.GET.get("employment_type", "").strip()
-        if employment_f:
-            qs = qs.filter(employment_type=employment_f)
-
-        exp_f = self.request.GET.get("experience_level", "").strip()
-        if exp_f:
-            qs = qs.filter(experience_level=exp_f)
-
-        dept_f = self.request.GET.get("department", "").strip()
-        if dept_f:
-            qs = qs.filter(
-                Q(department_normalized__icontains=dept_f)
-                | Q(department__icontains=dept_f)
-            )
-
-        country_f = self.request.GET.get("country", "").strip()
-        if country_f:
-            qs = qs.filter(country__icontains=country_f)
-
-        state_f = self.request.GET.get("state", "").strip()
-        if state_f:
-            qs = qs.filter(state__icontains=state_f)
-
-        edu_f = self.request.GET.get("education_required", "").strip()
-        if edu_f:
-            qs = qs.filter(education_required=edu_f)
-
-        years_min_f = self.request.GET.get("years_min", "").strip()
-        if years_min_f.isdigit():
-            qs = qs.filter(years_required__gte=int(years_min_f))
-
-        years_max_f = self.request.GET.get("years_max", "").strip()
-        if years_max_f.isdigit():
-            qs = qs.filter(years_required__lte=int(years_max_f))
-
-        salary_min_from_f = self.request.GET.get("salary_min_from", "").strip()
-        try:
-            if salary_min_from_f:
-                qs = qs.filter(salary_min__gte=float(salary_min_from_f))
-        except ValueError:
-            pass
-
-        salary_max_to_f = self.request.GET.get("salary_max_to", "").strip()
-        try:
-            if salary_max_to_f:
-                qs = qs.filter(salary_max__lte=float(salary_max_to_f))
-        except ValueError:
-            pass
-
-        clear_f = self.request.GET.get("clearance_required", "").strip()
-        if clear_f == "1":
-            qs = qs.filter(clearance_required=True)
-        elif clear_f == "0":
-            qs = qs.filter(clearance_required=False)
-
-        clearance_level_f = self.request.GET.get("clearance_level", "").strip()
-        if clearance_level_f:
-            qs = qs.filter(clearance_level__icontains=clearance_level_f)
-
-        lang_f = self.request.GET.get("language", "").strip()
-        if lang_f:
-            try:
-                qs = qs.filter(languages_required__contains=[lang_f])
-            except Exception:
-                qs = qs.filter(languages_required__icontains=lang_f)
-
-        shift_f = self.request.GET.get("shift_schedule", "").strip()
-        if shift_f:
-            qs = qs.filter(shift_schedule__icontains=shift_f)
-
-        schedule_f = self.request.GET.get("schedule_type", "").strip()
-        if schedule_f:
-            qs = qs.filter(schedule_type__icontains=schedule_f)
-
-        weekend_f = self.request.GET.get("weekend_required", "").strip()
-        if weekend_f == "1":
-            qs = qs.filter(weekend_required=True)
-        elif weekend_f == "0":
-            qs = qs.filter(weekend_required=False)
-
-        travel_min_f = self.request.GET.get("travel_min", "").strip()
-        if travel_min_f.isdigit():
-            qs = qs.filter(travel_pct_max__gte=int(travel_min_f))
-
-        travel_max_f = self.request.GET.get("travel_max", "").strip()
-        if travel_max_f.isdigit():
-            qs = qs.filter(travel_pct_min__lte=int(travel_max_f))
-
-        license_f = self.request.GET.get("license", "").strip()
-        if license_f:
-            try:
-                qs = qs.filter(licenses_required__contains=[license_f])
-            except Exception:
-                qs = qs.filter(licenses_required__icontains=license_f)
-
-        encouraged_f = self.request.GET.get("encouraged", "").strip()
-        if encouraged_f:
-            try:
-                qs = qs.filter(encouraged_to_apply__contains=[encouraged_f])
-            except Exception:
-                qs = qs.filter(encouraged_to_apply__icontains=encouraged_f)
-
-        cert_f = self.request.GET.get("certification", "").strip()
-        if cert_f:
-            try:
-                qs = qs.filter(certifications__contains=[cert_f])
-            except Exception:
-                qs = qs.filter(certifications__icontains=cert_f)
-
-        benefit_f = self.request.GET.get("benefit", "").strip()
-        if benefit_f:
-            try:
-                qs = qs.filter(benefits_list__contains=[benefit_f])
-            except Exception:
-                qs = qs.filter(benefits_list__icontains=benefit_f)
-
-        industry_f = self.request.GET.get("company_industry", "").strip()
-        if industry_f:
-            qs = qs.filter(company_industry__icontains=industry_f)
-
-        company_stage_f = self.request.GET.get("company_stage", "").strip()
-        if company_stage_f:
-            qs = qs.filter(company_stage__icontains=company_stage_f)
-
-        size_f = self.request.GET.get("company_size", "").strip()
-        if size_f:
-            qs = qs.filter(
-                Q(company_size__icontains=size_f)
-                | Q(company_employee_count_band__icontains=size_f)
-            )
-
-        funding_f = self.request.GET.get("company_funding", "").strip()
-        if funding_f:
-            qs = qs.filter(company_funding__icontains=funding_f)
-
-        resume_score_f = self.request.GET.get("resume_ready_min", "").strip()
-        try:
-            if resume_score_f:
-                qs = qs.filter(resume_ready_score__gte=float(resume_score_f))
-        except ValueError:
-            pass
-
-        conf_min_f = self.request.GET.get("classification_min_conf", "").strip()
-        try:
-            if conf_min_f:
-                qs = qs.filter(_effective_classification_q(min_conf=float(conf_min_f)))
-        except ValueError:
-            pass
-
-        founded_from = self.request.GET.get("founded_from", "").strip()
-        if founded_from.isdigit():
-            qs = qs.filter(company_founding_year__gte=int(founded_from))
-
-        founded_to = self.request.GET.get("founded_to", "").strip()
-        if founded_to.isdigit():
-            qs = qs.filter(company_founding_year__lte=int(founded_to))
-
-        sync_f = self.request.GET.get("sync_status", "").strip()
-        if sync_f:
-            qs = qs.filter(sync_status=sync_f)
-
-        stage_f = self.request.GET.get("stage", "").strip().upper()
-        if stage_f == "FETCHED":
-            # Fetched = all harvested rows (top of funnel).
-            qs = qs
-        elif stage_f == "PARSED":
-            qs = qs.filter(has_description=True)
-        elif stage_f == "ENRICHED":
-            qs = qs.filter(Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False))
-        elif stage_f == "CLASSIFIED":
-            qs = qs.filter(_effective_classification_q(min_conf=0.01))
-        elif stage_f == "READY":
-            qs = qs.filter(_ready_stage_q(min_conf=0.55))
-        elif stage_f == "SYNCED":
-            qs = qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
-        elif stage_f == "FAILED":
-            qs = qs.filter(sync_status=RawJob.SyncStatus.FAILED)
-        elif stage_f == "DUPLICATE":
-            qs = qs.filter(sync_status=RawJob.SyncStatus.SKIPPED)
-
-        remote_f = self.request.GET.get("is_remote", "").strip()
-        if remote_f == "1":
-            qs = qs.filter(is_remote=True)
-        elif remote_f == "0":
-            qs = qs.filter(is_remote=False)
-
-        active_f = self.request.GET.get("is_active", "").strip()
-        if active_f == "1":
-            qs = qs.filter(is_active=True)
-        elif active_f == "0":
-            qs = qs.filter(is_active=False)
-
-        jd_f = self.request.GET.get("has_jd", "").strip()
-        if jd_f == "1":
-            qs = qs.filter(has_description=True)
-        elif jd_f == "0":
-            qs = qs.filter(has_description=False)
-
-        resume_jd_f = self.request.GET.get("resume_jd", "").strip()
-        if resume_jd_f == "ready":
-            qs = qs.filter(
-                has_description=True,
-                is_active=True,
-                word_count__gte=max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80))),
-            ).filter(
-                _effective_classification_q(
-                    min_conf=float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
-                )
-            )
-        elif resume_jd_f == "blocked":
-            min_words = max(1, int(getattr(settings, "RESUME_JD_MIN_WORDS", 80)))
-            min_conf = float(getattr(settings, "RESUME_JD_MIN_CLASSIFICATION_CONFIDENCE", 0.35))
-            qs = qs.filter(
-                Q(has_description=False)
-                | Q(is_active=False)
-                | Q(word_count__lt=min_words)
-                | Q(category_confidence__lt=min_conf)
-                | (Q(category_confidence__isnull=True) & (Q(classification_confidence__lt=min_conf) | Q(classification_confidence__isnull=True)))
-            )
-
-        # Fetched-date range — uses the indexed fetched_at column so these are
-        # fast range scans instead of function-based date extractions.
-        from datetime import datetime as _dt, timedelta as _td
-        from django.utils.timezone import make_aware as _aware
-
-        fetched_from = self.request.GET.get("fetched_from", "").strip()
-        if fetched_from:
-            try:
-                qs = qs.filter(fetched_at__gte=_aware(_dt.strptime(fetched_from, "%Y-%m-%d")))
-            except ValueError:
-                pass
-
-        fetched_to = self.request.GET.get("fetched_to", "").strip()
-        if fetched_to:
-            try:
-                next_day = _dt.strptime(fetched_to, "%Y-%m-%d") + _td(days=1)
-                qs = qs.filter(fetched_at__lt=_aware(next_day))
-            except ValueError:
-                pass
-
-        last_hours = self.request.GET.get("last_hours", "").strip()
-        if last_hours.isdigit():
-            hours = max(1, min(720, int(last_hours)))
-            qs = qs.filter(fetched_at__gte=timezone.now() - timedelta(hours=hours))
-
-        pending_age_bucket = self.request.GET.get("pending_age_bucket", "").strip()
-        if pending_age_bucket:
-            now = timezone.now()
-            qs = qs.filter(sync_status=RawJob.SyncStatus.PENDING)
-            if pending_age_bucket == "lt_1h":
-                qs = qs.filter(fetched_at__gte=now - timedelta(hours=1))
-            elif pending_age_bucket == "h_1_6":
-                qs = qs.filter(fetched_at__lt=now - timedelta(hours=1), fetched_at__gte=now - timedelta(hours=6))
-            elif pending_age_bucket == "h_6_24":
-                qs = qs.filter(fetched_at__lt=now - timedelta(hours=6), fetched_at__gte=now - timedelta(hours=24))
-            elif pending_age_bucket == "gt_24h":
-                qs = qs.filter(fetched_at__lt=now - timedelta(hours=24))
-
-        # Posted-date range (separate from fetched_at)
-        date_from = self.request.GET.get("date_from", "").strip()
-        if date_from:
-            qs = qs.filter(posted_date__gte=date_from)
-
-        date_to = self.request.GET.get("date_to", "").strip()
-        if date_to:
-            qs = qs.filter(posted_date__lte=date_to)
-
-        return qs
+        return _svc_apply_rawjob_filters(qs, self.request.GET)
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
@@ -1432,54 +938,8 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
             (val, label) for val, label in RawJob._meta.get_field("education_required").choices if val
         ]
 
-        # Filter state
-        ctx["q"] = self.request.GET.get("q", "")
-        ctx["selected_platform"] = self.request.GET.get("platform", "")
-        ctx["selected_location_type"] = self.request.GET.get("location_type", "")
-        ctx["selected_employment_type"] = self.request.GET.get("employment_type", "")
-        ctx["selected_experience_level"] = self.request.GET.get("experience_level", "")
-        ctx["selected_department"] = self.request.GET.get("department", "")
-        ctx["selected_country"] = self.request.GET.get("country", "")
-        ctx["selected_state"] = self.request.GET.get("state", "")
-        ctx["selected_education_required"] = self.request.GET.get("education_required", "")
-        ctx["selected_years_min"] = self.request.GET.get("years_min", "")
-        ctx["selected_years_max"] = self.request.GET.get("years_max", "")
-        ctx["selected_salary_min_from"] = self.request.GET.get("salary_min_from", "")
-        ctx["selected_salary_max_to"] = self.request.GET.get("salary_max_to", "")
-        ctx["selected_clearance_required"] = self.request.GET.get("clearance_required", "")
-        ctx["selected_clearance_level"] = self.request.GET.get("clearance_level", "")
-        ctx["selected_language"] = self.request.GET.get("language", "")
-        ctx["selected_license"] = self.request.GET.get("license", "")
-        ctx["selected_encouraged"] = self.request.GET.get("encouraged", "")
-        ctx["selected_certification"] = self.request.GET.get("certification", "")
-        ctx["selected_benefit"] = self.request.GET.get("benefit", "")
-        ctx["selected_shift_schedule"] = self.request.GET.get("shift_schedule", "")
-        ctx["selected_schedule_type"] = self.request.GET.get("schedule_type", "")
-        ctx["selected_weekend_required"] = self.request.GET.get("weekend_required", "")
-        ctx["selected_travel_min"] = self.request.GET.get("travel_min", "")
-        ctx["selected_travel_max"] = self.request.GET.get("travel_max", "")
-        ctx["selected_company_industry"] = self.request.GET.get("company_industry", "")
-        ctx["selected_company_stage"] = self.request.GET.get("company_stage", "")
-        ctx["selected_company_size"] = self.request.GET.get("company_size", "")
-        ctx["selected_company_funding"] = self.request.GET.get("company_funding", "")
-        ctx["selected_resume_ready_min"] = self.request.GET.get("resume_ready_min", "")
-        ctx["selected_classification_min_conf"] = self.request.GET.get("classification_min_conf", "")
-        ctx["selected_founded_from"] = self.request.GET.get("founded_from", "")
-        ctx["selected_founded_to"] = self.request.GET.get("founded_to", "")
-        ctx["selected_sync_status"] = self.request.GET.get("sync_status", "")
-        ctx["selected_stage"] = self.request.GET.get("stage", "")
-        ctx["selected_pending_age_bucket"] = self.request.GET.get("pending_age_bucket", "")
-        ctx["selected_is_remote"] = self.request.GET.get("is_remote", "")
-        ctx["selected_is_active"] = self.request.GET.get("is_active", "")
-        ctx["selected_has_jd"] = self.request.GET.get("has_jd", "")
-        ctx["selected_resume_jd"] = self.request.GET.get("resume_jd", "")
-        ctx["selected_fetched_from"] = self.request.GET.get("fetched_from", "")
-        ctx["selected_fetched_to"] = self.request.GET.get("fetched_to", "")
-        ctx["selected_last_hours"] = self.request.GET.get("last_hours", "")
-        ctx["selected_date_from"] = self.request.GET.get("date_from", "")
-        ctx["selected_date_to"] = self.request.GET.get("date_to", "")
-        ctx["selected_company_id"] = self.request.GET.get("company_id", "")
-        ctx["selected_label_pk"] = self.request.GET.get("label_pk", "")
+        # Filter state comes from shared query-contract helper.
+        ctx.update(_svc_rawjob_filter_state(self.request.GET))
         paginator = ctx.get("paginator")
         ctx["jobs_total_filtered"] = paginator.count if paginator else 0
 
