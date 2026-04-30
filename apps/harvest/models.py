@@ -529,6 +529,12 @@ class RawJob(models.Model):
     quality_score = models.FloatField(null=True, blank=True)
     jd_quality_score = models.FloatField(null=True, blank=True)
     classification_confidence = models.FloatField(null=True, blank=True)
+    # Separate signal: how confident is the *category* detection specifically
+    # (title match → 0.92, desc-only → 0.72, both agree → 0.97, no match → 0.0)
+    # Used by gating trust score instead of the broken field-completeness average.
+    category_confidence = models.FloatField(null=True, blank=True)
+    enrichment_version = models.CharField(max_length=16, default="v3", blank=True)
+    classification_source = models.CharField(max_length=16, blank=True)
     classification_provenance = models.JSONField(default=dict, blank=True)
     field_confidence = models.JSONField(default=dict, blank=True)
     field_provenance = models.JSONField(default=dict, blank=True)

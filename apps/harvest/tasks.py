@@ -3785,8 +3785,12 @@ def enrich_existing_jobs_task(
     if platform_slug:
         qs = qs.filter(platform_slug=platform_slug)
     if only_unenriched:
-        # Only jobs that have no skills AND no category yet
-        qs = qs.filter(skills=[], job_category="")
+        # Re-enrich if: no skills yet, no category yet, OR category_confidence never computed
+        # (covers the 106k jobs enriched before v3 that never got category_confidence)
+        from django.db.models import Q
+        qs = qs.filter(
+            Q(skills=[], job_category="") | Q(category_confidence__isnull=True)
+        )
 
     total = qs.count()
     if total == 0:
@@ -3814,7 +3818,9 @@ def enrich_existing_jobs_task(
         "languages_required", "encouraged_to_apply",
         "job_keywords", "department_normalized",
         "word_count", "quality_score", "jd_quality_score",
-        "classification_confidence", "classification_provenance",
+        "classification_confidence", "category_confidence",
+        "classification_source", "enrichment_version",
+        "classification_provenance",
         "field_confidence", "field_provenance",
         "resume_ready_score", "description_clean", "description_raw_html",
         "has_html_content", "cleaning_version",

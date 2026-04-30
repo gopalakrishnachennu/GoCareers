@@ -175,7 +175,12 @@ def evaluate_raw_job_gate(raw_job) -> GateResult:
     source_bonus = 0.45 if (raw_job.platform_slug or "").lower() in {
         "workday", "greenhouse", "lever", "ashby", "icims", "smartrecruiters", "bamboohr", "dayforce", "workable", "jobvite", "jarvis"
     } else 0.3
-    cls_conf = _clamp01(_as_float(raw_job.classification_confidence, 0.0))
+    # Prefer category_confidence (direct category-detection signal) over the
+    # legacy classification_confidence (field-completeness average) which was
+    # poisoning trust scores for jobs that have category=="" or empty fields.
+    cls_conf = _clamp01(_as_float(
+        getattr(raw_job, "category_confidence", None) or raw_job.classification_confidence, 0.0
+    ))
     platform_conf = 0.5
     if raw_job.platform_label_id:
         platform_conf_map = {"HIGH": 1.0, "MEDIUM": 0.7, "LOW": 0.4, "UNKNOWN": 0.5}
@@ -196,7 +201,7 @@ def evaluate_raw_job_gate(raw_job) -> GateResult:
     if not hard_passed:
         lane = "BLOCKED"
         status = "BLOCKED"
-    elif vet_priority >= 0.82 and data_quality >= 0.72 and trust >= 0.70:
+    elif vet_priority >= 0.75 and data_quality >= 0.72 and trust >= 0.70:
         lane = "AUTO"
         status = "ELIGIBLE"
     else:
@@ -281,7 +286,7 @@ def evaluate_job_gate(job: Job) -> GateResult:
     if not hard_passed:
         lane = "BLOCKED"
         status = "BLOCKED"
-    elif vet_priority >= 0.82 and data_quality >= 0.72 and trust >= 0.70:
+    elif vet_priority >= 0.75 and data_quality >= 0.72 and trust >= 0.70:
         lane = "AUTO"
         status = "ELIGIBLE"
     else:

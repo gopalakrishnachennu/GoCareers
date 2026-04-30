@@ -987,16 +987,27 @@ def extract_enrichments(job: dict) -> dict:
 
     # ── 14. Job category ──────────────────────────────────────────────────────
     category = ""
+    _cat_title_match = False
+    _cat_desc_match = False
     dept = (job.get("department") or "").lower()
     title_dept = f"{title_c} {dept}"
     for name, pattern in _CATEGORY_PATTERNS:
         if re.search(pattern, title_dept):
             category = name
+            _cat_title_match = True
             break
     if not category:
         for name, pattern in _CATEGORY_PATTERNS:
             if re.search(pattern, desc_c):
                 category = name
+                _cat_desc_match = True
+                break
+    elif category:
+        # Also check desc to see if they agree (boosts confidence)
+        for name, pattern in _CATEGORY_PATTERNS:
+            if re.search(pattern, desc_c):
+                if name == category:
+                    _cat_desc_match = True
                 break
 
     # ── 15. Human languages ───────────────────────────────────────────────────
@@ -1063,11 +1074,32 @@ def extract_enrichments(job: dict) -> dict:
     field_confidence = {k: round(_confidence_from_value(v), 3) for k, v in field_values_for_conf.items()}
     field_provenance = {k: "rule_regex_v2" for k in field_values_for_conf}
     non_zero = [v for v in field_confidence.values() if v > 0]
+    # Legacy avg-completeness score — kept for backward compatibility but no longer
+    # used in gating; replaced by category_confidence below.
     classification_confidence = round(sum(non_zero) / len(non_zero), 3) if non_zero else 0.0
+
+    # Category-specific confidence: how certain are we about *which* category this job is.
+    # title+desc agree → 0.97, title-only → 0.92, desc-only → 0.72, no match → 0.0
+    if category and _cat_title_match and _cat_desc_match:
+        category_confidence = 0.97
+    elif category and _cat_title_match:
+        category_confidence = 0.92
+    elif category and _cat_desc_match:
+        category_confidence = 0.72
+    else:
+        category_confidence = 0.0
+
+    classification_source = "rules"
     classification_provenance = {
         "engine": "rule_regex_v2",
         "signals_count": len(non_zero),
         "text_basis": "title+description+requirements+benefits",
+        "category_match": (
+            "title+desc" if (_cat_title_match and _cat_desc_match)
+            else "title" if _cat_title_match
+            else "desc" if _cat_desc_match
+            else "none"
+        ),
     }
     resume_score = _resume_ready_score({
         "description": description,
@@ -1132,8 +1164,11 @@ def extract_enrichments(job: dict) -> dict:
         "word_count":           word_count,
         "quality_score":        quality,
         "jd_quality_score":     content_meta["jd_quality_score"],
-        "classification_confidence": classification_confidence,
-        "classification_provenance": classification_provenance,
+        "classification_confidence":  classification_confidence,
+        "category_confidence":        category_confidence,
+        "classification_source":      classification_source,
+        "enrichment_version":         "v3",
+        "classification_provenance":  classification_provenance,
         "field_confidence":     field_confidence,
         "field_provenance":     field_provenance,
         "resume_ready_score":   resume_score,
