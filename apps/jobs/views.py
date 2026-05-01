@@ -6,7 +6,8 @@ from django.contrib import messages
 from django.utils import timezone
 from django.utils.dateparse import parse_date
 from django.db.models import Q, Count
-from django.http import HttpResponse
+from django.core.paginator import Paginator
+from django.http import HttpResponse, JsonResponse
 from django.conf import settings
 import re
 import json
@@ -1062,7 +1063,73 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
     """
     template_name = 'jobs/pipeline.html'
 
+    def _raw_json_response(self, request):
+        from harvest.models import RawJob
+        from harvest.enrichments import infer_country_from_location
+        from harvest.jd_gate import evaluate_raw_job_resume_gate
+        from harvest.services.rawjob_query import apply_rawjob_filters
+        qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
+        qs = apply_rawjob_filters(qs, request.GET)
+        qs = qs.only(
+            "id", "company_name", "platform_slug", "title", "original_url",
+            "location_raw", "is_remote", "employment_type", "experience_level",
+            "salary_min", "salary_max", "salary_raw", "posted_date", "fetched_at",
+            "sync_status", "has_description", "is_active",
+            "department", "department_normalized", "state", "country",
+            "education_required", "languages_required", "certifications",
+            "licenses_required", "clearance_required", "clearance_level",
+            "schedule_type", "shift_schedule", "travel_pct_min", "travel_pct_max",
+            "resume_ready_score", "classification_confidence", "quality_score",
+            "jd_quality_score", "raw_payload", "job_keywords", "title_keywords",
+            "company_industry", "company_size", "word_count",
+        )
+
+        paginator = Paginator(qs, 100)
+        try:
+            page_num = int(request.GET.get("page", 1))
+            page_obj = paginator.page(page_num)
+        except Exception:
+            return JsonResponse({"jobs": [], "has_next": False, "total": 0, "num_pages": 0, "next_page": None})
+
+        jobs_data = []
+        for job in page_obj.object_list:
+            jd_gate = evaluate_raw_job_resume_gate(job)
+            detected_country = infer_country_from_location(
+                location_raw=job.location_raw or "",
+                state=job.state or "",
+                country=job.country or "",
+            )
+            jobs_data.append({
+                "id": job.pk,
+                "company_name": (job.company_name or "")[:30],
+                "platform_slug": job.platform_slug or "",
+                "title": (job.title or "")[:60],
+                "location_raw": (job.location_raw or "")[:30],
+                "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
+                "is_active": bool(job.is_active),
+                "stage": job.pipeline_stage_label(),
+                "resume_jd_usable": jd_gate.usable,
+                "resume_jd_reason_code": jd_gate.reason_code,
+                "country": (detected_country or "")[:48],
+                "detail_url": str(reverse_lazy("harvest-rawjob-detail", args=[job.pk])),
+            })
+
+        return JsonResponse({
+            "jobs": jobs_data,
+            "has_next": page_obj.has_next(),
+            "next_page": page_obj.next_page_number() if page_obj.has_next() else None,
+            "total": paginator.count,
+            "num_pages": paginator.num_pages,
+        })
+
     def get(self, request):
+        if (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            and (request.GET.get("tab") or "").strip().lower() == "raw"
+            and (request.GET.get("raw_json") or "").strip() == "1"
+        ):
+            return self._raw_json_response(request)
+
         tab = (request.GET.get('tab', '') or '').strip().lower()
         if not tab:
             legacy_subtab = (request.GET.get('_subtab', '') or '').strip().lower()
@@ -1215,7 +1282,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),
             }
-            tab_raw = qs.only(
+            raw_seed_qs = qs.only(
                 "id",
                 "company",
                 "job_platform",
@@ -1238,7 +1305,13 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "raw_payload",
                 "state",
                 "country",
-            )[:200]
+            )
+            raw_paginator = Paginator(raw_seed_qs, 100)
+            raw_page = raw_paginator.page(1)
+            tab_raw = raw_page.object_list
+            raw_has_next = raw_page.has_next()
+            raw_next_page = raw_page.next_page_number() if raw_page.has_next() else None
+            raw_total_filtered = raw_paginator.count
 
         elif tab == 'pool':
             score_tab = request.GET.get('score', 'all')
@@ -1367,6 +1440,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'last_batch': last_batch,
             'tab_jobs': tab_jobs,
             'tab_raw': tab_raw,
+            'raw_has_next': raw_has_next if tab == "raw" else False,
+            'raw_next_page': raw_next_page if tab == "raw" else None,
+            'raw_total_filtered': raw_total_filtered if tab == "raw" else 0,
             'vet_gate_summary': vet_gate_summary,
         }
         if tab == 'pool':

@@ -534,7 +534,7 @@
         <th class="tbl-th-right">Actions</th>
       </tr>
     </thead>
-    <tbody class="divide-y divide-gray-100">
+    <tbody id="raw-jobs-tbody" class="divide-y divide-gray-100">
       {% for raw in tab_raw %}
       <tr class="tbl-row">
         <td class="tbl-td">
@@ -577,6 +577,19 @@
     </tbody>
   </table>
 </div>
+<div id="raw-jobs-load-status" class="mt-3 text-center text-sm text-slate-500">
+  {% if raw_has_next %}
+    Loading more jobs as you scroll…
+  {% else %}
+    Showing {{ tab_raw|length }} of {{ raw_total_filtered }} filtered jobs.
+  {% endif %}
+</div>
+{% if raw_has_next %}
+<div class="mt-2 flex items-center justify-center">
+  <button id="raw-jobs-load-more-btn" type="button" class="btn-secondary btn-sm">Load more</button>
+</div>
+{% endif %}
+<div id="raw-jobs-scroll-sentinel" class="h-4"></div>
 {% else %}
 <div class="empty-state">
   <svg class="w-10 h-10 text-gray-300 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
@@ -705,4 +718,132 @@
 {% endif %}
 {% endif %}
 
+{% endblock %}
+
+{% block extra_js %}
+{{ block.super }}
+{% if tab == 'raw' and raw_has_next %}
+<script>
+(() => {
+  const tbody = document.getElementById("raw-jobs-tbody");
+  const sentinel = document.getElementById("raw-jobs-scroll-sentinel");
+  const statusEl = document.getElementById("raw-jobs-load-status");
+  const loadMoreBtn = document.getElementById("raw-jobs-load-more-btn");
+  if (!tbody || !sentinel || !statusEl) return;
+
+  const endpoint = window.location.pathname;
+  const qs = new URLSearchParams(window.location.search);
+  qs.set("tab", "raw");
+  qs.set("raw_json", "1");
+  qs.delete("page");
+
+  let nextPage = {{ raw_next_page|default:"null" }};
+  let loading = false;
+  let done = !nextPage;
+  let loadedCount = {{ tab_raw|length }};
+  const totalCount = {{ raw_total_filtered|default:0 }};
+
+  const esc = (value) => {
+    const div = document.createElement("div");
+    div.textContent = value ?? "";
+    return div.innerHTML;
+  };
+
+  const toBadgeClass = (stageRaw) => {
+    const stage = String(stageRaw || "").toUpperCase();
+    if (stage === "READY") return "badge-green";
+    if (stage === "SYNCED") return "badge-blue";
+    if (stage === "DUPLICATE") return "badge-yellow";
+    if (stage === "BLOCKED" || stage === "INACTIVE" || stage === "FAILED") return "badge-red";
+    return "badge-gray";
+  };
+
+  const rowHtml = (job) => {
+    const platform = job.platform_slug ? `<span class="badge-blue">${esc(job.platform_slug)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
+    const active = job.is_active ? `<span class="badge-green">✓ Active</span>` : `<span class="badge-red">✗ Inactive</span>`;
+    const gatePass = job.resume_jd_usable === true || String(job.resume_jd_reason_code || "").toUpperCase() === "PASS";
+    const gateBadgeClass = gatePass ? "badge-green" : "badge-red";
+    const gate = job.resume_jd_reason_code ? `<span class="${gateBadgeClass}">${esc(job.resume_jd_reason_code)}</span>` : "—";
+    return `
+      <tr class="tbl-row">
+        <td class="tbl-td">
+          <div class="font-semibold text-gray-900">${esc(job.title || "—")}</div>
+          <div class="text-xs text-gray-500 mt-0.5">${esc(job.company_name || "—")}</div>
+        </td>
+        <td class="tbl-td hidden md:table-cell">${platform}</td>
+        <td class="tbl-td hidden md:table-cell"><span class="${toBadgeClass(job.stage)}">${esc(job.stage || "—")}</span></td>
+        <td class="tbl-td hidden md:table-cell">${active}</td>
+        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">${esc(job.location_raw || "—")}</td>
+        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">${gate}</td>
+        <td class="tbl-td hidden lg:table-cell text-xs text-gray-400">${esc(job.fetched_at || "—")}</td>
+        <td class="tbl-td-right">
+          <a href="${esc(job.detail_url)}" class="btn-ghost btn-xs">View</a>
+        </td>
+      </tr>
+    `;
+  };
+
+  const updateStatus = (text) => { statusEl.textContent = text; };
+  const updateButton = () => {
+    if (!loadMoreBtn) return;
+    if (done) {
+      loadMoreBtn.disabled = true;
+      loadMoreBtn.classList.add("opacity-50", "cursor-not-allowed");
+      loadMoreBtn.textContent = "All loaded";
+      return;
+    }
+    loadMoreBtn.disabled = loading;
+    loadMoreBtn.textContent = loading ? "Loading…" : "Load more";
+  };
+
+  const loadNext = async () => {
+    if (loading || done || !nextPage) return;
+    loading = true;
+    updateButton();
+    updateStatus(`Loading page ${nextPage}…`);
+    try {
+      const pageQs = new URLSearchParams(qs);
+      pageQs.set("page", String(nextPage));
+      const res = await fetch(`${endpoint}?${pageQs.toString()}`, {
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+        credentials: "same-origin"
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const payload = await res.json();
+      const jobs = payload.jobs || [];
+      for (const job of jobs) {
+        tbody.insertAdjacentHTML("beforeend", rowHtml(job));
+      }
+      loadedCount += jobs.length;
+      nextPage = payload.has_next ? payload.next_page : null;
+      done = !payload.has_next;
+      if (done) {
+        updateStatus(`Loaded all ${loadedCount.toLocaleString()} of ${Number(payload.total || totalCount).toLocaleString()} filtered jobs.`);
+      } else {
+        updateStatus(`Loaded ${loadedCount.toLocaleString()} / ${Number(payload.total || totalCount).toLocaleString()}… Scroll to load more.`);
+      }
+    } catch (err) {
+      updateStatus("Auto-load paused (network error). Scroll again to retry.");
+      console.error("raw jobs infinite load failed", err);
+    } finally {
+      loading = false;
+      updateButton();
+    }
+  };
+
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) loadNext();
+    }
+  }, { rootMargin: "700px 0px" });
+
+  observer.observe(sentinel);
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener("click", () => { loadNext(); });
+  }
+  updateButton();
+  loadNext();
+})();
+</script>
+{% endif %}
 {% endblock %}
