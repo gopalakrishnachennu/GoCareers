@@ -8,9 +8,9 @@
             <div>
                 <div class="flex items-center gap-3 mb-2">
                     {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
-                    <a href="{% url 'admin-dashboard' %}" class="text-blue-200 hover:text-white text-sm font-medium transition">← Dashboard</a>
+                    <a href="{% url 'admin-dashboard' %}" class="hero-back-link">← Dashboard</a>
                     {% else %}
-                    <a href="{% url 'employee-dashboard' %}" class="text-blue-200 hover:text-white text-sm font-medium transition">← Dashboard</a>
+                    <a href="{% url 'employee-dashboard' %}" class="hero-back-link">← Dashboard</a>
                     {% endif %}
                 </div>
                 <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight flex items-center gap-3">
@@ -31,8 +31,7 @@
                     <a href="?range=30" class="px-3 py-1.5 rounded text-xs font-medium {% if date_range == '30' %}bg-white text-indigo-700{% else %}bg-white/10 text-blue-50 hover:bg-white/20{% endif %}">Last 30 days</a>
                     <a href="?range=all" class="px-3 py-1.5 rounded text-xs font-medium {% if date_range == 'all' %}bg-white text-indigo-700{% else %}bg-white/10 text-blue-50 hover:bg-white/20{% endif %}">All time</a>
                 </div>
-                <a href="{% url 'analytics-export-csv' %}?range={{ date_range }}"
-                   class="px-4 py-2 bg-white/15 border border-white/30 rounded-xl text-xs font-medium text-white hover:bg-white/25 transition backdrop-blur-sm flex items-center gap-2">
+                <a href="{% url 'analytics-export-csv' %}?range={{ date_range }}" class="btn-hero btn-xs">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                             d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

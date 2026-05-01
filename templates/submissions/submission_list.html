@@ -7,11 +7,11 @@
         <div>
             <div class="flex items-center gap-3 mb-2">
                 {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
-                <a href="{% url 'admin-dashboard' %}" class="text-blue-200 hover:text-white text-sm font-medium transition">← Dashboard</a>
+                <a href="{% url 'admin-dashboard' %}" class="hero-back-link">← Dashboard</a>
                 {% elif request.user.role == 'EMPLOYEE' %}
-                <a href="{% url 'employee-dashboard' %}" class="text-blue-200 hover:text-white text-sm font-medium transition">← Dashboard</a>
+                <a href="{% url 'employee-dashboard' %}" class="hero-back-link">← Dashboard</a>
                 {% else %}
-                <a href="{% url 'consultant-dashboard' %}" class="text-blue-200 hover:text-white text-sm font-medium transition">← Dashboard</a>
+                <a href="{% url 'consultant-dashboard' %}" class="hero-back-link">← Dashboard</a>
                 {% endif %}
             </div>
             <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight flex items-center gap-4">
@@ -20,9 +20,7 @@
                         d="M8 7h8m-8 4h5m-1 8H6a2 2 0 01-2-2V7a2 2 0 012-2h1l1-2h6l1 2h1a2 2 0 012 2v10a2 2 0 01-2 2h-2" />
                 </svg>
                 Job Applications
-                <span class="bg-white/20 text-white text-sm font-semibold px-3 py-1 rounded-full backdrop-blur-sm">
-                    {{ total_submissions|default:0 }}
-                </span>
+                <span class="hero-count-badge">{{ total_submissions|default:0 }}</span>
             </h1>
             <p class="text-blue-100 mt-2 text-base md:text-lg">
                 Track how candidates are progressing from claim to interview, offer, or rejection.
@@ -30,23 +28,17 @@
         </div>
         <div class="flex items-center gap-3 flex-wrap">
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' or request.user.role == 'CONSULTANT' %}
-            <a href="{% url 'submission-kanban' %}"
-                class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm">
-                Pipeline board
-            </a>
+            <a href="{% url 'submission-kanban' %}" class="btn-hero">Pipeline board</a>
             {% endif %}
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
-            <a href="{% url 'email-event-list' %}"
-                class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm flex items-center gap-2">
+            <a href="{% url 'email-event-list' %}" class="btn-hero">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M4 4h16v4H4zm0 6h10v6H4z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4h16v4H4zm0 6h10v6H4z" />
                 </svg>
                 Email Ingestion Log
             </a>
             {% endif %}
-            <a href="{% url 'submission-export-csv' %}?{{ request.GET.urlencode }}"
-                class="px-4 py-2.5 bg-white/15 border border-white/30 rounded-xl text-sm font-medium text-white hover:bg-white/25 transition backdrop-blur-sm flex items-center gap-2">
+            <a href="{% url 'submission-export-csv' %}?{{ request.GET.urlencode }}" class="btn-hero">
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

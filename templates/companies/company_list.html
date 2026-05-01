@@ -5,37 +5,19 @@
 {% include 'jobs/_pipeline_subnav.html' %}
 
 <div class="container mx-auto px-4">
-    <div class="flex items-center justify-between mb-6">
+    <div class="flat-page-header">
         <div>
-            <h1 class="text-2xl font-bold text-gray-900">Companies</h1>
-            <p class="text-sm text-gray-500 mt-0.5">Client organisations aggregated from all jobs and submissions.</p>
+            <h1 class="page-title">Companies</h1>
+            <p class="page-subtitle">Client organisations aggregated from all jobs and submissions.</p>
         </div>
         <div class="flex items-center gap-2 flex-wrap justify-end">
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
-            <a href="{% url 'company-duplicate-review' %}"
-                class="px-3 py-2 rounded-lg border border-amber-200 bg-amber-50 text-sm font-medium text-amber-800 hover:bg-amber-100 transition">
-                Duplicates
-            </a>
-            <a href="{% url 'company-import-csv' %}"
-                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Import CSV
-            </a>
-            <a href="{% url 'company-import-domains' %}"
-                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Import domains
-            </a>
-            <a href="{% url 'company-import-linkedin' %}"
-                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Import LinkedIn
-            </a>
-            <a href="{% url 'company-export-csv' %}?{{ pagination_query }}"
-                class="px-3 py-2 rounded-lg border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition">
-                Export CSV
-            </a>
-            <a href="{% url 'company-create' %}"
-                class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 shadow-sm transition">
-                + Add Company
-            </a>
+            <a href="{% url 'company-duplicate-review' %}" class="btn-secondary btn-sm" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">Duplicates</a>
+            <a href="{% url 'company-import-csv' %}" class="btn-secondary btn-sm">Import CSV</a>
+            <a href="{% url 'company-import-domains' %}" class="btn-secondary btn-sm">Import Domains</a>
+            <a href="{% url 'company-import-linkedin' %}" class="btn-secondary btn-sm">Import LinkedIn</a>
+            <a href="{% url 'company-export-csv' %}?{{ pagination_query }}" class="btn-secondary btn-sm">Export CSV</a>
+            <a href="{% url 'company-create' %}" class="btn-primary btn-sm">+ Add Company</a>
             {% endif %}
         </div>
     </div>
@@ -44,12 +26,12 @@
     <form method="get" class="mb-4 space-y-3">
         <div class="flex flex-wrap items-end gap-3">
             <div class="flex-1 min-w-[180px]">
-                <label class="block text-xs text-gray-500 mb-1">Search</label>
-                <input type="text" name="q" value="{{ request.GET.q }}" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="Name or alias">
+                <label class="form-label">Search</label>
+                <input type="text" name="q" value="{{ request.GET.q }}" class="form-input" placeholder="Name or alias">
             </div>
             <div class="w-40">
-                <label class="block text-xs text-gray-500 mb-1">Relationship status</label>
-                <select name="status" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Relationship status</label>
+                <select name="status" class="form-select">
                     <option value="">All</option>
                     {% for s in relationship_statuses %}
                     <option value="{{ s }}" {% if selected_status == s %}selected{% endif %}>{{ s }}</option>
@@ -57,16 +39,16 @@
                 </select>
             </div>
             <div class="w-32">
-                <label class="block text-xs text-gray-500 mb-1">Blacklisted</label>
-                <select name="blacklisted" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Blacklisted</label>
+                <select name="blacklisted" class="form-select">
                     <option value="">All</option>
                     <option value="1" {% if selected_blacklisted == '1' %}selected{% endif %}>Yes</option>
                     <option value="0" {% if selected_blacklisted == '0' %}selected{% endif %}>No</option>
                 </select>
             </div>
             <div class="w-44">
-                <label class="block text-xs text-gray-500 mb-1">Industry</label>
-                <select name="industry" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Industry</label>
+                <select name="industry" class="form-select">
                     <option value="">All industries</option>
                     {% for ind in industries %}
                     <option value="{{ ind }}" {% if selected_industry == ind %}selected{% endif %}>{{ ind }}</option>
@@ -74,16 +56,16 @@
                 </select>
             </div>
             <div class="w-40">
-                <label class="block text-xs text-gray-500 mb-1">Website valid</label>
-                <select name="website_valid" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Website valid</label>
+                <select name="website_valid" class="form-select">
                     <option value="">All</option>
                     <option value="1" {% if selected_website_valid == '1' %}selected{% endif %}>Valid</option>
                     <option value="0" {% if selected_website_valid == '0' %}selected{% endif %}>Invalid</option>
                 </select>
             </div>
             <div class="w-40">
-                <label class="block text-xs text-gray-500 mb-1">Platform</label>
-                <select name="platform" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Platform</label>
+                <select name="platform" class="form-select">
                     <option value="">All platforms</option>
                     {% for p in platform_choices %}
                     <option value="{{ p.slug }}" {% if selected_platform == p.slug %}selected{% endif %}>{{ p.name }}</option>
@@ -92,8 +74,8 @@
                 </select>
             </div>
             <div class="w-36">
-                <label class="block text-xs text-gray-500 mb-1">Records</label>
-                <select name="page_size" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <label class="form-label">Records</label>
+                <select name="page_size" class="form-select">
                     {% for s in page_size_options %}
                     <option value="{{ s }}" {% if page_size == s %}selected{% endif %}>{{ s }}/page</option>
                     {% endfor %}
