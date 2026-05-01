@@ -1068,7 +1068,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         from harvest.enrichments import infer_country_from_location
         from harvest.jd_gate import evaluate_raw_job_resume_gate
         from harvest.services.rawjob_query import apply_rawjob_filters
-        qs = RawJob.objects.select_related('company', 'job_platform').order_by('-fetched_at')
+        # Keep JSON loader query lightweight and avoid select_related+defer conflicts.
+        qs = RawJob.objects.order_by('-fetched_at')
         qs = apply_rawjob_filters(qs, request.GET)
         qs = qs.only(
             "id", "company_name", "platform_slug", "title", "original_url",
