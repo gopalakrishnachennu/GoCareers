@@ -1325,3 +1325,25 @@ class HarvestPhase3NavigationTests(TestCase):
         response = self.client.get(reverse("harvest-rawjobs-company-status"))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], f"{reverse('jobs-pipeline')}?tab=raw")
+
+    def test_rawjobs_batches_xhr_returns_json_payload(self):
+        response = self.client.get(
+            reverse("harvest-rawjobs-batches"),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        payload = response.json()
+        self.assertIn("batches", payload)
+        self.assertIsInstance(payload["batches"], list)
+
+    def test_rawjobs_company_status_xhr_returns_json_payload(self):
+        response = self.client.get(
+            reverse("harvest-rawjobs-company-status"),
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/json")
+        payload = response.json()
+        self.assertIn("runs", payload)
+        self.assertIsInstance(payload["runs"], list)

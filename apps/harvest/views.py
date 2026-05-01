@@ -1043,18 +1043,19 @@ class RawJobResumeProfileView(SuperuserRequiredMixin, View):
         )
 
 
-class FetchBatchListView(SuperuserRequiredMixin, ListView):
-    model = FetchBatch
-    template_name = "jobs/pipeline.html"
-    context_object_name = "batches"
-    paginate_by = 20
-
-    def get_queryset(self):
-        return FetchBatch.objects.prefetch_related("company_runs").order_by("-created_at")
+class FetchBatchListView(SuperuserRequiredMixin, View):
+    """
+    Legacy compatibility endpoint.
+    - XHR: returns recent batch JSON.
+    - HTML: redirects to unified Jobs Pipeline Raw tab.
+    """
 
     def get(self, request, *args, **kwargs):
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-            qs = self.get_queryset()[:50]
+            qs = (
+                FetchBatch.objects.prefetch_related("company_runs")
+                .order_by("-created_at")[:50]
+            )
             batches = []
             for b in qs:
                 batches.append({
@@ -1074,36 +1075,33 @@ class FetchBatchListView(SuperuserRequiredMixin, ListView):
         # HTML batch history is consolidated into Jobs Pipeline (tab=raw).
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["active_tab"] = "rawjobs"
-        return ctx
 
+class CompanyFetchStatusView(SuperuserRequiredMixin, View):
+    """
+    Legacy compatibility endpoint.
+    - XHR: returns recent company fetch run JSON (optionally filtered).
+    - HTML: redirects to unified Jobs Pipeline Raw tab.
+    """
 
-class CompanyFetchStatusView(SuperuserRequiredMixin, ListView):
-    template_name = "jobs/pipeline.html"
-    context_object_name = "runs"
-    paginate_by = 50
-
-    def get_queryset(self):
+    def _get_queryset(self, request):
         qs = CompanyFetchRun.objects.select_related(
             "label__company", "label__platform", "batch"
         ).order_by("-started_at")
 
-        status_f = self.request.GET.get("status", "").strip()
+        status_f = request.GET.get("status", "").strip()
         if status_f:
             qs = qs.filter(status=status_f)
 
-        platform_f = self.request.GET.get("platform", "").strip()
+        platform_f = request.GET.get("platform", "").strip()
         if platform_f:
             qs = qs.filter(label__platform__slug=platform_f)
 
         return qs
 
     def get(self, request, *args, **kwargs):
-        # JSON response for AJAX calls from the rawjobs_list template
+        # JSON response for legacy AJAX clients
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-            qs = self.get_queryset()[:100]
+            qs = self._get_queryset(request)[:100]
             runs = []
             for run in qs:
                 runs.append({
@@ -1118,15 +1116,6 @@ class CompanyFetchStatusView(SuperuserRequiredMixin, ListView):
             return JsonResponse({"runs": runs})
         # HTML company status view is consolidated into Jobs Pipeline (tab=raw).
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
-
-    def get_context_data(self, **kwargs):
-        ctx = super().get_context_data(**kwargs)
-        ctx["active_tab"] = "rawjobs"
-        ctx["status_choices"] = CompanyFetchRun.Status.choices
-        ctx["platforms"] = JobBoardPlatform.objects.filter(is_enabled=True).order_by("name")
-        ctx["selected_status"] = self.request.GET.get("status", "")
-        ctx["selected_platform"] = self.request.GET.get("platform", "")
-        return ctx
 
 
 class TriggerCompanyFetchView(SuperuserRequiredMixin, View):
