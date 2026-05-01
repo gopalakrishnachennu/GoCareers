@@ -1075,7 +1075,10 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 
         # ── Summary stats (always computed) ─────────────────────────────────
         from harvest.models import RawJob, FetchBatch
-        from harvest.services.pipeline_snapshot import load_rawjobs_dashboard_stats
+        from harvest.services.pipeline_snapshot import (
+            load_rawjobs_dashboard_stats,
+            raw_jobs_workflow_insights,
+        )
         from harvest.services.rawjob_query import (
             FILTER_STATE_KEYS,
             apply_rawjob_filters,
@@ -1085,13 +1088,17 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         )
 
         raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
+        raw_insights = raw_jobs_workflow_insights()
         raw_total = raw_stats.get("total", 0)
-        raw_funnel = build_funnel_counts(RawJob.objects.all())
+        raw_funnel = (raw_insights or {}).get("funnel") or build_funnel_counts(RawJob.objects.all())
         raw_ready_q = ready_stage_q(min_conf=0.55)
         raw_qualified_pending = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
         raw_qualified_synced = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
-        raw_pending_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING).count()
-        raw_blocked_missing_jd = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=False).count()
+        raw_pending_total = raw_stats.get("pending", 0)
+        raw_blocked_missing_jd = RawJob.objects.filter(
+            sync_status=RawJob.SyncStatus.PENDING,
+            has_description=False,
+        ).count()
         raw_blocked_inactive = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, is_active=False).count()
         raw_blocked_low_conf = (
             RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=True, is_active=True)
@@ -1099,7 +1106,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             .exclude(effective_classification_q(min_conf=0.55))
             .count()
         )
-        raw_duplicates_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
+        raw_duplicates_total = (raw_insights or {}).get("duplicates", {}).get("total")
+        if raw_duplicates_total is None:
+            raw_duplicates_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
         raw_gate_summary = {
             "pending_total": raw_pending_total,
             "qualified_pending": raw_qualified_pending,
@@ -1206,7 +1215,30 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                     remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
                 ),
             }
-            tab_raw = qs[:200]
+            tab_raw = qs.only(
+                "id",
+                "company",
+                "job_platform",
+                "company_name",
+                "platform_slug",
+                "title",
+                "location_raw",
+                "employment_type",
+                "experience_level",
+                "posted_date",
+                "fetched_at",
+                "sync_status",
+                "is_active",
+                "has_description",
+                "quality_score",
+                "jd_quality_score",
+                "classification_confidence",
+                "category_confidence",
+                "resume_ready_score",
+                "raw_payload",
+                "state",
+                "country",
+            )[:200]
 
         elif tab == 'pool':
             score_tab = request.GET.get('score', 'all')

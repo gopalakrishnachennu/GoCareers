@@ -10,15 +10,15 @@ from django.core.management import call_command
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 
-from apps.harvest.career_url import build_career_url
-from apps.harvest.detectors import extract_tenant
-from apps.harvest.harvesters import (
+from harvest.career_url import build_career_url
+from harvest.detectors import extract_tenant
+from harvest.harvesters import (
     TeamtailorHarvester,
     ZohoHarvester,
     get_harvester,
 )
-from apps.harvest.jarvis import JobJarvis
-from apps.harvest.platform_engine import ImplementationKind, dedicated_slugs, kind_for_slug
+from harvest.jarvis import JobJarvis
+from harvest.platform_engine import ImplementationKind, dedicated_slugs, kind_for_slug
 
 
 class HarvestUrlAndRegistryTests(SimpleTestCase):
@@ -61,14 +61,14 @@ class HarvestUrlAndRegistryTests(SimpleTestCase):
 
 class HarvestUrlHashDedupeTests(SimpleTestCase):
     def test_tracking_query_params_do_not_change_hash(self):
-        from apps.harvest.normalizer import compute_url_hash
+        from harvest.normalizer import compute_url_hash
 
         a = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503?src=LinkedIn&utm_source=linkedin"
         b = "https://jobs.dayforcehcm.com/en-US/kestra/KESTRACAREERSITE/jobs/6503"
         self.assertEqual(compute_url_hash(a), compute_url_hash(b))
 
     def test_identity_query_params_still_change_hash(self):
-        from apps.harvest.normalizer import compute_url_hash
+        from harvest.normalizer import compute_url_hash
 
         a = "https://example.com/jobs/view?jobId=123"
         b = "https://example.com/jobs/view?jobId=456"
@@ -163,7 +163,7 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertIn("Full Workday JD", out.get("description", ""))
 
     def test_smartrecruiters_normalize_posting_id_strips_seo_slug(self):
-        from apps.harvest.jarvis import _smartrecruiters_normalize_posting_id
+        from harvest.jarvis import _smartrecruiters_normalize_posting_id
 
         self.assertEqual(
             _smartrecruiters_normalize_posting_id(
@@ -207,7 +207,7 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
 
     def test_smartrecruiters_api_request_strips_seo_slug_from_url(self):
         """Detail API must receive numeric id only, not ``744...-title-slug``."""
-        from apps.harvest.jarvis import _smartrecruiters_normalize_posting_id
+        from harvest.jarvis import _smartrecruiters_normalize_posting_id
 
         jarvis = JobJarvis()
         url = "https://jobs.smartrecruiters.com/DemoCo/744000121421842-mgr-title-"
@@ -541,7 +541,7 @@ class JarvisFetchGateTests(SimpleTestCase):
     def test_retries_502_then_success(self):
         from unittest.mock import MagicMock, patch
 
-        from apps.harvest.http_limits import JarvisFetchGate
+        from harvest.http_limits import JarvisFetchGate
 
         gate = JarvisFetchGate(50, 10, 3, 0.01)
         session = MagicMock()
@@ -550,7 +550,7 @@ class JarvisFetchGateTests(SimpleTestCase):
         good = MagicMock()
         good.status_code = 200
         session.get.side_effect = [bad, good]
-        with patch("apps.harvest.http_limits.time.sleep"):
+        with patch("harvest.http_limits.time.sleep"):
             r = gate.request(session, "GET", "https://example.com/job/1")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(session.get.call_count, 2)
@@ -558,14 +558,14 @@ class JarvisFetchGateTests(SimpleTestCase):
     def test_no_retry_on_404(self):
         from unittest.mock import MagicMock, patch
 
-        from apps.harvest.http_limits import JarvisFetchGate
+        from harvest.http_limits import JarvisFetchGate
 
         gate = JarvisFetchGate(50, 10, 3, 0.01)
         session = MagicMock()
         nf = MagicMock()
         nf.status_code = 404
         session.get.return_value = nf
-        with patch("apps.harvest.http_limits.time.sleep"):
+        with patch("harvest.http_limits.time.sleep"):
             r = gate.request(session, "GET", "https://example.com/missing")
         self.assertEqual(r.status_code, 404)
         self.assertEqual(session.get.call_count, 1)
@@ -945,7 +945,7 @@ class JarvisIngestDayforceIntegrationTests(TestCase):
             "raw_payload": {"source": "test"},
         }
 
-        with patch("apps.harvest.jarvis.JobJarvis.ingest", return_value=mock_ingest):
+        with patch("harvest.jarvis.JobJarvis.ingest", return_value=mock_ingest):
             result = jarvis_ingest_task.apply(kwargs={"url": source_url, "user_id": None}).get()
 
         self.assertTrue(result.get("ok"))
@@ -1007,7 +1007,7 @@ class JarvisFetchAllCompanyViewTests(TestCase):
 
         from harvest.models import CompanyPlatformLabel
 
-        with patch("apps.harvest.tasks.fetch_raw_jobs_for_company_task.apply_async", return_value=SimpleNamespace(id="task-123")) as mocked_apply:
+        with patch("harvest.tasks.fetch_raw_jobs_for_company_task.apply_async", return_value=SimpleNamespace(id="task-123")) as mocked_apply:
             resp = self.client.post(
                 reverse("harvest-jarvis-fetch-all"),
                 {"raw_job_id": str(self.raw_job.pk)},
@@ -1295,7 +1295,7 @@ class HarvestPhase3NavigationTests(TestCase):
         )
         self.client.force_login(self.user)
 
-    @patch("apps.harvest.tasks.sync_harvested_to_pool_task.delay")
+    @patch("harvest.tasks.sync_harvested_to_pool_task.delay")
     def test_run_sync_redirects_back_to_pipeline_raw_tab(self, mock_delay):
         mock_delay.return_value = MagicMock(id="task-1234-abcd")
         response = self.client.post(
