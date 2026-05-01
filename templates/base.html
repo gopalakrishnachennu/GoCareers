@@ -152,8 +152,8 @@
                     </div>
                 </div>
                 {% if request.user.is_superuser %}
-                <a href="{% url 'task-scheduler' %}"
-                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'task-scheduler' or url_name == 'task-toggle' or url_name == 'task-edit-schedule' or url_name == 'task-run-now' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">⏰ Tasks</a>
+                <a href="{% url 'ops-center' %}#scheduled"
+                    class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'ops-center' or url_name == 'task-scheduler' or url_name == 'task-toggle' or url_name == 'task-edit-schedule' or url_name == 'task-run-now' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">⏰ Tasks</a>
                 {% endif %}
                 <a href="{% url 'submission-list' %}"
                     class="nav-link px-4 py-2.5 rounded-lg text-sm font-medium transition {% if url_name == 'submission-list' %}bg-white/20 text-white{% else %}text-blue-100 hover:text-white hover:bg-white/15{% endif %}">Applications</a>

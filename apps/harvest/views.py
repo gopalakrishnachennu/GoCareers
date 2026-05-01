@@ -539,7 +539,7 @@ class RunDetectNowView(SuperuserRequiredMixin, View):
             "Switching tabs does not stop this job.",
         )
         return redirect_with_task_progress(
-            "harvest-monitor",
+            "ops-center",
             task.id,
             "Platform detection",
         )
@@ -561,7 +561,7 @@ class RunHarvestNowView(SuperuserRequiredMixin, View):
             "Refresh Run Monitor for results; switching tabs does not cancel work.",
         )
         return redirect_with_task_progress(
-            "harvest-monitor",
+            "ops-center",
             task.id,
             f"Harvest ({label})",
         )
@@ -739,7 +739,7 @@ class RunCleanupNowView(SuperuserRequiredMixin, View):
         from .tasks import cleanup_harvested_jobs_task
         task = cleanup_harvested_jobs_task.delay()
         messages.success(request, f"Cleanup started (Task: {task.id[:8]}...)")
-        return redirect_with_task_progress("harvest-monitor", task.id, "Harvest cleanup")
+        return redirect_with_task_progress("ops-center", task.id, "Harvest cleanup")
 
 
 class RunBackfillNowView(SuperuserRequiredMixin, View):
