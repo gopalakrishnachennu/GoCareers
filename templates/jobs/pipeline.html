@@ -440,6 +440,76 @@
   </div>
 </div>
 
+{% if request.user.is_superuser %}
+<div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white">
+  <div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Raw Controls</div>
+  <div class="flex flex-wrap gap-2">
+    <form method="post" action="{% url 'harvest-run-fetch-batch' %}">
+      {% csrf_token %}
+      <input type="hidden" name="fetch_mode" value="full">
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700">
+        Full Fetch Jobs
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-fetch-batch' %}">
+      {% csrf_token %}
+      <input type="hidden" name="fetch_mode" value="quick">
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-blue-600 hover:bg-blue-700">
+        Quick Fetch (25h)
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-detect' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700">
+        Run Detection
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-backfill-descriptions' %}">
+      {% csrf_token %}
+      <input type="hidden" name="batch_size" value="300">
+      <input type="hidden" name="parallel_workers" value="8">
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-amber-600 hover:bg-amber-700">
+        Backfill JD
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-validate-urls' %}">
+      {% csrf_token %}
+      <input type="hidden" name="pending_only" value="1">
+      <input type="hidden" name="recent_hours" value="168">
+      <input type="hidden" name="max_jobs" value="0">
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-rose-600 hover:bg-rose-700">
+        Validate Live Links
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-sync' %}">
+      {% csrf_token %}
+      <input type="hidden" name="qualified_only" value="1">
+      <input type="hidden" name="max_jobs" value="0">
+      <input type="hidden" name="chunk_size" value="500">
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-violet-600 hover:bg-violet-700">
+        Sync Qualified to Vet
+      </button>
+    </form>
+    <form method="post" action="{% url 'harvest-run-cleanup' %}">
+      {% csrf_token %}
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-red-700 hover:bg-red-800">
+        Cleanup
+      </button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 <div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white">
   <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
     <div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Pipeline funnel</div>
