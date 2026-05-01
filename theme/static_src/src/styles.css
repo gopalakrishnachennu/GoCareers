@@ -464,6 +464,25 @@
   .flat-page-header {
     @apply flex items-center justify-between flex-wrap gap-4 mb-6 pb-4 border-b border-gray-200;
   }
+
+  /* ── Left sidebar navigation ──────────────────────────────────────────────── */
+  .sidebar-nav-item {
+    display: flex; align-items: center; gap: 0.625rem;
+    padding: 0.5rem 0.75rem; border-radius: 0.5rem;
+    font-size: 0.875rem; font-weight: 500; color: #bfdbfe;
+    transition: background-color .15s ease, color .15s ease;
+    text-decoration: none; white-space: nowrap; overflow: hidden;
+  }
+  .sidebar-nav-item:hover { background: rgba(255,255,255,0.12); color: #fff; }
+  .sidebar-nav-item--active { background: rgba(255,255,255,0.18) !important; color: #fff !important; }
+  .sidebar-nav-item--sub {
+    display: flex; align-items: center; gap: 0.5rem;
+    padding: 0.375rem 0.625rem; border-radius: 0.375rem;
+    font-size: 0.8125rem; font-weight: 400; color: #bfdbfe;
+    transition: background-color .15s ease, color .15s ease;
+    text-decoration: none;
+  }
+  .sidebar-nav-item--sub:hover { background: rgba(255,255,255,0.10); color: #fff; }
 }
 
 

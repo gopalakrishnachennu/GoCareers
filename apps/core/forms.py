@@ -60,6 +60,7 @@ class PlatformConfigForm(forms.ModelForm):
             'address': forms.Textarea(attrs={'rows': 3}),
             'maintenance_message': forms.Textarea(attrs={'rows': 3}),
             'pool_review_notify_emails': forms.Textarea(attrs={'rows': 3}),
+            'footer_text': forms.Textarea(attrs={'rows': 3}),
         }
 
     def __init__(self, *args, **kwargs):
@@ -69,6 +70,8 @@ class PlatformConfigForm(forms.ModelForm):
             widget = self.fields[field].widget
             if isinstance(widget, (forms.TextInput, forms.URLInput, forms.EmailInput, forms.NumberInput, forms.Textarea, forms.PasswordInput)):
                 widget.attrs.update({'class': 'w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'})
+            elif isinstance(widget, forms.Select):
+                widget.attrs.update({'class': 'w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'})
             elif isinstance(widget, forms.CheckboxInput):
                 widget.attrs.update({'class': 'h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded'})
 

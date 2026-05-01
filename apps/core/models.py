@@ -156,6 +156,39 @@ class PlatformConfig(models.Model):
         ),
     )
 
+    # Navigation & Appearance
+    class NavLayout(models.TextChoices):
+        TOP = 'top', 'Top Header'
+        LEFT = 'left', 'Left Sidebar'
+
+    class ColorTheme(models.TextChoices):
+        INDIGO = 'indigo', 'Indigo'
+        VIOLET = 'violet', 'Violet'
+        BLUE   = 'blue',   'Blue'
+        EMERALD = 'emerald', 'Emerald'
+        TEAL   = 'teal',   'Teal'
+        ROSE   = 'rose',   'Rose'
+        AMBER  = 'amber',  'Amber'
+        SLATE  = 'slate',  'Slate'
+
+    color_theme = models.CharField(
+        max_length=20,
+        choices=ColorTheme.choices,
+        default=ColorTheme.INDIGO,
+        help_text="Primary brand color used across the entire platform.",
+    )
+
+    nav_layout = models.CharField(
+        max_length=10,
+        choices=NavLayout.choices,
+        default=NavLayout.TOP,
+        help_text="Choose between a top navigation bar or a left sidebar panel.",
+    )
+    footer_text = models.TextField(
+        blank=True,
+        help_text="Custom footer text shown at the bottom of every page. Leave blank for none.",
+    )
+
     # Social Media
     twitter_url = models.URLField(blank=True)
     linkedin_url = models.URLField(blank=True)

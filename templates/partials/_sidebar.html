@@ -1,0 +1,381 @@
+{% load static %}
+{# Left sidebar — included by base.html when nav_layout == 'left' #}
+<div class="flex flex-col h-full" x-data="{ jobsOpen: false, collapsed: false }">
+
+    {# ── Brand ── #}
+    <div class="flex items-center gap-2.5 px-4 py-5 border-b border-white/10 flex-shrink-0">
+        {% if PLATFORM_CONFIG.logo_url %}
+        <img src="{{ PLATFORM_CONFIG.logo_url }}" alt="Logo" class="h-7 w-7 rounded bg-white p-0.5 flex-shrink-0">
+        {% else %}
+        <div class="h-7 w-7 rounded bg-white/20 flex items-center justify-center flex-shrink-0">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2-2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+        </div>
+        {% endif %}
+        <a href="{% if user.is_authenticated %}{% if user.is_superuser or user.role == 'ADMIN' %}{% url 'admin-dashboard' %}{% elif user.role == 'EMPLOYEE' %}{% url 'employee-dashboard' %}{% else %}{% url 'consultant-dashboard' %}{% endif %}{% else %}{% url 'login' %}{% endif %}"
+           class="text-white font-bold text-base leading-tight truncate">
+            {{ PLATFORM_CONFIG.site_name|default:"EduConsult" }}
+        </a>
+    </div>
+
+    {# ── Search ── #}
+    {% if user.is_authenticated %}
+    <div class="px-3 pt-3 pb-2 flex-shrink-0">
+        <div class="relative">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center text-blue-300 pointer-events-none">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </span>
+            <input type="search" name="q" id="sidebar-search-input" autocomplete="off"
+                   placeholder="Search…" aria-label="Global search"
+                   class="w-full pl-9 pr-3 py-2 bg-white/10 border border-white/20 rounded-lg text-sm text-white placeholder-blue-300 focus:outline-none focus:ring-2 focus:ring-white/30"
+                   hx-get="{% url 'global-search-partial' %}"
+                   hx-trigger="keyup changed delay:450ms"
+                   hx-target="#sidebar-search-results"
+                   hx-include="this" />
+            <div id="sidebar-search-results"
+                 class="absolute left-0 right-0 top-full z-[60] mt-1 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white text-gray-900 shadow-xl"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# ── Navigation ── #}
+    <nav class="flex-1 overflow-y-auto px-2 py-2 space-y-0.5">
+        {% if user.is_authenticated %}
+        {% with url_name=request.resolver_match.url_name %}
+
+        {% if user.is_superuser or user.role == 'ADMIN' %}
+        {# ---- ADMIN SIDEBAR ---- #}
+        <a href="{% url 'admin-dashboard' %}"
+           class="sidebar-nav-item {% if url_name == 'admin-dashboard' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            Dashboard
+        </a>
+
+        {# Jobs collapsible #}
+        <div x-data="{ jobsOpen: false }">
+            <button type="button" @click="jobsOpen = !jobsOpen"
+                    class="sidebar-nav-item w-full {% if url_name == 'job-list' or url_name == 'jobs-pipeline' or url_name == 'job-pool' or 'harvest' in url_name|default:'' or url_name == 'company-list' %}sidebar-nav-item--active{% endif %}">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <span class="flex-1 text-left">Jobs</span>
+                {% with pool_count=pending_pool_count %}{% if pool_count %}<span class="min-w-[1.1rem] h-[1.1rem] flex items-center justify-center rounded-full bg-yellow-400 text-yellow-900 text-[10px] font-bold px-0.5">{{ pool_count }}</span>{% endif %}{% endwith %}
+                <svg class="w-3 h-3 opacity-60 transition-transform" :class="jobsOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+            <div x-show="jobsOpen" x-collapse class="pl-6 mt-0.5 space-y-0.5">
+                <a href="{% url 'jobs-pipeline' %}" class="sidebar-nav-item sidebar-nav-item--sub {% if url_name == 'jobs-pipeline' %}sidebar-nav-item--active{% endif %}">Command Center</a>
+                <a href="{% url 'jobs-pipeline' %}?tab=pool" class="sidebar-nav-item sidebar-nav-item--sub">
+                    Vetting Queue
+                    {% with pool_count=pending_pool_count %}{% if pool_count %}<span class="ml-auto min-w-[1.1rem] h-[1.1rem] flex items-center justify-center rounded-full bg-yellow-100 text-yellow-800 text-[10px] font-bold px-0.5">{{ pool_count }}</span>{% endif %}{% endwith %}
+                </a>
+                <a href="{% url 'jobs-pipeline' %}?tab=live" class="sidebar-nav-item sidebar-nav-item--sub">Live Jobs</a>
+                <a href="{% url 'job-list' %}" class="sidebar-nav-item sidebar-nav-item--sub {% if url_name == 'job-list' %}sidebar-nav-item--active{% endif %}">All Jobs</a>
+                <a href="{% url 'company-list' %}" class="sidebar-nav-item sidebar-nav-item--sub {% if url_name == 'company-list' %}sidebar-nav-item--active{% endif %}">Companies</a>
+                {% if request.user.is_superuser %}
+                <a href="{% url 'harvest-platforms' %}" class="sidebar-nav-item sidebar-nav-item--sub">Harvest Engine</a>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if request.user.is_superuser %}
+        <a href="{% url 'ops-center' %}#scheduled"
+           class="sidebar-nav-item {% if url_name == 'ops-center' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Tasks
+        </a>
+        {% endif %}
+
+        <a href="{% url 'submission-list' %}"
+           class="sidebar-nav-item {% if url_name == 'submission-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Applications
+        </a>
+
+        <a href="{% url 'submission-quick-submit' %}"
+           class="sidebar-nav-item {% if url_name == 'submission-quick-submit' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M12 4v16m8-8H4" />
+            </svg>
+            Quick Submit
+        </a>
+
+        <a href="{% url 'interview-list' %}"
+           class="sidebar-nav-item {% if url_name == 'interview-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            Interviews
+        </a>
+
+        <a href="{% url 'interview-calendar' %}"
+           class="sidebar-nav-item {% if url_name == 'interview-calendar' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zm14 0a1 1 0 00-1 1v6a1 1 0 001 1h1a1 1 0 001-1v-6a1 1 0 00-1-1h-1z" />
+            </svg>
+            Calendar
+        </a>
+
+        <a href="{% url 'analytics-dashboard' %}"
+           class="sidebar-nav-item {% if url_name == 'analytics-dashboard' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+            </svg>
+            Analytics
+        </a>
+
+        <a href="{% url 'inbox' %}"
+           class="sidebar-nav-item {% if url_name == 'inbox' or url_name == 'thread-detail' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+            </svg>
+            Messages
+            {% if unread_message_count %}<span class="ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}
+        </a>
+
+        <a href="{% url 'consultant-list' %}"
+           class="sidebar-nav-item {% if url_name == 'consultant-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+            </svg>
+            Consultants
+        </a>
+
+        <a href="{% url 'employee-list' %}"
+           class="sidebar-nav-item {% if url_name == 'employee-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            Employees
+        </a>
+
+        <a href="{% url 'placement-list' %}"
+           class="sidebar-nav-item {% if url_name == 'placement-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z" />
+            </svg>
+            Placements
+        </a>
+
+        <a href="{% url 'resume-generate' %}"
+           class="sidebar-nav-item {% if url_name == 'resume-generate' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Resumes
+        </a>
+
+        <a href="{% url 'workflow-dashboard' %}"
+           class="sidebar-nav-item {% if url_name == 'workflow-dashboard' or url_name == 'workflow-panel' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M13 10V3L4 14h7v7l9-11h-7z" />
+            </svg>
+            Workflow
+        </a>
+
+        {% elif user.role == 'EMPLOYEE' %}
+        {# ---- EMPLOYEE SIDEBAR ---- #}
+        <a href="{% url 'employee-dashboard' %}"
+           class="sidebar-nav-item {% if url_name == 'employee-dashboard' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6" />
+            </svg>
+            Dashboard
+        </a>
+
+        <div x-data="{ jobsOpen: false }">
+            <button type="button" @click="jobsOpen = !jobsOpen"
+                    class="sidebar-nav-item w-full {% if url_name == 'job-list' or url_name == 'jobs-pipeline' %}sidebar-nav-item--active{% endif %}">
+                <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                          d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                </svg>
+                <span class="flex-1 text-left">Jobs</span>
+                {% with pool_count=pending_pool_count %}{% if pool_count %}<span class="min-w-[1.1rem] h-[1.1rem] flex items-center justify-center rounded-full bg-yellow-400 text-yellow-900 text-[10px] font-bold px-0.5">{{ pool_count }}</span>{% endif %}{% endwith %}
+                <svg class="w-3 h-3 opacity-60 transition-transform" :class="jobsOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+            <div x-show="jobsOpen" x-collapse class="pl-6 mt-0.5 space-y-0.5">
+                <a href="{% url 'jobs-pipeline' %}" class="sidebar-nav-item sidebar-nav-item--sub">Command Center</a>
+                <a href="{% url 'jobs-pipeline' %}?tab=pool" class="sidebar-nav-item sidebar-nav-item--sub">Vetting Queue</a>
+                <a href="{% url 'jobs-pipeline' %}?tab=live" class="sidebar-nav-item sidebar-nav-item--sub">Live Jobs</a>
+                <a href="{% url 'job-list' %}" class="sidebar-nav-item sidebar-nav-item--sub {% if url_name == 'job-list' %}sidebar-nav-item--active{% endif %}">All Jobs</a>
+            </div>
+        </div>
+
+        <a href="{% url 'submission-list' %}" class="sidebar-nav-item {% if url_name == 'submission-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Applications
+        </a>
+        <a href="{% url 'submission-quick-submit' %}" class="sidebar-nav-item {% if url_name == 'submission-quick-submit' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+            Quick Submit
+        </a>
+        <a href="{% url 'interview-list' %}" class="sidebar-nav-item {% if url_name == 'interview-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            Interviews
+        </a>
+        <a href="{% url 'interview-calendar' %}" class="sidebar-nav-item {% if url_name == 'interview-calendar' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zm0 8a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zm14 0a1 1 0 00-1 1v6a1 1 0 001 1h1a1 1 0 001-1v-6a1 1 0 00-1-1h-1z"/></svg>
+            Calendar
+        </a>
+        <a href="{% url 'inbox' %}" class="sidebar-nav-item {% if url_name == 'inbox' or url_name == 'thread-detail' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+            Messages
+            {% if unread_message_count %}<span class="ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}
+        </a>
+        <a href="{% url 'consultant-list' %}" class="sidebar-nav-item {% if url_name == 'consultant-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            Consultants
+        </a>
+        <a href="{% url 'analytics-dashboard' %}" class="sidebar-nav-item {% if url_name == 'analytics-dashboard' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+            Analytics
+        </a>
+        <a href="{% url 'placement-list' %}" class="sidebar-nav-item {% if url_name == 'placement-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            Placements
+        </a>
+        <a href="{% url 'resume-generate' %}" class="sidebar-nav-item {% if url_name == 'resume-generate' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Resumes
+        </a>
+        <a href="{% url 'workflow-dashboard' %}" class="sidebar-nav-item {% if url_name == 'workflow-dashboard' or url_name == 'workflow-panel' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            Workflow
+        </a>
+
+        {% elif user.role == 'CONSULTANT' %}
+        {# ---- CONSULTANT SIDEBAR ---- #}
+        <a href="{% url 'consultant-dashboard' %}" class="sidebar-nav-item {% if url_name == 'consultant-dashboard' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+            Dashboard
+        </a>
+        {% if USER_FEATURE_FLAGS.consultant_my_tracker %}
+        <a href="{% url 'consultant-my-tracker' %}" class="sidebar-nav-item {% if url_name == 'consultant-my-tracker' or url_name == 'consultant-self-apply' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+            My Tracker
+        </a>
+        {% endif %}
+        <a href="{% url 'job-list' %}" class="sidebar-nav-item {% if url_name == 'job-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            Jobs
+        </a>
+        <a href="{% url 'submission-list' %}" class="sidebar-nav-item {% if url_name == 'submission-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Applications
+        </a>
+        {% if USER_FEATURE_FLAGS.consultant_cover_letter %}
+        <a href="{% url 'cover-letter-generate' %}" class="sidebar-nav-item {% if url_name == 'cover-letter-generate' or url_name == 'cover-letter-detail' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            Cover Letter
+        </a>
+        {% endif %}
+        {% if USER_FEATURE_FLAGS.consultant_resume_gen %}
+        <a href="{% url 'consultant-resume-generate' %}" class="sidebar-nav-item {% if url_name == 'consultant-resume-generate' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Resume AI
+        </a>
+        {% endif %}
+        <a href="{% url 'interview-list' %}" class="sidebar-nav-item {% if url_name == 'interview-list' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+            Interviews
+        </a>
+        {% if USER_FEATURE_FLAGS.consultant_messaging %}
+        <a href="{% url 'inbox' %}" class="sidebar-nav-item {% if url_name == 'inbox' or url_name == 'thread-detail' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
+            Messages
+            {% if unread_message_count %}<span class="ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_message_count }}</span>{% endif %}
+        </a>
+        {% endif %}
+        {% if USER_FEATURE_FLAGS.consultant_career_timeline %}
+        <a href="{% url 'consultant-career-timeline' %}" class="sidebar-nav-item {% if url_name == 'consultant-career-timeline' %}sidebar-nav-item--active{% endif %}">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/></svg>
+            Timeline
+        </a>
+        {% endif %}
+        {% endif %}
+        {% endwith %}
+        {% endif %}
+    </nav>
+
+    {# ── Footer: notifications + profile ── #}
+    {% if user.is_authenticated %}
+    <div class="flex-shrink-0 border-t border-white/10 px-3 py-3 space-y-1">
+        <a href="{% url 'notification-list' %}"
+           class="sidebar-nav-item">
+            <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                      d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            Notifications
+            {% if unread_notification_count %}<span class="ml-auto inline-flex min-w-[1.25rem] h-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">{{ unread_notification_count }}</span>{% endif %}
+        </a>
+
+        {# Profile row #}
+        <div class="relative" x-data="{ profileOpen: false }" @keydown.escape.window="profileOpen = false">
+            <button type="button" @click="profileOpen = !profileOpen"
+                    class="sidebar-nav-item w-full">
+                <span class="inline-flex items-center justify-center h-6 w-6 rounded-full bg-white/20 text-white text-xs font-bold flex-shrink-0">{{ user.username|slice:":1"|upper }}</span>
+                <span class="flex-1 text-left truncate text-sm">{{ user.get_full_name|default:user.username }}</span>
+                <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                </svg>
+            </button>
+
+            <div x-show="profileOpen" x-transition.origin.bottom.left @click.outside="profileOpen = false"
+                 class="absolute bottom-full left-0 mb-2 w-52 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50">
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <div class="text-sm font-semibold text-gray-900 truncate">{{ user.get_full_name|default:user.username }}</div>
+                    <div class="text-xs text-gray-500 truncate">{{ user.email|default:"" }}</div>
+                </div>
+                <div class="py-1">
+                    {% if user.role == 'CONSULTANT' %}
+                    <a href="{% url 'consultant-detail' pk=user.pk %}" class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Profile settings</a>
+                    {% elif user.is_superuser or user.role == 'ADMIN' %}
+                    <a href="{% url 'settings-dashboard' %}" class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Platform settings</a>
+                    <a href="{% url 'master-prompt-list' %}" class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Master Prompt</a>
+                    {% endif %}
+                    <a href="{% url 'email-notification-preferences' %}" class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Notification preferences</a>
+                    <a href="{% url 'password_change' %}" class="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">Change password</a>
+                </div>
+                <div class="border-t border-gray-100">
+                    <form action="{% url 'logout' %}" method="post">
+                        {% csrf_token %}
+                        <button type="submit" class="w-full text-left px-4 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">
+                            Logout
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
