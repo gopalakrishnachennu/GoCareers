@@ -100,11 +100,13 @@
     </a>
   </form>
 
-  {# ── Label Legend ── #}
-  <div class="flex flex-wrap gap-2 mb-5">
+  {# ── Label Legend — click to select all rows of that category ── #}
+  <div class="flex flex-wrap gap-2 mb-5 items-center">
+    <span class="text-xs text-slate-500 font-medium mr-1">Select by label:</span>
     {% for label, name in label_choices %}
     {% if label != 'NOT_DUPLICATE' %}
-    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold
+    <button type="button" onclick="selectByLabel('{{ label }}')"
+            class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold cursor-pointer transition hover:opacity-80 active:scale-95
       {% if label == 'EXACT' %}bg-red-100 text-red-700
       {% elif label == 'STRONG_MATCH' %}bg-orange-100 text-orange-700
       {% elif label == 'URL_DUPLICATE' %}bg-yellow-100 text-yellow-700
@@ -116,7 +118,7 @@
       {% else %}bg-slate-100 text-slate-600
       {% endif %}">
       {{ name }}
-    </span>
+    </button>
     {% endif %}
     {% endfor %}
   </div>
@@ -166,7 +168,8 @@
               <td class="px-4 py-3">
                 {% if pair.resolution == 'PENDING' %}
                 <input type="checkbox" name="pair_ids" value="{{ pair.pk }}"
-                       class="pair-checkbox rounded border-slate-300">
+                       class="pair-checkbox rounded border-slate-300"
+                       data-label="{{ pair.label }}">
                 {% endif %}
               </td>
 
@@ -352,14 +355,35 @@
 
 <script>
 (function() {
-  // Select-all checkbox
   const selectAll = document.getElementById('select-all');
-  const checkboxes = document.querySelectorAll('.pair-checkbox');
+  const checkboxes = () => document.querySelectorAll('.pair-checkbox');
+
   if (selectAll) {
     selectAll.addEventListener('change', () => {
-      checkboxes.forEach(cb => cb.checked = selectAll.checked);
+      checkboxes().forEach(cb => cb.checked = selectAll.checked);
+    });
+  }
+
+  // Preserve current URL filters when bulk form redirects
+  const bulkForm = document.querySelector('form[action*="bulk-resolve"]');
+  if (bulkForm) {
+    bulkForm.addEventListener('submit', function() {
+      const params = new URLSearchParams(window.location.search);
+      const next = document.createElement('input');
+      next.type = 'hidden';
+      next.name = 'next';
+      next.value = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+      bulkForm.appendChild(next);
     });
   }
 })();
+
+function selectByLabel(label) {
+  const checkboxes = document.querySelectorAll('.pair-checkbox');
+  // If all of this label are already checked, uncheck them (toggle)
+  const labelBoxes = [...checkboxes].filter(cb => cb.dataset.label === label);
+  const allChecked = labelBoxes.every(cb => cb.checked);
+  labelBoxes.forEach(cb => cb.checked = !allChecked);
+}
 </script>
 {% endblock %}

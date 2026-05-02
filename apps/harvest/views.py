@@ -2447,32 +2447,39 @@ class DuplicateResolveView(SuperuserRequiredMixin, View):
 
 class DuplicateBulkResolveView(SuperuserRequiredMixin, View):
     def post(self, request):
-        action = request.POST.get("action", "")
-        ids    = request.POST.getlist("pair_ids")
+        action  = request.POST.get("action", "")
+        ids     = request.POST.getlist("pair_ids")
+        next_url = request.POST.get("next") or reverse("harvest-duplicates")
+
         if not ids:
             messages.warning(request, "No pairs selected.")
-            return redirect("harvest-duplicates")
+            return redirect(next_url)
 
         pairs = RawJobDuplicatePair.objects.filter(pk__in=ids, resolution=DuplicateResolution.PENDING)
 
         if action == "bulk_merge":
             from .duplicate_engine import merge_pair
             count = 0
+            failed = 0
             for pair in pairs:
                 try:
                     merge_pair(pair, resolved_by=request.user)
                     count += 1
-                except Exception:
-                    pass
-            messages.success(request, f"Merged {count} pairs.")
+                except Exception as e:
+                    failed += 1
+                    logger.warning("merge_pair failed for pair %s: %s", pair.pk, e)
+            if count:
+                messages.success(request, f"Merged {count} pair{'s' if count != 1 else ''}.")
+            if failed:
+                messages.warning(request, f"{failed} pair{'s' if failed != 1 else ''} could not be merged.")
 
         elif action == "bulk_dismiss":
             from django.utils import timezone
-            pairs.update(
+            count = pairs.update(
                 resolution=DuplicateResolution.DISMISSED,
                 resolved_at=timezone.now(),
                 resolved_by=request.user,
             )
-            messages.success(request, f"Dismissed {pairs.count()} pairs.")
+            messages.success(request, f"Kept both for {count} pair{'s' if count != 1 else ''}.")
 
-        return redirect("harvest-duplicates")
+        return redirect(next_url)
