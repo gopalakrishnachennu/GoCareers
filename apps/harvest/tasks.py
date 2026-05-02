@@ -2122,8 +2122,9 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         ).exists()
         if not blocking_run:
             # countdown=30 gives the newly created label time to fully commit
-            harvest_label_task.apply_async(
+            fetch_raw_jobs_for_company_task.apply_async(
                 args=[platform_label.pk],
+                kwargs={"triggered_by": "JARVIS", "fetch_all": True},
                 countdown=30,
             )
             bg_scrape_triggered = True
