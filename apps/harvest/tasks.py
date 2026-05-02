@@ -2073,8 +2073,10 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     # Always tag Jarvis imports as platform_slug="jarvis" so they form their
     # own namespace and the recent-imports list is easy to filter.
     # The real detected ATS (greenhouse, lever, etc.) is stored in raw_payload.
+    # Bug fix: when job fetch fails data={} so platform_slug is "". Fall back
+    # to the URL-pattern detection that ran before the HTTP call.
     platform_slug = "jarvis"
-    detected_ats = data.get("platform_slug") or ""
+    detected_ats = data.get("platform_slug") or detected_ats_early or ""
     job_platform = None
     if detected_ats:
         job_platform = JobBoardPlatform.objects.filter(slug=detected_ats).first()
@@ -2104,21 +2106,25 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     )
 
     # ── Step 4: Auto-trigger full-company scrape in background ───────────────
-    # Fires when: platform supports fetch-all AND company hasn't been scraped
-    # in the last 24 h (prevents hammering the ATS on every Jarvis paste).
+    # Fires when: platform supports fetch-all AND no run started in last 24h
+    # AND no run is currently in progress (prevents duplicate concurrent scrapes).
     bg_scrape_triggered = False
     bg_scrape_reason = ""
     if board_ctx.get("fetch_all_supported") and platform_label:
         from datetime import timedelta as _td
         cutoff = timezone.now() - _td(hours=24)
-        recent_run = CompanyFetchRun.objects.filter(
+        # Bug fix: also block if a run is currently RUNNING — not just recent ones
+        blocking_run = CompanyFetchRun.objects.filter(
             label=platform_label,
-            started_at__gte=cutoff,
+        ).filter(
+            models.Q(started_at__gte=cutoff) |
+            models.Q(status=CompanyFetchRun.Status.RUNNING)
         ).exists()
-        if not recent_run:
+        if not blocking_run:
+            # countdown=30 gives the newly created label time to fully commit
             harvest_label_task.apply_async(
                 args=[platform_label.pk],
-                countdown=5,
+                countdown=30,
             )
             bg_scrape_triggered = True
             logger.info(
@@ -2126,7 +2132,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
                 platform_label.pk, company.name, detected_ats,
             )
         else:
-            bg_scrape_reason = "scraped_recently"
+            bg_scrape_reason = "scraped_recently_or_running"
 
     # ── If individual job fetch failed, return discovery result now ──────────
     if not job_fetch_ok:
