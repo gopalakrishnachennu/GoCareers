@@ -2397,15 +2397,20 @@ class DuplicateListView(SuperuserRequiredMixin, TemplateView):
 
 class DuplicateRunView(SuperuserRequiredMixin, View):
     def post(self, request):
-        from .duplicate_engine import run_detection
-        limit = int(request.POST.get("limit", 5000))
-        result = run_detection(limit=limit, skip_existing=True)
+        from .tasks import run_duplicate_detection_task
+        raw_limit = request.POST.get("limit", "5000").strip()
+        try:
+            limit = max(100, min(int(raw_limit), 200_000))
+        except (ValueError, TypeError):
+            limit = 5000
+        company_slug = request.POST.get("company_slug", "").strip()
+        task = run_duplicate_detection_task.delay(limit=limit, company_slug=company_slug)
         messages.success(
             request,
-            f"Detection complete — {result['pairs_saved']} new pairs found "
-            f"({result['pairs_found']} total candidates, {result['companies_scanned']} companies scanned).",
+            f"Duplicate detection is running in the background (task {task.id[:8]}…). "
+            "This may take a few minutes — refresh the page to see new pairs.",
         )
-        return redirect("harvest-duplicates")
+        return redirect_with_task_progress("harvest-duplicates", task.id, "Duplicate detection")
 
 
 class DuplicateResolveView(SuperuserRequiredMixin, View):

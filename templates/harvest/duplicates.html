@@ -13,21 +13,29 @@
         Detect, review, and resolve duplicate raw jobs across all platforms — 9-label rigorous matching.
       </p>
     </div>
-    <form method="post" action="{% url 'harvest-duplicates-run' %}" class="flex items-center gap-3 flex-shrink-0">
+    <form method="post" action="{% url 'harvest-duplicates-run' %}" class="flex flex-wrap items-center gap-3 flex-shrink-0">
       {% csrf_token %}
-      <select name="limit" class="text-sm px-3 py-2 rounded-lg bg-white/15 border border-white/25 text-white focus:outline-none focus:ring-2 focus:ring-white/40">
-        <option value="5000">5,000 jobs</option>
-        <option value="15000">15,000 jobs</option>
-        <option value="50000">50,000 jobs</option>
-        <option value="150000">All jobs</option>
-      </select>
+      <div class="flex flex-col gap-0.5">
+        <span class="text-xs text-white/60 font-medium">Scope</span>
+        <select name="limit" class="text-sm px-3 py-2 rounded-lg bg-white/15 border border-white/25 text-white focus:outline-none focus:ring-2 focus:ring-white/40">
+          <option value="5000">5,000 jobs (fast)</option>
+          <option value="15000">15,000 jobs</option>
+          <option value="50000">50,000 jobs</option>
+          <option value="150000">All jobs (slow — background)</option>
+        </select>
+      </div>
+      <div class="flex flex-col gap-0.5">
+        <span class="text-xs text-white/60 font-medium">Company (optional)</span>
+        <input type="text" name="company_slug" placeholder="e.g. Google"
+               class="text-sm px-3 py-2 rounded-lg bg-white/15 border border-white/25 text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-white/40 w-36">
+      </div>
       <button type="submit"
-              class="flex items-center gap-2 px-5 py-2.5 bg-white text-indigo-700 font-semibold rounded-xl shadow hover:bg-indigo-50 transition text-sm">
+              class="flex items-center gap-2 px-5 py-2.5 bg-white text-indigo-700 font-semibold rounded-xl shadow hover:bg-indigo-50 transition text-sm mt-3.5">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                 d="M21 21l-4.35-4.35M17 11A6 6 0 1 1 5 11a6 6 0 0 1 12 0z"/>
         </svg>
-        Run Detection
+        Run in Background
       </button>
     </form>
   </div>

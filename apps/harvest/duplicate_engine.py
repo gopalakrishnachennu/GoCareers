@@ -195,47 +195,66 @@ def _detect_agency_pairs(
 
 # ── public API ────────────────────────────────────────────────────────────────
 
+_PRIORITY = {
+    DuplicateLabel.EXACT:            1,
+    DuplicateLabel.URL_DUPLICATE:    2,
+    DuplicateLabel.REQUISITION:      3,
+    DuplicateLabel.STRONG_MATCH:     4,
+    DuplicateLabel.LOCATION_VARIANT: 5,
+    DuplicateLabel.NEAR_DUPLICATE:   6,
+    DuplicateLabel.REPOST:           7,
+    DuplicateLabel.AGENCY_DUP:       8,
+}
+
+
 def run_detection(
     limit: int = 5000,
     company_slug: str = "",
     skip_existing: bool = True,
+    company_chunk_size: int = 50,
+    sleep_between_chunks: float = 0.15,
 ) -> dict:
     """
-    Run duplicate detection over RawJobs and persist RawJobDuplicatePair records.
+    CPU-friendly duplicate detection over RawJobs.
+
+    Processes companies in small chunks with a brief sleep between each chunk
+    so the Celery worker never monopolises the CPU and the web process stays
+    responsive.  Always call via the Celery task — never from a web request.
 
     Args:
-        limit:         Max jobs to process per run (prevents memory pressure).
-        company_slug:  If set, only process jobs for that company_name.
-        skip_existing: Skip pairs already in DB (incremental mode).
-
-    Returns dict with stats: {'pairs_found', 'pairs_saved', 'pairs_skipped', 'companies_scanned'}
+        limit:                Max jobs to consider (ordered by quality_score DESC).
+        company_slug:         Narrow to one company (for targeted re-scans).
+        skip_existing:        Incremental mode — skip pairs already in DB.
+        company_chunk_size:   Companies processed per micro-batch before sleeping.
+        sleep_between_chunks: Seconds to sleep between micro-batches (yields CPU).
     """
+    import time
     from collections import defaultdict
 
     qs = RawJob.objects.filter(is_active=True, has_description=True)
     if company_slug:
         qs = qs.filter(company_name__icontains=company_slug)
 
-    # Load lightweight rows — no full description blob yet
     fields = [
         "id", "title", "normalized_title", "company_name", "url_hash",
         "external_id", "location_raw", "quality_score",
         "fetched_at", "description_clean", "description",
     ]
+    # Load only ids + lightweight fields first — description loaded per-company below
     jobs_qs = list(qs.values(*fields).order_by("-quality_score")[:limit])
 
     if not jobs_qs:
         return {"pairs_found": 0, "pairs_saved": 0, "pairs_skipped": 0, "companies_scanned": 0}
 
-    # Pre-compute tokens+hashes for agency detection
+    # Pre-compute tokens + hashes (vectorised pass, no heavy pairwise yet)
     for j in jobs_qs:
         j["_title_tok"] = _tokenize(j["normalized_title"] or j["title"])
         j["_jd_tok"]    = _tokenize(j["description_clean"] or j["description"])
         j["_jd_hash"]   = _jd_hash(j["description_clean"] or j["description"])
         j["_loc"]       = (j["location_raw"] or "").strip().lower()
 
-    # ── Phase 1: Requisition duplicates (SQL GROUP BY) ────────────────────────
-    req_pairs: list[tuple[int, int, str, float, str]] = []
+    # ── Phase 1: Requisition duplicates (pure SQL, very fast) ────────────────
+    req_pairs: list[tuple] = []
     req_groups = (
         RawJob.objects.filter(is_active=True)
         .exclude(external_id="")
@@ -254,13 +273,10 @@ def run_detection(
         if len(ids) >= 2:
             primary_id = ids[0][0]
             for dup_id, _ in ids[1:]:
-                key = (min(primary_id, dup_id), max(primary_id, dup_id))
-                req_pairs.append(
-                    (primary_id, dup_id, DuplicateLabel.REQUISITION, 1.0, "company+external_id")
-                )
+                req_pairs.append((primary_id, dup_id, DuplicateLabel.REQUISITION, 1.0, "company+external_id"))
 
-    # ── Phase 2: URL duplicates (should be rare due to unique constraint) ─────
-    url_pairs: list[tuple[int, int, str, float, str]] = []
+    # ── Phase 2: URL duplicates (rare due to unique constraint, pure SQL) ─────
+    url_pairs: list[tuple] = []
     url_groups = (
         RawJob.objects.filter(is_active=True)
         .values("url_hash")
@@ -270,46 +286,65 @@ def run_detection(
     for group in url_groups:
         ids = list(
             RawJob.objects.filter(url_hash=group["url_hash"], is_active=True)
-            .values_list("id", "quality_score")
-            .order_by("-quality_score")
+            .values_list("id", "quality_score").order_by("-quality_score")
         )
         if len(ids) >= 2:
             primary_id = ids[0][0]
             for dup_id, _ in ids[1:]:
-                url_pairs.append(
-                    (primary_id, dup_id, DuplicateLabel.URL_DUPLICATE, 1.0, "url_hash_eq")
-                )
+                url_pairs.append((primary_id, dup_id, DuplicateLabel.URL_DUPLICATE, 1.0, "url_hash_eq"))
 
-    # ── Phase 3: Company-group similarity detection ───────────────────────────
+    # ── Phase 3: Company-group similarity — chunked to throttle CPU ──────────
     by_company: dict[str, list[dict]] = defaultdict(list)
     for j in jobs_qs:
         by_company[_normalize_company(j["company_name"])].append(j)
 
-    company_pairs: list[tuple[int, int, str, float, str]] = []
-    for slug, group_jobs in by_company.items():
-        if len(group_jobs) < 2:
-            continue
-        for row in _detect_for_company_group(group_jobs):
-            company_pairs.append(row)
+    company_pairs: list[tuple] = []
+    multi_job_companies = [
+        (slug, grp) for slug, grp in by_company.items() if len(grp) >= 2
+    ]
+    for chunk_start in range(0, len(multi_job_companies), company_chunk_size):
+        chunk = multi_job_companies[chunk_start: chunk_start + company_chunk_size]
+        for _, group_jobs in chunk:
+            for row in _detect_for_company_group(group_jobs):
+                company_pairs.append(row)
+        # Yield CPU between chunks — keeps nginx + gunicorn alive
+        time.sleep(sleep_between_chunks)
 
-    # ── Phase 4: Agency duplicates ────────────────────────────────────────────
-    agency_pairs = list(_detect_agency_pairs(jobs_qs))
+    # ── Phase 4: Agency duplicates — chunked by JD hash bucket ───────────────
+    from collections import defaultdict as _dd
+    by_jd_hash: dict[str, list[dict]] = _dd(list)
+    empty_hash = _jd_hash("")
+    for j in jobs_qs:
+        h = j["_jd_hash"]
+        if h != empty_hash:
+            by_jd_hash[h].append(j)
 
-    # ── Merge all candidates, de-duplicate by pair key ────────────────────────
+    agency_pairs: list[tuple] = []
+    buckets = [b for b in by_jd_hash.values() if len(b) >= 2]
+    for chunk_start in range(0, len(buckets), company_chunk_size):
+        chunk_buckets = buckets[chunk_start: chunk_start + company_chunk_size]
+        seen_agency: set[tuple[int, int]] = set()
+        for bucket in chunk_buckets:
+            for j1, j2 in combinations(bucket, 2):
+                if _normalize_company(j1["company_name"]) == _normalize_company(j2["company_name"]):
+                    continue
+                pair_key = (min(j1["id"], j2["id"]), max(j1["id"], j2["id"]))
+                if pair_key in seen_agency:
+                    continue
+                title_sim = _jaccard(j1["_title_tok"], j2["_title_tok"])
+                if title_sim >= 0.90:
+                    seen_agency.add(pair_key)
+                    p, d = _pick_primary(j1, j2)
+                    agency_pairs.append((
+                        p["id"], d["id"],
+                        DuplicateLabel.AGENCY_DUP,
+                        round((1.0 + title_sim) / 2, 4),
+                        "jd_hash_eq+title≥0.90+diff_company",
+                    ))
+        time.sleep(sleep_between_chunks)
+
+    # ── Merge all candidates, keep highest-priority label per pair ────────────
     all_pairs: dict[tuple[int, int], tuple] = {}
-
-    # Priority: EXACT > URL > REQUISITION > STRONG > LOCATION > NEAR > REPOST > AGENCY
-    _PRIORITY = {
-        DuplicateLabel.EXACT: 1,
-        DuplicateLabel.URL_DUPLICATE: 2,
-        DuplicateLabel.REQUISITION: 3,
-        DuplicateLabel.STRONG_MATCH: 4,
-        DuplicateLabel.LOCATION_VARIANT: 5,
-        DuplicateLabel.NEAR_DUPLICATE: 6,
-        DuplicateLabel.REPOST: 7,
-        DuplicateLabel.AGENCY_DUP: 8,
-    }
-
     for row in req_pairs + url_pairs + company_pairs + agency_pairs:
         p_id, d_id, label, sim, method = row
         key = (min(p_id, d_id), max(p_id, d_id))
@@ -317,9 +352,9 @@ def run_detection(
         if not existing or _PRIORITY.get(label, 99) < _PRIORITY.get(existing[2], 99):
             all_pairs[key] = row
 
-    # ── Persist ───────────────────────────────────────────────────────────────
-    pairs_found = len(all_pairs)
-    pairs_saved = 0
+    # ── Persist in small batches ──────────────────────────────────────────────
+    pairs_found  = len(all_pairs)
+    pairs_saved  = 0
     pairs_skipped = 0
 
     if skip_existing:
@@ -345,16 +380,19 @@ def run_detection(
             )
         )
 
-    if to_create:
+    # Write in chunks of 500 with a sleep to avoid long DB locks
+    WRITE_CHUNK = 500
+    for i in range(0, len(to_create), WRITE_CHUNK):
+        chunk = to_create[i: i + WRITE_CHUNK]
         with transaction.atomic():
-            RawJobDuplicatePair.objects.bulk_create(to_create, ignore_conflicts=True)
-            pairs_saved = len(to_create)
+            RawJobDuplicatePair.objects.bulk_create(chunk, ignore_conflicts=True)
+        pairs_saved += len(chunk)
+        time.sleep(0.05)
 
     logger.info(
         "Duplicate detection complete: %d found, %d saved, %d skipped, %d companies",
         pairs_found, pairs_saved, pairs_skipped, len(by_company),
     )
-
     return {
         "pairs_found":       pairs_found,
         "pairs_saved":       pairs_saved,

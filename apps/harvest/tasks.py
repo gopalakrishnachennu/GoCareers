@@ -4126,3 +4126,28 @@ def backfill_resume_contract_task(
     }
     logger.info("Backfill resume contract complete: %s", result)
     return result
+
+
+@shared_task(
+    bind=True,
+    name="harvest.run_duplicate_detection",
+    soft_time_limit=3600,
+    time_limit=4000,
+    max_retries=0,
+)
+def run_duplicate_detection_task(self, limit: int = 5000, company_slug: str = ""):
+    """
+    Background Celery task for duplicate detection.
+    Runs chunked + throttled — will NOT spike CPU or block web workers.
+    """
+    from .duplicate_engine import run_detection
+    logger.info("Duplicate detection task started (limit=%d, company=%s)", limit, company_slug or "all")
+    result = run_detection(
+        limit=limit,
+        company_slug=company_slug,
+        skip_existing=True,
+        company_chunk_size=50,
+        sleep_between_chunks=0.15,
+    )
+    logger.info("Duplicate detection task finished: %s", result)
+    return result
