@@ -4146,8 +4146,9 @@ def run_duplicate_detection_task(self, limit: int = 5000, company_slug: str = ""
         limit=limit,
         company_slug=company_slug,
         skip_existing=True,
-        company_chunk_size=50,
-        sleep_between_chunks=0.15,
+        company_chunk_size=10,        # 10 companies per micro-batch
+        sleep_between_chunks=0.5,     # 500ms sleep between batches — never pegs CPU
+        max_jobs_per_company=40,      # hard cap: O(40²/2)=780 pairs max per company
     )
     logger.info("Duplicate detection task finished: %s", result)
     return result

@@ -211,22 +211,18 @@ def run_detection(
     limit: int = 5000,
     company_slug: str = "",
     skip_existing: bool = True,
-    company_chunk_size: int = 50,
-    sleep_between_chunks: float = 0.15,
+    company_chunk_size: int = 10,
+    sleep_between_chunks: float = 0.5,
+    max_jobs_per_company: int = 40,
 ) -> dict:
     """
     CPU-friendly duplicate detection over RawJobs.
 
-    Processes companies in small chunks with a brief sleep between each chunk
-    so the Celery worker never monopolises the CPU and the web process stays
-    responsive.  Always call via the Celery task — never from a web request.
-
-    Args:
-        limit:                Max jobs to consider (ordered by quality_score DESC).
-        company_slug:         Narrow to one company (for targeted re-scans).
-        skip_existing:        Incremental mode — skip pairs already in DB.
-        company_chunk_size:   Companies processed per micro-batch before sleeping.
-        sleep_between_chunks: Seconds to sleep between micro-batches (yields CPU).
+    KEY DESIGN RULES (never violate these on a shared 2-vCPU server):
+    - company_chunk_size=10  → process 10 companies, then sleep
+    - sleep_between_chunks=0.5s → OS schedules other processes (nginx, gunicorn)
+    - max_jobs_per_company=40  → O(N²) pairs = max 780 per company, not 500k
+    - Always call via the Celery task — NEVER from a web request directly.
     """
     import time
     from collections import defaultdict
@@ -240,29 +236,27 @@ def run_detection(
         "external_id", "location_raw", "quality_score",
         "fetched_at", "description_clean", "description",
     ]
-    # Load only ids + lightweight fields first — description loaded per-company below
     jobs_qs = list(qs.values(*fields).order_by("-quality_score")[:limit])
 
     if not jobs_qs:
         return {"pairs_found": 0, "pairs_saved": 0, "pairs_skipped": 0, "companies_scanned": 0}
 
-    # Pre-compute tokens + hashes (vectorised pass, no heavy pairwise yet)
+    # Pre-compute tokens + hashes in one pass (CPU-light, no pairwise yet)
     for j in jobs_qs:
         j["_title_tok"] = _tokenize(j["normalized_title"] or j["title"])
         j["_jd_tok"]    = _tokenize(j["description_clean"] or j["description"])
         j["_jd_hash"]   = _jd_hash(j["description_clean"] or j["description"])
         j["_loc"]       = (j["location_raw"] or "").strip().lower()
 
-    # ── Phase 1: Requisition duplicates (pure SQL, very fast) ────────────────
+    # ── Phase 1: Requisition duplicates — pure SQL GROUP BY, no Python CPU ───
     req_pairs: list[tuple] = []
-    req_groups = (
+    for group in (
         RawJob.objects.filter(is_active=True)
         .exclude(external_id="")
         .values("company_name", "external_id")
         .annotate(cnt=Count("id"))
         .filter(cnt__gt=1)
-    )
-    for group in req_groups:
+    ):
         ids = list(
             RawJob.objects.filter(
                 company_name=group["company_name"],
@@ -275,15 +269,12 @@ def run_detection(
             for dup_id, _ in ids[1:]:
                 req_pairs.append((primary_id, dup_id, DuplicateLabel.REQUISITION, 1.0, "company+external_id"))
 
-    # ── Phase 2: URL duplicates (rare due to unique constraint, pure SQL) ─────
+    # ── Phase 2: URL duplicates — pure SQL, should be rare ───────────────────
     url_pairs: list[tuple] = []
-    url_groups = (
+    for group in (
         RawJob.objects.filter(is_active=True)
-        .values("url_hash")
-        .annotate(cnt=Count("id"))
-        .filter(cnt__gt=1)
-    )
-    for group in url_groups:
+        .values("url_hash").annotate(cnt=Count("id")).filter(cnt__gt=1)
+    ):
         ids = list(
             RawJob.objects.filter(url_hash=group["url_hash"], is_active=True)
             .values_list("id", "quality_score").order_by("-quality_score")
@@ -293,26 +284,33 @@ def run_detection(
             for dup_id, _ in ids[1:]:
                 url_pairs.append((primary_id, dup_id, DuplicateLabel.URL_DUPLICATE, 1.0, "url_hash_eq"))
 
-    # ── Phase 3: Company-group similarity — chunked to throttle CPU ──────────
+    # ── Phase 3: Per-company similarity — capped + chunked ───────────────────
+    # max_jobs_per_company=40 means worst-case 780 pairs per company (O(40²/2))
+    # vs 500k pairs for a company with 1000 jobs — this is the critical cap.
     by_company: dict[str, list[dict]] = defaultdict(list)
     for j in jobs_qs:
-        by_company[_normalize_company(j["company_name"])].append(j)
+        slug = _normalize_company(j["company_name"])
+        by_company[slug].append(j)
 
     company_pairs: list[tuple] = []
     multi_job_companies = [
-        (slug, grp) for slug, grp in by_company.items() if len(grp) >= 2
+        (slug, grp[:max_jobs_per_company])   # ← hard cap: only top-N per company
+        for slug, grp in by_company.items()
+        if len(grp) >= 2
     ]
+
+    pairs_since_sleep = 0
     for chunk_start in range(0, len(multi_job_companies), company_chunk_size):
         chunk = multi_job_companies[chunk_start: chunk_start + company_chunk_size]
         for _, group_jobs in chunk:
             for row in _detect_for_company_group(group_jobs):
                 company_pairs.append(row)
-        # Yield CPU between chunks — keeps nginx + gunicorn alive
+                pairs_since_sleep += 1
+        # Hard sleep after every chunk — gives nginx/gunicorn CPU time
         time.sleep(sleep_between_chunks)
 
-    # ── Phase 4: Agency duplicates — chunked by JD hash bucket ───────────────
-    from collections import defaultdict as _dd
-    by_jd_hash: dict[str, list[dict]] = _dd(list)
+    # ── Phase 4: Agency duplicates — JD hash bucket, capped per bucket ───────
+    by_jd_hash: dict[str, list[dict]] = defaultdict(list)
     empty_hash = _jd_hash("")
     for j in jobs_qs:
         h = j["_jd_hash"]
@@ -320,7 +318,9 @@ def run_detection(
             by_jd_hash[h].append(j)
 
     agency_pairs: list[tuple] = []
-    buckets = [b for b in by_jd_hash.values() if len(b) >= 2]
+    # Cap each JD bucket too — if 200 jobs share the same JD hash, only check first 20
+    buckets = [b[:20] for b in by_jd_hash.values() if len(b) >= 2]
+
     for chunk_start in range(0, len(buckets), company_chunk_size):
         chunk_buckets = buckets[chunk_start: chunk_start + company_chunk_size]
         seen_agency: set[tuple[int, int]] = set()
