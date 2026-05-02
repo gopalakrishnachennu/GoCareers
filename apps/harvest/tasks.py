@@ -2022,30 +2022,50 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     Fetch *url* with JobJarvis, extract all job fields, find-or-create the
     Company, and persist a RawJob (platform_slug="jarvis" or detected slug).
 
+    Even when the individual job is expired/unavailable:
+    - Detects ATS/platform from the URL
+    - Finds or creates the Company + CompanyPlatformLabel
+    - Auto-triggers a background full-company scrape (if fetch_all_supported
+      and the company hasn't been scraped in the last 24 h)
+
     Returns a dict with the extracted data plus ``raw_job_id`` when saved
-    successfully, or ``error`` on failure.
+    successfully, or ``error`` + ``discovery`` on failure.
     """
-    from .jarvis import JobJarvis
-    from .models import RawJob, JobBoardPlatform
+    from .jarvis import JobJarvis, _detect_platform
+    from .models import RawJob, JobBoardPlatform, CompanyFetchRun
     from .normalizer import compute_url_hash, compute_content_hash
 
     update_task_progress(self, current=0, total=3, message="Fetching job page…")
 
+    # ── Step 1: Detect ATS from URL (no HTTP, pure pattern match) ────────────
+    detected_ats_early = _detect_platform(url)
+    company_name_early = _extract_company_from_url(url)
+    logger.info("Jarvis: url=%s detected_ats=%s company_hint=%s", url, detected_ats_early, company_name_early)
+
+    # ── Step 2: Fetch the individual job ─────────────────────────────────────
     jarvis = JobJarvis()
+    job_fetch_ok = True
+    job_error = ""
+    data: dict = {}
     try:
         data = jarvis.ingest(url)
+        if data.get("error"):
+            job_fetch_ok = False
+            job_error = data["error"]
     except Exception as exc:
-        return {"ok": False, "error": str(exc), "url": url}
+        job_fetch_ok = False
+        job_error = str(exc)
+        data = {}
 
-    if data.get("error"):
-        return {"ok": False, "error": data["error"], "url": url, "data": data}
+    if not job_fetch_ok:
+        logger.warning("Jarvis: job fetch failed (%s) — running company/platform discovery for %s", job_error, url)
 
-    update_task_progress(self, current=2, total=3, message="Saving to database…")
+    update_task_progress(self, current=1, total=3, message="Resolving company & platform…")
 
-    # ── Resolve Company (smart matching) ─────────────────────────────────────
-    company_name = (data.get("company_name") or "").strip()
+    # ── Step 3: Resolve Company — always runs, even on job fetch failure ──────
+    company_name = (data.get("company_name") or company_name_early or "").strip()
     if not company_name:
-        company_name = _extract_company_from_url(url)
+        company_name = company_name_early
 
     company = _jarvis_resolve_company(company_name, url)
 
@@ -2082,6 +2102,51 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         source_url=original_url,
         job_platform=job_platform,
     )
+
+    # ── Step 4: Auto-trigger full-company scrape in background ───────────────
+    # Fires when: platform supports fetch-all AND company hasn't been scraped
+    # in the last 24 h (prevents hammering the ATS on every Jarvis paste).
+    bg_scrape_triggered = False
+    bg_scrape_reason = ""
+    if board_ctx.get("fetch_all_supported") and platform_label:
+        from datetime import timedelta as _td
+        cutoff = timezone.now() - _td(hours=24)
+        recent_run = CompanyFetchRun.objects.filter(
+            label=platform_label,
+            started_at__gte=cutoff,
+        ).exists()
+        if not recent_run:
+            harvest_label_task.apply_async(
+                args=[platform_label.pk],
+                countdown=5,
+            )
+            bg_scrape_triggered = True
+            logger.info(
+                "Jarvis: triggered background scrape for label=%s company=%s platform=%s",
+                platform_label.pk, company.name, detected_ats,
+            )
+        else:
+            bg_scrape_reason = "scraped_recently"
+
+    # ── If individual job fetch failed, return discovery result now ──────────
+    if not job_fetch_ok:
+        update_task_progress(self, current=3, total=3, message="Discovery complete (job unavailable)")
+        return {
+            "ok": False,
+            "job_error": job_error,
+            "job_unavailable": True,
+            "url": url,
+            "discovery": {
+                "company_name": company.name if company else company_name,
+                "company_id": company.pk if company else None,
+                "detected_ats": detected_ats or detected_ats_early,
+                "platform_label_id": platform_label.pk if platform_label else None,
+                "fetch_all_supported": board_ctx.get("fetch_all_supported", False),
+                "bg_scrape_triggered": bg_scrape_triggered,
+                "bg_scrape_reason": bg_scrape_reason,
+                "company_jobs_url": board_ctx.get("company_jobs_url", ""),
+            },
+        }
 
     # Parse posted_date
     posted_date = _jarvis_parse_date(data.get("posted_date_raw", ""))
@@ -2298,7 +2363,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "raw_job_id": raw_job.pk,
         "created": created,
         "title": data.get("title", ""),
-        "company_name": company.name,             # actual matched company name
+        "company_name": company.name,
         "company_id": company.pk,
         "platform_slug": platform_slug,
         "strategy": data.get("strategy", ""),
@@ -2307,6 +2372,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "company_jobs_url": board_ctx.get("company_jobs_url") or "",
         "platform_label_id": platform_label.pk if platform_label else None,
         "fetch_all_supported": bool(board_ctx.get("fetch_all_supported")),
+        "bg_scrape_triggered": bg_scrape_triggered,
         "data": {k: v for k, v in data.items() if k != "raw_payload"},
     }
 
