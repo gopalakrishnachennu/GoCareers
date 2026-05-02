@@ -545,6 +545,30 @@
       approveBtn.title = 'No saved raw job ID';
     }
 
+    // ── Discovery info banner (company saved + scrape status) ────────────────
+    let discBanner = document.getElementById('discovery-banner');
+    if (discBanner) discBanner.remove();
+    if (result.company_id || result.bg_scrape_triggered !== undefined) {
+      const companyUrl = job.company_url ? `<a href="${job.company_url}" class="underline text-indigo-600" target="_blank">${result.company_name || job.company_name}</a>` : (result.company_name || job.company_name || '');
+      const ats = (job.detected_ats || result.detected_ats || result.platform_slug || '');
+      const atsLabel = ats ? ats.charAt(0).toUpperCase() + ats.slice(1) : '—';
+      let scrapeHtml = '';
+      if (result.bg_scrape_triggered) {
+        scrapeHtml = `<div class="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-emerald-800 text-xs mt-2">🚀 Background scrape started — all active jobs from this company will be imported automatically.</div>`;
+      } else if (result.fetch_all_supported) {
+        scrapeHtml = `<div class="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-blue-800 text-xs mt-2">ℹ️ Company was scraped recently — skipping duplicate scrape.</div>`;
+      }
+      const b = document.createElement('div');
+      b.id = 'discovery-banner';
+      b.className = 'mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600';
+      b.innerHTML = `<div class="flex items-center gap-4 flex-wrap">
+        <span>✅ <strong>Company saved:</strong> ${companyUrl}</span>
+        <span>🔍 <strong>Platform:</strong> ${atsLabel}</span>
+        <span>🏷️ <strong>Label:</strong> ${result.platform_label_id ? 'Created / Updated' : '—'}</span>
+      </div>${scrapeHtml}`;
+      resultEl.after(b);
+    }
+
     resultEl.style.display = 'block';
     resultEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
