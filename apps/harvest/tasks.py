@@ -2791,24 +2791,27 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
             except Company.MultipleObjectsReturned:
                 pass
 
-            # Second try: containment scan for this word.
-            # Guard: skip containment for short words (< 6 chars) — "Whop" must
-            # not match "Whoop", "lyft" must not match "lyftoff", etc.
-            # Also require the shorter name covers ≥ 75% of the longer name's
-            # length so "AI" doesn't absorb "Artificial Intelligence Corp".
-            if len(word) < 6:
-                continue
+            # Second try: word-boundary scan.
+            # Advanced technique: use \bword\b regex instead of substring containment.
+            # This means "Whop" will NOT match "Whoop" (different tokens) but
+            # "Bayview" WILL match "Bayview Asset Management" (whole word present).
+            # No length-ratio hacks needed — word boundaries handle it cleanly.
+            import re as _re2
+            word_pat = _re2.compile(r'\b' + _re2.escape(word.lower()) + r'\b')
             for cand in Company.objects.filter(name__icontains=word).order_by("name")[:10]:
                 if cand.pk in seen_ids:
                     continue
                 seen_ids.add(cand.pk)
                 cn = cand.name.lower()
-                # Require length ratio ≥ 0.75 so "Whop"(4) never matches "Whoop"(5)
-                # and short brand names stay distinct from longer variants.
-                len_ratio = min(len(cn), len(name_lower)) / max(len(cn), len(name_lower), 1)
-                if len_ratio < 0.75:
-                    continue
-                if cn in name_lower or name_lower in cn:
+                # Build reverse pattern: first significant word of candidate in our name
+                cand_first = (cn.split() or [""])[0]
+                cand_pat = (
+                    _re2.compile(r'\b' + _re2.escape(cand_first) + r'\b')
+                    if len(cand_first) >= 3 else None
+                )
+                # Accept if our word appears as a whole token in candidate,
+                # OR candidate's first word appears as a whole token in our name.
+                if word_pat.search(cn) or (cand_pat and cand_pat.search(name_lower)):
                     if best is None or len(cand.name) < len(best.name):
                         best = cand
 
