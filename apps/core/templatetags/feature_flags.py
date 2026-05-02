@@ -18,3 +18,11 @@ def get_item(mapping, key):
     if mapping is None:
         return set()
     return mapping.get(key, set())
+
+
+@register.filter
+def split_pipe(value):
+    """Split a ' | ' separated string into a list of stripped parts."""
+    if not value:
+        return []
+    return [p.strip() for p in str(value).split(" | ") if p.strip()]

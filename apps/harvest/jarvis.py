@@ -54,6 +54,65 @@ def _safe_text(val) -> str:
     return str(val)
 
 
+_WORKDAY_COUNT_RE = re.compile(r"^\d+\s+locations?$", re.IGNORECASE)
+
+
+def _workday_location(data: dict, info: dict | None = None) -> str:
+    """
+    Resolve the best location string from a Workday payload.
+
+    Workday's `locationsText` sometimes returns a useless count like "2 Locations"
+    instead of actual place names.  This helper:
+      1. Prefers `location` (single-location jobs always have the real name here).
+      2. Accepts `locationsText` only when it is NOT a count string.
+      3. Falls back to parsing the `postingLocations` array (multi-location jobs).
+      4. Last resort: uses `locationsText` even if it looks like a count.
+    """
+    if info is None:
+        info = data
+
+    # 1. Prefer explicit single location field
+    single = _safe_text(info.get("location") or data.get("location")).strip()
+    if single and not _WORKDAY_COUNT_RE.match(single):
+        return single
+
+    # 2. Accept locationsText only when it has real content
+    ltext = _safe_text(
+        info.get("locationsText") or data.get("locationsText")
+    ).strip()
+    if ltext and not _WORKDAY_COUNT_RE.match(ltext):
+        return ltext
+
+    # 3. Parse postingLocations array → real city/state names
+    posting_locs: list = (
+        data.get("postingLocations")
+        or data.get("PostingLocations")
+        or (info or {}).get("postingLocations")
+        or []
+    )
+    resolved: list[str] = []
+    if isinstance(posting_locs, list):
+        for loc in posting_locs:
+            if not isinstance(loc, dict):
+                continue
+            raw = _safe_text(
+                loc.get("formattedAddress")
+                or loc.get("FormattedAddress")
+            ).strip()
+            if not raw:
+                city    = _safe_text(loc.get("cityName")     or loc.get("city")    or loc.get("City")).strip()
+                state   = _safe_text(loc.get("stateCode")    or loc.get("state")   or loc.get("State")).strip()
+                country = _safe_text(loc.get("isoCountryCode") or loc.get("country") or loc.get("Country")).strip()
+                raw = ", ".join(v for v in (city, state, country) if v)
+            if raw and raw not in resolved:
+                resolved.append(raw)
+    if resolved:
+        return " | ".join(resolved)
+
+    # 4. Last resort — return ltext even if it's a count (better than blank)
+    return ltext or single
+
+
 def _extract_ultipro_embedded_opportunity(html: str) -> Optional[dict]:
     """
     Parse the JSON object passed to ``CandidateOpportunityDetail(...)`` in UltiPro HTML.
@@ -411,7 +470,7 @@ class JobJarvis:
                             or job.get("shortDescription", "")
                         )
                         if desc:
-                            loc = job.get("locationsText", "")
+                            loc = _workday_location(job)
                             return {
                                 "title": job.get("title", ""),
                                 "company_name": full_subdomain.split(".")[0].replace("-", " ").title(),
@@ -454,7 +513,7 @@ class JobJarvis:
         )
 
         title = info.get("title") or data.get("title") or ""
-        loc = info.get("location") or info.get("locationsText") or data.get("locationsText") or ""
+        loc = _workday_location(data, info)
         ext_id = info.get("externalJobId") or info.get("jobReqId") or ""
         if not ext_id:
             bullet = info.get("bulletFields") or data.get("bulletFields") or []
@@ -1411,13 +1470,12 @@ class JobJarvis:
                     raw_loc = ", ".join(v for v in (city, state, country) if v)
                 if raw_loc and raw_loc not in locations:
                     locations.append(raw_loc)
-        fallback_loc = _safe_text(
-            payload.get("JobLocation")
-            or payload.get("jobLocation")
-            or payload.get("location")
-        ).strip()
-        if fallback_loc and fallback_loc not in locations:
-            locations.append(fallback_loc)
+        # Fallback: single-location fields and locationsText (skip count strings like "2 Locations")
+        for _fb_key in ("JobLocation", "jobLocation", "location", "locationsText"):
+            fb = _safe_text(payload.get(_fb_key)).strip()
+            if fb and not _WORKDAY_COUNT_RE.match(fb) and fb not in locations:
+                locations.append(fb)
+                break
         location_raw = " | ".join(locations)
 
         is_remote = bool(
