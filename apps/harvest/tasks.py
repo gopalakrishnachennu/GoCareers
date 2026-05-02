@@ -2816,11 +2816,29 @@ def _jarvis_resolve_company(company_name: str, job_url: str):
                         best = cand
 
         if best:
-            logger.info(
-                "Jarvis fuzzy match: '%s' → '%s'",
-                company_name, best.name,
+            # ── Fuzzy match found — DO NOT auto-merge ────────────────────────
+            # "Bayview" and "Bayview Asset Management" could be two completely
+            # different companies. Create the new company and flag for human
+            # review instead of silently merging and corrupting data.
+            clean_name = company_name or "Unknown (Jarvis Import)"
+            new_company, created = Company.objects.get_or_create(
+                name=clean_name,
+                defaults={
+                    "website": _root_url(job_url),
+                    "possible_duplicate_of": best,
+                    "needs_review": True,
+                },
             )
-            return best
+            if created:
+                logger.warning(
+                    "Jarvis: created new company '%s' (flagged for review) — "
+                    "possible duplicate of '%s' (id=%d). "
+                    "Admin should verify and merge if same company.",
+                    clean_name, best.name, best.pk,
+                )
+            else:
+                logger.info("Jarvis: existing company '%s' matched (get_or_create)", clean_name)
+            return new_company
 
     # ── 4. Create new ────────────────────────────────────────────────────────
     clean_name = company_name or "Unknown (Jarvis Import)"

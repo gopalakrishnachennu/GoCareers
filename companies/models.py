@@ -117,6 +117,23 @@ class Company(models.Model):
         help_text="0-100, how complete this record is.",
     )
 
+    # ── Duplicate review ──────────────────────────────────────────────────────
+    # Set by Jarvis when a fuzzy name match is found but not trusted enough to
+    # auto-merge. An admin should review and either merge or dismiss.
+    possible_duplicate_of = models.ForeignKey(
+        "self",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="possible_duplicates",
+        help_text="Fuzzy-matched candidate — review before merging.",
+    )
+    needs_review = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="Flagged by Jarvis as a possible duplicate. Needs human review.",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
