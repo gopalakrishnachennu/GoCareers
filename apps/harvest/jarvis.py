@@ -1204,25 +1204,28 @@ class JobJarvis:
             or data.get("briefDescription")
             or ""
         )
-        loc_raw = ""
+        resolved_locs: list[str] = []
         locs = data.get("Locations") or []
-        if locs and isinstance(locs[0], dict):
-            loc_raw = (
-                (locs[0].get("LocalizedDescription") or "").strip()
-                or (locs[0].get("LocalizedName") or "").strip()
+        for loc_entry in (locs if isinstance(locs, list) else []):
+            if not isinstance(loc_entry, dict):
+                continue
+            entry_raw = (
+                (loc_entry.get("LocalizedDescription") or "").strip()
+                or (loc_entry.get("LocalizedName") or "").strip()
             )
-            addr = locs[0].get("Address") or {}
-            if isinstance(addr, dict) and not loc_raw:
+            addr = loc_entry.get("Address") or {}
+            if isinstance(addr, dict) and not entry_raw:
+                state_val = addr.get("State")
+                country_val = addr.get("Country")
                 parts = [
                     addr.get("City"),
-                    (addr.get("State") or {}).get("Code")
-                    if isinstance(addr.get("State"), dict)
-                    else addr.get("State"),
-                    (addr.get("Country") or {}).get("Code")
-                    if isinstance(addr.get("Country"), dict)
-                    else addr.get("Country"),
+                    state_val.get("Code") if isinstance(state_val, dict) else state_val,
+                    country_val.get("Code") if isinstance(country_val, dict) else country_val,
                 ]
-                loc_raw = ", ".join(str(p) for p in parts if p)
+                entry_raw = ", ".join(str(p) for p in parts if p)
+            if entry_raw and entry_raw not in resolved_locs:
+                resolved_locs.append(entry_raw)
+        loc_raw = " | ".join(resolved_locs)
 
         if not desc:
             return None
@@ -1755,27 +1758,36 @@ def _parse_jsonld(d: dict) -> dict:
     org = d.get("hiringOrganization") or {}
     company_name = org.get("name", "") if isinstance(org, dict) else str(org)
 
-    # Location
-    raw_loc = d.get("jobLocation") or {}
-    if isinstance(raw_loc, list):
-        raw_loc = raw_loc[0] if raw_loc else {}
-    addr = raw_loc.get("address", {}) if isinstance(raw_loc, dict) else {}
-    if isinstance(addr, str):
-        location_raw = addr
-        city = state = country = ""
-    else:
-        # addressLocality / addressRegion / addressCountry can each be a
-        # plain string OR a schema.org object {"@type": "...", "name": "..."}
-        city    = _str_val(addr.get("addressLocality", ""))
-        state   = _str_val(addr.get("addressRegion", ""))
-        country = _str_val(addr.get("addressCountry", ""))
-        # Some publishers (e.g. Microsoft) put "WA,US" in addressRegion —
-        # strip any trailing country code suffix after a comma
-        if "," in state and not country:
-            state, country = [p.strip() for p in state.split(",", 1)]
-        elif "," in state:
-            state = state.split(",")[0].strip()
-        location_raw = ", ".join(p for p in [city, state, country] if p)
+    # Location — jobLocation can be a single Place object or a list of them
+    raw_loc_field = d.get("jobLocation") or {}
+    job_locations = raw_loc_field if isinstance(raw_loc_field, list) else [raw_loc_field]
+
+    loc_parts_list: list[str] = []
+    city = state = country = ""
+    for i, raw_loc in enumerate(job_locations):
+        if not isinstance(raw_loc, dict):
+            continue
+        addr = raw_loc.get("address", {})
+        if isinstance(addr, str):
+            if addr and addr not in loc_parts_list:
+                loc_parts_list.append(addr)
+            if i == 0:
+                city = state = country = ""
+        else:
+            loc_city    = _str_val(addr.get("addressLocality", ""))
+            loc_state   = _str_val(addr.get("addressRegion", ""))
+            loc_country = _str_val(addr.get("addressCountry", ""))
+            # Some publishers (e.g. Microsoft) put "WA,US" in addressRegion
+            if "," in loc_state and not loc_country:
+                loc_state, loc_country = [p.strip() for p in loc_state.split(",", 1)]
+            elif "," in loc_state:
+                loc_state = loc_state.split(",")[0].strip()
+            if i == 0:
+                city, state, country = loc_city, loc_state, loc_country
+            loc_str = ", ".join(p for p in [loc_city, loc_state, loc_country] if p)
+            if loc_str and loc_str not in loc_parts_list:
+                loc_parts_list.append(loc_str)
+    location_raw = " | ".join(loc_parts_list) if loc_parts_list else ""
 
     # Remote
     loc_type_raw = str(d.get("jobLocationType", "") or "").lower()
