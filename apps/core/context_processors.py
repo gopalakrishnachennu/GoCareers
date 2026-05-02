@@ -36,6 +36,20 @@ def pending_pool_count(request):
     return {'pending_pool_count': count}
 
 
+def dup_pending_count(request):
+    """Inject pending duplicate pair count for the subnav badge."""
+    if not request.user.is_authenticated:
+        return {'dup_pending_count': 0}
+    if not (request.user.is_superuser or getattr(request.user, 'role', None) in ('ADMIN', 'EMPLOYEE')):
+        return {'dup_pending_count': 0}
+    try:
+        from harvest.models import RawJobDuplicatePair, DuplicateResolution
+        count = RawJobDuplicatePair.objects.filter(resolution=DuplicateResolution.PENDING).count()
+    except Exception:
+        count = 0
+    return {'dup_pending_count': count}
+
+
 def user_feature_flags(request):
     """
     Inject USER_FEATURE_FLAGS: dict key -> bool for the current user (for nav / dashboards).

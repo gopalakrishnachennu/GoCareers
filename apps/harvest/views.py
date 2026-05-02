@@ -24,10 +24,13 @@ from .forms import JobBoardPlatformForm
 from .models import (
     CompanyFetchRun,
     CompanyPlatformLabel,
+    DuplicateLabel,
+    DuplicateResolution,
     FetchBatch,
     HarvestEngineConfig,
     JobBoardPlatform,
     RawJob,
+    RawJobDuplicatePair,
 )
 from .resume_profile import build_resume_job_profile
 from .jd_gate import evaluate_raw_job_resume_gate
@@ -2338,3 +2341,133 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             )
 
         return redirect("harvest-engine-config")
+
+
+# ── Duplicate Engine Views ────────────────────────────────────────────────────
+
+class DuplicateListView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/duplicates.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        from django.db.models import Count
+
+        label_filter      = self.request.GET.get("label", "")
+        resolution_filter = self.request.GET.get("resolution", "PENDING")
+        search            = self.request.GET.get("q", "").strip()
+
+        qs = RawJobDuplicatePair.objects.select_related(
+            "primary", "duplicate", "resolved_by",
+        )
+        if resolution_filter and resolution_filter != "all":
+            qs = qs.filter(resolution=resolution_filter)
+        if label_filter:
+            qs = qs.filter(label=label_filter)
+        if search:
+            qs = qs.filter(
+                Q(primary__title__icontains=search)
+                | Q(primary__company_name__icontains=search)
+                | Q(duplicate__title__icontains=search)
+            )
+
+        # Summary stats
+        stats = (
+            RawJobDuplicatePair.objects.values("label")
+            .annotate(cnt=Count("id"))
+            .order_by("-cnt")
+        )
+        pending_count = RawJobDuplicatePair.objects.filter(
+            resolution=DuplicateResolution.PENDING
+        ).count()
+
+        ctx.update({
+            "pairs":            qs[:200],
+            "total_pairs":      RawJobDuplicatePair.objects.count(),
+            "pending_count":    pending_count,
+            "label_stats":      {s["label"]: s["cnt"] for s in stats},
+            "label_choices":    DuplicateLabel.choices,
+            "resolution_choices": DuplicateResolution.choices,
+            "label_filter":     label_filter,
+            "resolution_filter": resolution_filter,
+            "search":           search,
+            "q":                search,
+        })
+        return ctx
+
+
+class DuplicateRunView(SuperuserRequiredMixin, View):
+    def post(self, request):
+        from .duplicate_engine import run_detection
+        limit = int(request.POST.get("limit", 5000))
+        result = run_detection(limit=limit, skip_existing=True)
+        messages.success(
+            request,
+            f"Detection complete — {result['pairs_saved']} new pairs found "
+            f"({result['pairs_found']} total candidates, {result['companies_scanned']} companies scanned).",
+        )
+        return redirect("harvest-duplicates")
+
+
+class DuplicateResolveView(SuperuserRequiredMixin, View):
+    def post(self, request, pk):
+        pair   = get_object_or_404(RawJobDuplicatePair, pk=pk)
+        action = request.POST.get("action", "")
+        notes  = request.POST.get("notes", "")
+
+        if action == "merge":
+            from .duplicate_engine import merge_pair
+            result = merge_pair(pair, resolved_by=request.user)
+            fields = ", ".join(result["backfilled_fields"]) or "none"
+            messages.success(request, f"Merged — duplicate deactivated. Backfilled: {fields}.")
+
+        elif action == "dismiss":
+            from .duplicate_engine import dismiss_pair
+            dismiss_pair(pair, resolved_by=request.user, notes=notes)
+            messages.success(request, "Marked as Keep Both.")
+
+        elif action == "confirm":
+            from .duplicate_engine import confirm_pair
+            confirm_pair(pair, resolved_by=request.user)
+            messages.success(request, "Confirmed as duplicate.")
+
+        elif action == "reopen":
+            pair.resolution = DuplicateResolution.PENDING
+            pair.resolved_at = None
+            pair.resolved_by = None
+            pair.save(update_fields=["resolution", "resolved_at", "resolved_by"])
+            messages.info(request, "Pair reopened for review.")
+
+        return redirect(request.POST.get("next", "harvest-duplicates"))
+
+
+class DuplicateBulkResolveView(SuperuserRequiredMixin, View):
+    def post(self, request):
+        action = request.POST.get("action", "")
+        ids    = request.POST.getlist("pair_ids")
+        if not ids:
+            messages.warning(request, "No pairs selected.")
+            return redirect("harvest-duplicates")
+
+        pairs = RawJobDuplicatePair.objects.filter(pk__in=ids, resolution=DuplicateResolution.PENDING)
+
+        if action == "bulk_merge":
+            from .duplicate_engine import merge_pair
+            count = 0
+            for pair in pairs:
+                try:
+                    merge_pair(pair, resolved_by=request.user)
+                    count += 1
+                except Exception:
+                    pass
+            messages.success(request, f"Merged {count} pairs.")
+
+        elif action == "bulk_dismiss":
+            from django.utils import timezone
+            pairs.update(
+                resolution=DuplicateResolution.DISMISSED,
+                resolved_at=timezone.now(),
+                resolved_by=request.user,
+            )
+            messages.success(request, f"Dismissed {pairs.count()} pairs.")
+
+        return redirect("harvest-duplicates")

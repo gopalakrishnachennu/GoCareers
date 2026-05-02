@@ -48,6 +48,10 @@ from .views import (
     StopBatchView,
     TriggerBatchFetchView,
     TriggerCompanyFetchView,
+    DuplicateListView,
+    DuplicateRunView,
+    DuplicateResolveView,
+    DuplicateBulkResolveView,
 )
 
 urlpatterns = [
@@ -102,6 +106,11 @@ urlpatterns = [
     path("api/push/labels/", ExportLabelsView.as_view(), name="harvest-push-labels"),
     path("api/push/jobs/", PushJobsView.as_view(), name="harvest-push-jobs"),
     path("api/push/status/", PushStatusView.as_view(), name="harvest-push-status"),
+    # Duplicate Engine
+    path("duplicates/", DuplicateListView.as_view(), name="harvest-duplicates"),
+    path("duplicates/run/", DuplicateRunView.as_view(), name="harvest-duplicates-run"),
+    path("duplicates/<int:pk>/resolve/", DuplicateResolveView.as_view(), name="harvest-duplicate-resolve"),
+    path("duplicates/bulk-resolve/", DuplicateBulkResolveView.as_view(), name="harvest-duplicate-bulk-resolve"),
     # Engine Config — runtime tuning knobs (concurrency, rate limit, stagger)
     path("engine/", EngineConfigView.as_view(), name="harvest-engine-config"),
     # Job Jarvis — paste-any-URL ingestion

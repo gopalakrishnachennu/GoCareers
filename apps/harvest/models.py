@@ -731,6 +731,60 @@ class RawJob(models.Model):
         return f"{self.title} @ {self.company_name}"
 
 
+# ── Duplicate Detection ───────────────────────────────────────────────────────
+
+class DuplicateLabel(models.TextChoices):
+    EXACT            = 'EXACT',            'Exact Duplicate'
+    STRONG_MATCH     = 'STRONG_MATCH',     'Strong Match'
+    URL_DUPLICATE    = 'URL_DUPLICATE',    'URL Duplicate'
+    REQUISITION      = 'REQUISITION',      'Requisition Duplicate'
+    NEAR_DUPLICATE   = 'NEAR_DUPLICATE',   'Near Duplicate'
+    LOCATION_VARIANT = 'LOCATION_VARIANT', 'Location Variant'
+    REPOST           = 'REPOST',           'Repost'
+    AGENCY_DUP       = 'AGENCY_DUP',       'Agency Duplicate'
+    NOT_DUPLICATE    = 'NOT_DUPLICATE',    'Not Duplicate'
+
+
+class DuplicateResolution(models.TextChoices):
+    PENDING   = 'PENDING',   'Pending Review'
+    MERGED    = 'MERGED',    'Merged'
+    DISMISSED = 'DISMISSED', 'Keep Both'
+    CONFIRMED = 'CONFIRMED', 'Confirmed Duplicate'
+
+
+class RawJobDuplicatePair(models.Model):
+    primary   = models.ForeignKey(
+        RawJob, on_delete=models.CASCADE, related_name='duplicate_as_primary',
+    )
+    duplicate = models.ForeignKey(
+        RawJob, on_delete=models.CASCADE, related_name='duplicate_as_secondary',
+    )
+    label      = models.CharField(max_length=32, choices=DuplicateLabel.choices, db_index=True)
+    similarity = models.FloatField(default=0.0)
+    method     = models.CharField(max_length=64, blank=True)
+    resolution = models.CharField(
+        max_length=16, choices=DuplicateResolution.choices,
+        default=DuplicateResolution.PENDING, db_index=True,
+    )
+    detected_at = models.DateTimeField(auto_now_add=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = ('primary', 'duplicate')
+        ordering = ['-detected_at']
+        indexes = [
+            models.Index(fields=['resolution', '-detected_at'], name='dup_res_detected_idx'),
+            models.Index(fields=['label', '-detected_at'],      name='dup_label_detected_idx'),
+        ]
+
+    def __str__(self):
+        return f"{self.get_label_display()}: #{self.primary_id} ↔ #{self.duplicate_id}"
+
+
 class PlatformEngineConfig(models.Model):
     """Per-platform runtime config — replaces hardcoded `_NEEDS_BACKFILL` list and sleep delays.
 

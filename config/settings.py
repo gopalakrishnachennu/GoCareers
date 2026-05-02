@@ -129,6 +129,7 @@ TEMPLATES = [
                 'messaging.context_processors.unread_messages_count',
                 'core.context_processors.unread_notifications_count',
                 'core.context_processors.pending_pool_count',  # Job pool badge in nav
+                'core.context_processors.dup_pending_count',   # Duplicate engine badge in subnav
                 'core.context_processors.user_feature_flags',
             ],
         },
