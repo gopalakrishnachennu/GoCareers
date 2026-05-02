@@ -290,7 +290,7 @@ class CompanyCreateView(LoginRequiredMixin, UserPassesTestMixin, CreateView):
                         existing = Company.objects.get(pk=existing_id)
                         messages.info(
                             self.request,
-                            f"Using existing company “{existing.name}” (possible duplicate).",
+                            f'Using existing company "{existing.name}" (possible duplicate).',
                         )
                         return reverse_lazy("company-detail", kwargs={"pk": existing.pk})
                     except Company.DoesNotExist:
@@ -425,6 +425,11 @@ class CompanyDuplicateReviewView(LoginRequiredMixin, UserPassesTestMixin, Templa
                     }
                 )
         context["duplicate_pairs"] = pairs
+        context["jarvis_flagged"] = (
+            Company.objects.filter(needs_review=True)
+            .select_related("possible_duplicate_of")
+            .order_by("-created_at")[:50]
+        )
         return context
 
 
@@ -438,20 +443,36 @@ class CompanyMergeView(LoginRequiredMixin, UserPassesTestMixin, View):
         target_id = request.POST.get("target_id")
         if not source_id or not target_id:
             messages.error(request, "Missing source or target company.")
-            return reverse_lazy("company-duplicate-review")
+            return redirect("company-duplicate-review")
         try:
             source = Company.objects.get(pk=source_id)
             target = Company.objects.get(pk=target_id)
         except Company.DoesNotExist:
             messages.error(request, "One of the selected companies no longer exists.")
-            return reverse_lazy("company-duplicate-review")
+            return redirect("company-duplicate-review")
 
         merge_companies(source, target)
         messages.success(
             request,
-            f"Merged company “{source.name}” into “{target.name}”. All jobs and rules now point to the canonical record.",
+            f"Merged company \"{source.name}\" into \"{target.name}\". All jobs and rules now point to the canonical record.",
         )
-        return reverse_lazy("company-duplicate-review")
+        return redirect("company-duplicate-review")
+
+
+class CompanyDismissReviewView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """Clear the needs_review flag without merging — admin decided it's not a duplicate."""
+
+    def test_func(self):
+        u: User = self.request.user
+        return u.is_superuser or u.role == User.Role.ADMIN
+
+    def post(self, request, pk, *args, **kwargs):
+        company = get_object_or_404(Company, pk=pk)
+        company.needs_review = False
+        company.possible_duplicate_of = None
+        company.save(update_fields=["needs_review", "possible_duplicate_of"])
+        messages.success(request, f"Review dismissed for \"{company.name}\".")
+        return redirect("company-duplicate-review")
 
 
 class CompanyCSVImportView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
@@ -659,7 +680,7 @@ class CompanyReEnrichView(LoginRequiredMixin, UserPassesTestMixin, View):
 
         company = get_object_or_404(Company, pk=kwargs["pk"])
         r = enrich_company_task.delay(company.pk)
-        messages.success(request, f"Re-enrichment queued for “{company.name}”.")
+        messages.success(request, f'Re-enrichment queued for "{company.name}".')
         return redirect_with_task_progress(
             "company-detail",
             r.id,

@@ -143,6 +143,52 @@
 
     /* Active sidebar item */
     .sidebar-nav-item--active { background: rgba(255,255,255,.18) !important; color:#fff !important; }
+
+    /* ── Global brand sync: make ALL hardcoded indigo/blue/violet buttons & links follow the theme ──
+       Targets only interactive elements (button, a, label) so status badges & info panels are untouched. */
+    button.bg-indigo-600, a.bg-indigo-600, label.bg-indigo-600,
+    button.bg-indigo-700, a.bg-indigo-700,
+    button.bg-blue-600,   a.bg-blue-600,   label.bg-blue-600,
+    button.bg-blue-700,   a.bg-blue-700,
+    button.bg-violet-600, a.bg-violet-600, label.bg-violet-600,
+    button.bg-violet-700, a.bg-violet-700 {
+        background-color: var(--brand-600) !important;
+        color: #fff !important;
+    }
+    button.bg-indigo-600:hover, a.bg-indigo-600:hover,
+    button.bg-blue-600:hover,   a.bg-blue-600:hover,
+    button.bg-violet-600:hover, a.bg-violet-600:hover,
+    button.bg-indigo-700:hover, a.bg-indigo-700:hover,
+    button.bg-blue-700:hover,   a.bg-blue-700:hover,
+    button.bg-violet-700:hover, a.bg-violet-700:hover {
+        background-color: var(--brand-700) !important;
+    }
+    /* Page-level header bars that use hardcoded blue */
+    div.bg-blue-600, div.bg-indigo-600, div.bg-violet-600 {
+        background-color: var(--brand-nav) !important;
+    }
+    /* Inline text links */
+    a.text-indigo-600, a.text-blue-600, a.text-violet-600 {
+        color: var(--brand-text) !important;
+    }
+    a.text-indigo-600:hover, a.text-blue-600:hover, a.text-violet-600:hover,
+    a.hover\:text-indigo-800:hover, a.hover\:text-blue-800:hover {
+        color: var(--brand-text-hover) !important;
+    }
+    /* Form focus rings */
+    .focus\:ring-indigo-500:focus, .focus\:ring-blue-500:focus, .focus\:ring-violet-500:focus {
+        --tw-ring-color: var(--brand-ring);
+        box-shadow: 0 0 0 3px var(--brand-ring) !important;
+    }
+    .focus\:border-indigo-500:focus, .focus\:border-blue-500:focus {
+        border-color: var(--brand-400) !important;
+    }
+    /* Active/checked state highlights */
+    .peer:checked ~ div.peer-checked\:border-indigo-500,
+    .peer:checked ~ div.peer-checked\:border-blue-500,
+    .peer:checked ~ div.peer-checked\:border-violet-500 {
+        border-color: var(--brand-600) !important;
+    }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
