@@ -629,7 +629,7 @@ def fetch_raw_jobs_for_company_task(
 
     from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig, RawJob
     from .harvesters import get_harvester
-    from .normalizer import compute_url_hash
+    from .normalizer import compute_url_hash, compute_content_hash
 
     # ── Read live config from DB — overrides decorator-level fallbacks ────────
     try:
@@ -915,9 +915,34 @@ def fetch_raw_jobs_for_company_task(
                 "platform_slug": (label.platform.slug if label.platform else "")[:64],
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
+                "content_hash": compute_content_hash(
+                    label.company.pk,
+                    job_dict.get("title") or "",
+                    job_dict.get("location_raw") or "",
+                ),
                 **_company_snapshot_fields(label.company),
                 **enriched,
             }
+
+            # ── Cross-platform dedup guard (content_hash) ─────────────────────
+            # Prevents the same job from being ingested twice when a company posts
+            # on multiple boards (e.g. Greenhouse + LinkedIn). Only blocks active
+            # jobs — closed/inactive re-posts are allowed through.
+            _ch = defaults["content_hash"]
+            if _ch:
+                _cross_dup = (
+                    RawJob.objects.filter(
+                        company=label.company,
+                        content_hash=_ch,
+                        is_active=True,
+                    )
+                    .exclude(url_hash=url_hash)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if _cross_dup:
+                    jobs_duplicate += 1
+                    continue
 
             # ── Dedup guard (ATS external_id): same label+external_id = same job ──
             # Some platforms append tracker params or alternate paths to the same job.
@@ -2002,7 +2027,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     """
     from .jarvis import JobJarvis
     from .models import RawJob, JobBoardPlatform
-    from .normalizer import compute_url_hash
+    from .normalizer import compute_url_hash, compute_content_hash
 
     update_task_progress(self, current=0, total=3, message="Fetching job page…")
 
@@ -2132,6 +2157,11 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "posted_date": posted_date,
         "closing_date": closing_date,
         "raw_payload": raw_payload,
+        "content_hash": compute_content_hash(
+            company.pk,
+            data.get("title") or "",
+            data.get("location_raw") or "",
+        ),
         "sync_status": "PENDING",
         "is_active": True,
         "expires_at": timezone.now() + timedelta(days=30),
@@ -2217,6 +2247,36 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
                     legacy_row.url_hash = url_hash
                     legacy_row.save()
                     raw_job = legacy_row
+
+    # ── Cross-platform dedup guard (content_hash) ─────────────────────────────
+    # Last resort before create: if an active job at this company with the same
+    # normalized title+location already exists (different URL), skip insertion.
+    if raw_job is None:
+        _ch = raw_job_defaults.get("content_hash", "")
+        if _ch:
+            _cross_dup = (
+                RawJob.objects.filter(
+                    company=company,
+                    content_hash=_ch,
+                    is_active=True,
+                )
+                .exclude(url_hash=url_hash)
+                .values_list("pk", flat=True)
+                .first()
+            )
+            if _cross_dup:
+                logger.info(
+                    "Jarvis ingest skipped (cross-platform dup content_hash=%s): %s | %s",
+                    _ch, data.get("title"), company_name,
+                )
+                return {
+                    "ok": False,
+                    "skipped": True,
+                    "reason": "cross_platform_duplicate",
+                    "content_hash": _ch,
+                    "title": data.get("title", ""),
+                    "company_name": company_name,
+                }
 
     if raw_job is None:
         raw_job, created = RawJob.objects.update_or_create(

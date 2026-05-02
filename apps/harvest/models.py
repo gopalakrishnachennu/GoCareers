@@ -378,10 +378,11 @@ class RawJob(models.Model):
         UNKNOWN = "UNKNOWN", "Unknown"
 
     class SyncStatus(models.TextChoices):
-        PENDING = "PENDING", "Pending"
-        SYNCED = "SYNCED", "Synced"
-        FAILED = "FAILED", "Failed"
-        SKIPPED = "SKIPPED", "Skipped"
+        PENDING   = "PENDING",    "Pending"
+        SYNCED    = "SYNCED",     "Synced"
+        FAILED    = "FAILED",     "Failed"
+        SKIPPED   = "SKIPPED",    "Skipped"
+        DUPLICATE = "DUPLICATE",  "Duplicate"
 
     # ── Relations ─────────────────────────────────────────────────────────────
     company = models.ForeignKey(
@@ -407,6 +408,9 @@ class RawJob(models.Model):
     # ── Identity / Dedup ──────────────────────────────────────────────────────
     external_id = models.CharField(max_length=512, blank=True)
     url_hash = models.CharField(max_length=64, unique=True, db_index=True)
+    # content_hash: sha256[:32] of (company_id|normalized_title|location_raw).
+    # Not unique — allows re-posts of closed jobs. Used only to skip active dupes.
+    content_hash = models.CharField(max_length=32, blank=True, db_index=True)
     original_url = models.URLField(max_length=1024, blank=True, db_index=True)
     apply_url = models.URLField(max_length=1024, blank=True)
 
@@ -542,7 +546,7 @@ class RawJob(models.Model):
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
     sync_status = models.CharField(
-        max_length=8, choices=SyncStatus.choices, default=SyncStatus.PENDING
+        max_length=16, choices=SyncStatus.choices, default=SyncStatus.PENDING
     )
     is_active = models.BooleanField(default=True)
     # Denormalized flag — set on every save so JD filter hits an index instead of

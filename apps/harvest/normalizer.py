@@ -80,6 +80,24 @@ def compute_url_hash(url: str) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def compute_content_hash(company_id: int, title: str, location_raw: str) -> str:
+    """
+    Stable identity hash for catching cross-platform duplicates at ingestion time.
+    Same company + same normalized title + same location = same hash.
+    NOT unique in DB — intentionally allows re-posts after a job closes.
+    """
+    def _norm(s: str) -> str:
+        s = (s or "").lower().strip()
+        s = re.sub(r"\s+", " ", s)
+        # Strip trailing remote/hybrid/onsite qualifiers that vary by board
+        s = re.sub(r"[\-–—]\s*(remote|hybrid|onsite|on.site)\s*$", "", s)
+        s = re.sub(r"\s*\((remote|hybrid|onsite|on.site)\)\s*$", "", s)
+        return s.strip()
+
+    key = f"{company_id}|{_norm(title)}|{_norm(location_raw)}"
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()[:32]
+
+
 def strip_html(html: str) -> str:
     if not html:
         return ""
