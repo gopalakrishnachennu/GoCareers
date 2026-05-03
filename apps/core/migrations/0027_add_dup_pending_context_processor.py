@@ -8,6 +8,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('core', '0026_platformconfig_color_theme'),
         ('users', '0023_remove_user_organisation'),
+        ('messaging', '0003_remove_thread_organisation'),
     ]
 
     operations = [

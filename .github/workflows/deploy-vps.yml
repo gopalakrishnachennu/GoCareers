@@ -24,6 +24,8 @@ jobs:
             set -e
             cd /opt/consulting
             git pull --ff-only origin main
+            # Free disk before build — sentence-transformers layer is large
+            docker system prune -f --volumes || true
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
