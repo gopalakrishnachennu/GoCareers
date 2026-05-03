@@ -23,6 +23,13 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute="*/5"),           # every 5 min, 24/7
     },
 
+    # ── JOB CLASSIFICATION ───────────────────────────────────────────────────
+    "classify-jobs-daily": {
+        "task": "jobs.classify_all",
+        "schedule": crontab(hour=7, minute=0),       # daily 07:00 UTC — after harvest sync (06:30)
+        "kwargs": {"force_reclassify": False},        # only new / needs_reclassification jobs
+    },
+
     # ── JOB PIPELINE ─────────────────────────────────────────────────────────
     "validate-job-urls-daily": {
         "task": "jobs.tasks.validate_job_urls_task",
