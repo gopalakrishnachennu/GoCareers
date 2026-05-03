@@ -24,10 +24,11 @@ jobs:
             set -e
             cd /opt/consulting
             git pull --ff-only origin main
-            # Free disk before build — sentence-transformers layer is large
-            docker system prune -f --volumes || true
+            # Stop containers first so their images become "unused" and can be pruned
+            docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans || true
+            # Prune ALL unused images + build cache to free disk (sentence-transformers is large)
+            docker system prune -a -f --volumes || true
             docker compose -f docker-compose.prod.yml --env-file .env.production build
-            docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
               echo "Primary migrate failed; attempting safe recovery"

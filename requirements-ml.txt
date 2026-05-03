@@ -1,0 +1,4 @@
+# Optional ML dependencies for the classification engine (Tier 3 embeddings).
+# Install on dev machines or a dedicated GPU worker — NOT needed on the VPS.
+# The classifier degrades gracefully to LLM fallback if these are absent.
+sentence-transformers>=2.6      # BAAI/bge-small-en-v1.5 (~80MB model, ~2GB with PyTorch)
