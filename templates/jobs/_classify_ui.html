@@ -1,0 +1,138 @@
+{% comment %}Classify Jobs — shared toast + confirm modal + JS. Include in any admin page.{% endcomment %}
+{% load static %}
+
+<!-- CLASSIFY PROGRESS TOAST -->
+<div id="classify-toast" class="hidden fixed bottom-6 right-6 z-50 w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 p-5">
+    <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+            <svg id="classify-spinner" class="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <svg id="classify-check" class="hidden h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span class="font-semibold text-gray-800 text-sm">Job Classification</span>
+        </div>
+        <button onclick="document.getElementById('classify-toast').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+    </div>
+    <p id="classify-msg" class="text-sm text-gray-600 mb-3">Starting…</p>
+    <div class="w-full bg-gray-100 rounded-full h-2 mb-2">
+        <div id="classify-bar" class="h-2 rounded-full transition-all duration-500" style="width:0%;background-color:var(--brand-600,#4f46e5)"></div>
+    </div>
+    <p id="classify-pct" class="text-xs text-gray-400 text-right">0%</p>
+    <div id="classify-stats" class="hidden mt-3 text-xs text-gray-500 grid grid-cols-2 gap-1"></div>
+</div>
+
+<!-- FORCE CONFIRM MODAL -->
+<div id="classify-confirm-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+    <div class="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full mx-4">
+        <div class="flex items-center gap-3 mb-4">
+            <div class="bg-red-100 rounded-full p-2">
+                <svg class="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+                </svg>
+            </div>
+            <h3 class="text-base font-bold text-gray-900">Force re-classify all jobs?</h3>
+        </div>
+        <p class="text-sm text-gray-600 mb-1">This will overwrite <strong>all existing classifications</strong> (except manually-set ones) and re-run country + department detection on every job.</p>
+        <p class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-5">Takes 5–15 min for 135k jobs. Runs in background — you can close this page.</p>
+        <div class="flex gap-3 justify-end">
+            <button onclick="document.getElementById('classify-confirm-modal').classList.add('hidden')"
+                class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Cancel</button>
+            <button onclick="document.getElementById('classify-confirm-modal').classList.add('hidden'); triggerClassify(true)"
+                class="px-4 py-2 text-sm text-white bg-red-600 rounded-lg hover:bg-red-700 transition font-semibold">Yes, re-classify all</button>
+        </div>
+    </div>
+</div>
+
+<script>
+const CLASSIFY_URL = "{% url 'job-classify' %}";
+let _classifyPollTimer = null;
+
+function confirmForceClassify() {
+    document.getElementById('classify-confirm-modal').classList.remove('hidden');
+}
+
+document.addEventListener('click', function(e) {
+    const dd = document.getElementById('classify-dropdown');
+    const grp = document.getElementById('classify-btn-group');
+    if (dd && grp && !grp.contains(e.target)) dd.classList.add('hidden');
+});
+
+function triggerClassify(force) {
+    const toast   = document.getElementById('classify-toast');
+    const msg     = document.getElementById('classify-msg');
+    const bar     = document.getElementById('classify-bar');
+    const pct     = document.getElementById('classify-pct');
+    const stats   = document.getElementById('classify-stats');
+    const spinner = document.getElementById('classify-spinner');
+    const check   = document.getElementById('classify-check');
+
+    toast.classList.remove('hidden');
+    spinner.classList.remove('hidden');
+    check.classList.add('hidden');
+    stats.classList.add('hidden');
+    stats.innerHTML = '';
+    msg.textContent = 'Queuing task…';
+    bar.style.width = '0%';
+    pct.textContent = '0%';
+
+    document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = true; b.classList.add('opacity-50'); });
+
+    fetch(CLASSIFY_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': '{{ csrf_token }}', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: force ? 'force=1' : '',
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'already_running') { msg.textContent = data.message; return; }
+        msg.textContent = 'Classification started…';
+        _pollClassify(data.task_id);
+    })
+    .catch(err => { msg.textContent = 'Error: ' + err; });
+}
+
+function _pollClassify(taskId) {
+    if (_classifyPollTimer) clearTimeout(_classifyPollTimer);
+    fetch(CLASSIFY_URL + '?task_id=' + taskId)
+    .then(r => r.json())
+    .then(data => {
+        const state = data.state, info = data.info || {};
+        const msg = document.getElementById('classify-msg');
+        const bar = document.getElementById('classify-bar');
+        const pct = document.getElementById('classify-pct');
+        const stats = document.getElementById('classify-stats');
+
+        if (state === 'PROGRESS') {
+            const cur = info.current || 0, total = info.total || 1;
+            const w = Math.round((cur / total) * 100);
+            bar.style.width = w + '%'; pct.textContent = w + '%';
+            msg.textContent = info.message || ('Classified ' + cur + ' / ' + total);
+            _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 1800);
+        } else if (state === 'SUCCESS') {
+            bar.style.width = '100%'; pct.textContent = '100%';
+            msg.textContent = 'Done — ' + (info.classified || 0).toLocaleString() + ' jobs classified.';
+            document.getElementById('classify-spinner').classList.add('hidden');
+            document.getElementById('classify-check').classList.remove('hidden');
+            document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = false; b.classList.remove('opacity-50'); });
+            const skip = new Set(['status','total','classified','country_found']);
+            const entries = Object.entries(info).filter(([k]) => !skip.has(k) && info[k] > 0);
+            if (entries.length || info.country_found) {
+                stats.classList.remove('hidden');
+                let html = info.country_found ? `<span class="col-span-2">🌍 Countries: <strong>${info.country_found.toLocaleString()}</strong></span>` : '';
+                entries.forEach(([k,v]) => { html += `<span>${k}: <strong>${v}</strong></span>`; });
+                stats.innerHTML = html;
+            }
+        } else if (state === 'FAILURE') {
+            msg.textContent = 'Failed: ' + (info || 'Unknown error');
+            document.getElementById('classify-spinner').classList.add('hidden');
+            document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = false; b.classList.remove('opacity-50'); });
+        } else {
+            _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 1800);
+        }
+    })
+    .catch(() => { _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 3000); });
+}
+</script>
