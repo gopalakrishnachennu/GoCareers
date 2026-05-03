@@ -299,3 +299,147 @@ def auto_close_jobs_task():
     except Exception:
         pass
     return result
+
+
+# ── Job Classification Engine ─────────────────────────────────────────────────
+
+CLASSIFY_LOCK_KEY = "jobs:classify_all:lock"
+CLASSIFY_LOCK_TTL = 60 * 90  # 90 minutes max
+
+
+@shared_task(bind=True, name="jobs.classify_all", max_retries=0, soft_time_limit=5400, time_limit=5700)
+def classify_jobs_task(self, force_reclassify: bool = False):
+    """
+    Classify all Jobs with country + department.
+    - Chunked iterator (1000/batch) — no OOM
+    - Mutex lock — prevents concurrent runs
+    - Idempotent — skips already-classified unless force_reclassify=True
+    - Writes classified_at per chunk — resumable after crash
+    - Never overwrites department_source="manual"
+    """
+    from django.core.cache import cache
+    from django.utils import timezone as tz
+
+    from .classifier.country import detect_country
+    from .classifier.department import classify_department
+
+    # ── Acquire lock ──────────────────────────────────────────────────────────
+    acquired = cache.add(CLASSIFY_LOCK_KEY, self.request.id or "running", CLASSIFY_LOCK_TTL)
+    if not acquired:
+        logger.warning("classify_jobs_task: already running, aborting duplicate.")
+        return {"status": "skipped", "reason": "lock_held"}
+
+    try:
+        return _run_classify(self, force_reclassify=force_reclassify)
+    finally:
+        cache.delete(CLASSIFY_LOCK_KEY)
+
+
+def _run_classify(task_self, *, force_reclassify: bool) -> dict:
+    from django.utils import timezone as tz
+    from django.db.models import Q
+
+    from .classifier.country import detect_country
+    from .classifier.department import classify_department
+    from .models import Job
+
+    # ── Queryset ──────────────────────────────────────────────────────────────
+    qs = Job.objects.select_related("company_obj").order_by("pk")
+    if not force_reclassify:
+        qs = qs.filter(
+            Q(classified_at__isnull=True) | Q(needs_reclassification=True)
+        ).exclude(department_source="manual")
+
+    total = qs.count()
+    if total == 0:
+        return {"status": "done", "total": 0, "classified": 0}
+
+    update_task_progress(task_self, current=0, total=total, message="Starting classification…")
+
+    stats = {"rules": 0, "role_domain": 0, "embedding": 0, "llm": 0, "synced": 0}
+    country_found = 0
+    processed = 0
+    chunk: list[Job] = []
+    CHUNK = 1000
+
+    for job in qs.iterator(chunk_size=CHUNK):
+        # ── Country ──────────────────────────────────────────────────────────
+        if not job.country or job.needs_reclassification:
+            country, region = detect_country(
+                location=job.location or "",
+                title=job.title or "",
+                description=job.description or "",
+            )
+            job.country = country
+            job.region = region
+            if country:
+                country_found += 1
+
+        # ── Department ───────────────────────────────────────────────────────
+        if not job.department or job.needs_reclassification:
+            company_industry = ""
+            if job.company_obj:
+                company_industry = job.company_obj.industry or ""
+
+            dept, conf, source = classify_department(
+                title=job.title or "",
+                description=job.description or "",
+                role_domain=(job.parsed_jd or {}).get("role_domain", ""),
+                company_industry=company_industry,
+                use_llm=True,
+                llm_threshold=0.45,
+            )
+            job.department = dept
+            job.department_confidence = round(conf, 4)
+            job.department_source = source
+            stats[source] = stats.get(source, 0) + 1
+
+            # Keep parsed_jd.role_domain in sync
+            if job.parsed_jd is not None and dept:
+                jd = dict(job.parsed_jd)
+                jd["department"] = dept
+                jd["department_confidence"] = round(conf, 4)
+                job.parsed_jd = jd
+
+        job.classified_at = tz.now()
+        job.needs_reclassification = False
+        chunk.append(job)
+        processed += 1
+
+        # ── Bulk update every CHUNK jobs ──────────────────────────────────
+        if len(chunk) >= CHUNK:
+            Job.objects.bulk_update(
+                chunk,
+                ["country", "region", "department", "department_confidence",
+                 "department_source", "classified_at", "needs_reclassification", "parsed_jd"],
+            )
+            chunk.clear()
+            update_task_progress(
+                task_self,
+                current=processed,
+                total=total,
+                message=f"Classified {processed:,} / {total:,}…",
+                detail={"country_found": country_found, **stats},
+            )
+
+    # ── Final flush ───────────────────────────────────────────────────────────
+    if chunk:
+        Job.objects.bulk_update(
+            chunk,
+            ["country", "region", "department", "department_confidence",
+             "department_source", "classified_at", "needs_reclassification", "parsed_jd"],
+        )
+
+    update_task_progress(
+        task_self, current=total, total=total,
+        message=f"Done — {processed:,} jobs classified.",
+        detail={"country_found": country_found, **stats},
+    )
+
+    return {
+        "status": "done",
+        "total": total,
+        "classified": processed,
+        "country_found": country_found,
+        **stats,
+    }

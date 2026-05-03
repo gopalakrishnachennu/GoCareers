@@ -1887,6 +1887,9 @@ def sync_harvested_to_pool_task(
                         posted_by=system_user,
                         source_raw_job=rj,
                         queue_entered_at=_tz.now(),
+                        # Propagate classification from RawJob if available
+                        country=rj.country or "",
+                        department=rj.department_normalized or "",
                     )
                     apply_gate_result_to_job(job, gate)
                     job.quality_score = compute_quality_score(job)

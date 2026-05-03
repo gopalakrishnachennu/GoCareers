@@ -11,6 +11,8 @@ from .views import (
     JobsPipelineView,
     # Phase 4: lineage + health
     JobTimelineView, PipelineHealthView,
+    # Classification engine
+    ClassifyJobsTriggerView,
 )
 
 urlpatterns = [
@@ -38,4 +40,6 @@ urlpatterns = [
     # Phase 4: per-job timeline + ops health dashboard
     path('<int:pk>/timeline/', JobTimelineView.as_view(), name='job-timeline'),
     path('pipeline/health/', PipelineHealthView.as_view(), name='pipeline-health'),
+    # Classification engine
+    path('classify/', ClassifyJobsTriggerView.as_view(), name='job-classify'),
 ]

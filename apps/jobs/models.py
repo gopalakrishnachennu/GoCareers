@@ -194,6 +194,42 @@ class Job(models.Model):
         null=True, blank=True, related_name='archived_jobs',
     )
 
+    # ── Classification (country + department engine) ──────────────────────────
+    class Department(models.TextChoices):
+        SOFTWARE_DEV     = "software_dev",     "Software Development"
+        DATA_ANALYTICS   = "data_analytics",   "Data & Analytics"
+        DEVOPS_CLOUD     = "devops_cloud",      "DevOps & Cloud"
+        SECURITY         = "security",          "Security & Cybersecurity"
+        IT_SUPPORT       = "it_support",        "IT Support & Help Desk"
+        QA_TESTING       = "qa_testing",        "QA & Testing"
+        SYSTEMS_NETWORK  = "systems_network",   "Systems & Network"
+        IT_MANAGEMENT    = "it_management",     "IT Management & Architecture"
+        HEALTHCARE_IT    = "healthcare_it",     "Healthcare IT"
+        MANAGEMENT       = "management",        "Management & C-Suite"
+        SALES            = "sales",             "Sales & Business Development"
+        MARKETING        = "marketing",         "Marketing & Communications"
+        HR               = "hr",               "Human Resources"
+        FINANCE          = "finance",           "Finance & Accounting"
+        OPERATIONS       = "operations",        "Operations & Logistics"
+        LEGAL            = "legal",             "Legal & Compliance"
+        CUSTOMER_SUCCESS = "customer_success",  "Customer Success"
+        DESIGN           = "design",            "Design & Creative"
+        ADMIN            = "admin",             "Administrative"
+        CIVIL_ENG        = "civil_eng",         "Civil & Construction"
+        HEALTHCARE       = "healthcare",        "Healthcare & Clinical"
+        OTHER            = "other",             "Other"
+
+    country                = models.CharField(max_length=100, blank=True, db_index=True)
+    region                 = models.CharField(max_length=50, blank=True,
+                               help_text="APAC/EMEA/LATAM/Worldwide for multi-country roles")
+    department             = models.CharField(max_length=20, choices=Department.choices,
+                               blank=True, db_index=True)
+    department_confidence  = models.FloatField(default=0.0)
+    department_source      = models.CharField(max_length=20, blank=True,
+                               help_text="rules|embedding|llm|synced|manual")
+    classified_at          = models.DateTimeField(null=True, blank=True, db_index=True)
+    needs_reclassification = models.BooleanField(default=False, db_index=True)
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -201,6 +237,11 @@ class Job(models.Model):
         # Auto-sync legacy company name from company_obj FK
         if self.company_obj_id and self.company_obj:
             self.company = self.company_obj.name
+        # Flag stale classification when title or location changes
+        if self.pk:
+            changed = Job.objects.filter(pk=self.pk).values("title", "location").first()
+            if changed and (changed["title"] != self.title or changed["location"] != self.location):
+                self.needs_reclassification = True
         super().save(*args, **kwargs)
 
     def __str__(self):

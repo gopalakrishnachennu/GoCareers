@@ -86,6 +86,14 @@ def apply_job_list_filters(qs, request):
     elif link_live == '0':
         qs = qs.filter(original_link_is_live=False)
 
+    country_filter = request.GET.get('country')
+    if country_filter:
+        qs = qs.filter(country__iexact=country_filter)
+
+    department_filter = request.GET.get('department')
+    if department_filter and department_filter in dict(Job.Department.choices):
+        qs = qs.filter(department=department_filter)
+
     return qs.distinct()
 
 
@@ -140,6 +148,14 @@ class JobListView(LoginRequiredMixin, ListView):
         context['selected_location'] = self.request.GET.get('location', '')
         context['selected_possibly_filled'] = self.request.GET.get('possibly_filled', '')
         context['selected_link_live'] = self.request.GET.get('link_live', '')
+        context['selected_country'] = self.request.GET.get('country', '')
+        context['selected_department'] = self.request.GET.get('department', '')
+        context['department_choices'] = Job.Department.choices
+        # Top countries used (for the country dropdown — distinct + sorted)
+        context['top_countries'] = (
+            Job.objects.exclude(country='').exclude(country__isnull=True)
+            .values_list('country', flat=True).distinct().order_by('country')
+        )
         qd = self.request.GET.copy()
         qd.pop('page', None)
         context['pagination_query'] = qd.urlencode()
@@ -1514,3 +1530,41 @@ class PipelineHealthView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'total_events_24h': total_events_24h,
             'failure_rate': round(failure_rate, 2),
         })
+
+
+# ── Job Classification Trigger ────────────────────────────────────────────────
+
+class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """One-button trigger for the country + department classification engine."""
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or getattr(u, "role", None) in ("ADMIN", "EMPLOYEE")
+
+    def post(self, request, *args, **kwargs):
+        from django.core.cache import cache
+        from .tasks import classify_jobs_task, CLASSIFY_LOCK_KEY
+
+        force = request.POST.get("force") == "1"
+
+        if cache.get(CLASSIFY_LOCK_KEY):
+            return JsonResponse({"status": "already_running", "message": "Classification is already in progress."})
+
+        result = classify_jobs_task.apply_async(kwargs={"force_reclassify": force})
+        return JsonResponse({"status": "started", "task_id": result.id})
+
+    def get(self, request, *args, **kwargs):
+        """Poll task progress."""
+        from celery.result import AsyncResult
+        task_id = request.GET.get("task_id")
+        if not task_id:
+            return JsonResponse({"error": "missing task_id"}, status=400)
+
+        res = AsyncResult(task_id)
+        if res.state == "PROGRESS":
+            return JsonResponse({"state": "PROGRESS", "info": res.info or {}})
+        if res.state == "SUCCESS":
+            return JsonResponse({"state": "SUCCESS", "info": res.result or {}})
+        if res.state == "FAILURE":
+            return JsonResponse({"state": "FAILURE", "info": str(res.result)})
+        return JsonResponse({"state": res.state, "info": {}})

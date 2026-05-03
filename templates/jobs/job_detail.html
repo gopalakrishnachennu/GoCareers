@@ -74,6 +74,23 @@
                         <div class="flex items-center gap-2">
                             <span class="font-medium">Applications:</span> {{ application_count|default:0 }}
                         </div>
+                        {% if object.country %}
+                        <div class="flex items-center gap-2">
+                            <span class="bg-sky-500/80 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+                                🌍 {{ object.country }}{% if object.region %} · {{ object.region }}{% endif %}
+                            </span>
+                        </div>
+                        {% endif %}
+                        {% if object.department %}
+                        <div class="flex items-center gap-2" title="Source: {{ object.department_source }} · Confidence: {{ object.department_confidence }}">
+                            <span class="bg-violet-500/80 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
+                                {{ object.get_department_display }}
+                            </span>
+                            {% if object.department_source == 'manual' %}
+                            <span class="bg-amber-400/80 text-white text-xs font-semibold px-2 py-0.5 rounded-full">manual</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
 

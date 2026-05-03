@@ -24,3 +24,6 @@ pytest-django>=4.7
 coverage>=7.4
 cryptography>=42.0
 sentry-sdk>=2.0
+country-converter>=0.7          # ISO country name/code normalisation
+sentence-transformers>=2.6      # BAAI/bge-small-en-v1.5 for dept embeddings
+pyyaml>=6.0                     # dept_rules.yaml / dept_anchors.yaml loading

@@ -81,6 +81,16 @@
                     {% if job.quality_score >= 0.7 %}text-green-600{% elif job.quality_score >= 0.4 %}text-yellow-600{% else %}text-red-500{% endif %}"
                     title="Quality score">Q:{{ job.quality_score }}</span>
                 {% endif %}
+                {% if job.country %}
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-sky-50 text-sky-700 border border-sky-200" title="Detected country">
+                    🌍 {{ job.country }}
+                </span>
+                {% endif %}
+                {% if job.department %}
+                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-violet-50 text-violet-700 border border-violet-200" title="Department ({{ job.department_source }}, {{ job.department_confidence }})">
+                    {{ job.get_department_display }}
+                </span>
+                {% endif %}
                 {% if not job.original_link_is_live %}
                 <span class="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-medium bg-red-50 text-red-800 border border-red-200" title="Daily URL check could not confirm the posting URL">
                     Link not live

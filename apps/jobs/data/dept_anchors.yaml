@@ -1,0 +1,116 @@
+# Anchor phrases for embedding-based classification (BAAI/bge-small-en-v1.5)
+# Each department gets 3-5 representative phrases for cosine similarity matching.
+# Keep phrases short and distinct — they're encoded as embeddings.
+
+software_dev:
+  - "developing web applications and software systems"
+  - "writing code in Python Java JavaScript or similar languages"
+  - "building mobile apps for iOS and Android"
+  - "full stack software engineering frontend and backend"
+
+data_analytics:
+  - "analyzing data and building machine learning models"
+  - "data engineering ETL pipelines and warehouses"
+  - "business intelligence dashboards and SQL reporting"
+  - "data science statistical modeling and prediction"
+
+devops_cloud:
+  - "managing cloud infrastructure on AWS Azure or GCP"
+  - "DevOps CI/CD pipelines Kubernetes Docker deployment"
+  - "site reliability engineering and platform operations"
+  - "infrastructure as code Terraform automation"
+
+security:
+  - "cybersecurity vulnerability assessment and penetration testing"
+  - "information security protecting networks and systems"
+  - "security operations center threat detection and response"
+  - "application security and cloud security engineering"
+
+it_support:
+  - "help desk technical support troubleshooting end users"
+  - "desktop support IT helpdesk ticketing system"
+  - "IT support technician resolving hardware software issues"
+
+qa_testing:
+  - "quality assurance testing software for bugs and defects"
+  - "test automation Selenium writing test cases"
+  - "QA engineer manual and automated testing"
+
+systems_network:
+  - "managing servers networks and database infrastructure"
+  - "systems administrator Linux Windows Active Directory"
+  - "network administrator routing switching firewall"
+  - "database administrator SQL Server Oracle PostgreSQL"
+
+it_management:
+  - "IT leadership managing engineering teams and technology strategy"
+  - "solutions architect designing enterprise technology systems"
+  - "CTO CIO technology director overseeing IT department"
+  - "technical lead guiding software engineering teams"
+
+healthcare_it:
+  - "implementing EHR EMR systems like Epic Cerner"
+  - "health informatics clinical data interoperability HL7 FHIR"
+  - "healthcare IT analyst supporting clinical workflows"
+
+management:
+  - "executive leadership P&L management business strategy"
+  - "CEO COO general manager running business operations"
+  - "director vice president overseeing multiple departments"
+
+sales:
+  - "selling products to clients generating revenue closing deals"
+  - "account executive business development B2B sales"
+  - "sales manager growing revenue and managing sales team"
+
+marketing:
+  - "marketing campaigns brand awareness content and SEO"
+  - "digital marketing social media advertising growth"
+  - "product marketing demand generation go-to-market strategy"
+
+hr:
+  - "recruiting hiring talent acquisition employee relations"
+  - "HR manager people operations payroll benefits"
+  - "human resources generalist workforce planning"
+
+finance:
+  - "financial analysis budgeting forecasting accounting"
+  - "accountant CPA audit tax financial reporting"
+  - "finance manager FP&A treasury cash flow management"
+
+operations:
+  - "operations management supply chain logistics process improvement"
+  - "project manager scrum agile program management"
+  - "business analyst process optimization Six Sigma operations"
+
+legal:
+  - "corporate attorney legal counsel contract compliance"
+  - "compliance officer regulatory risk management GDPR"
+  - "paralegal legal operations contract management"
+
+customer_success:
+  - "customer success onboarding retention client satisfaction"
+  - "account manager customer support client services"
+  - "customer experience support representative helping users"
+
+design:
+  - "UX UI design user experience Figma Adobe product design"
+  - "graphic designer visual design brand creative"
+  - "interaction designer user research prototyping"
+
+admin:
+  - "administrative assistant executive support scheduling calendars"
+  - "office manager receptionist data entry clerical"
+
+civil_eng:
+  - "civil structural engineer construction project AutoCAD"
+  - "site engineer construction manager building infrastructure"
+  - "geotechnical transportation engineer surveying roads bridges"
+
+healthcare:
+  - "registered nurse physician clinical patient care hospital"
+  - "medical assistant pharmacist therapist healthcare provider"
+  - "doctor surgeon diagnosis treatment clinical practice"
+
+other:
+  - "miscellaneous general role various responsibilities"

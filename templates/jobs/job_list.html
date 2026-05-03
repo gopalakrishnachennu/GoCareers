@@ -33,6 +33,17 @@
                 </svg>
                 Export CSV
             </a>
+            {% if user.is_superuser or user.role == 'ADMIN' %}
+            <button id="classify-btn"
+                onclick="triggerClassify(false)"
+                class="btn-hero" title="Classify all unclassified jobs with AI">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+                Classify Jobs
+            </button>
+            {% endif %}
             {% if user.role == 'EMPLOYEE' or user.is_superuser %}
             <a href="{% url 'job-bulk-upload' %}" class="btn-hero" title="Bulk Upload">
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -162,6 +173,38 @@
             </div>
         </div>
 
+        <!-- Country Filter -->
+        {% if top_countries %}
+        <div class="relative w-full md:w-auto">
+            <select name="country" onchange="var p=new URLSearchParams(window.location.search);if(this.value)p.set('country',this.value);else p.delete('country');p.delete('page');window.location.search=p.toString();"
+                class="w-full md:w-44 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
+                <option value="">All Countries</option>
+                {% for c in top_countries %}
+                <option value="{{ c }}" {% if selected_country == c %}selected{% endif %}>{{ c }}</option>
+                {% endfor %}
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Department Filter -->
+        {% if department_choices %}
+        <div class="relative w-full md:w-auto">
+            <select name="department" onchange="var p=new URLSearchParams(window.location.search);if(this.value)p.set('department',this.value);else p.delete('department');p.delete('page');window.location.search=p.toString();"
+                class="w-full md:w-44 pl-4 pr-10 py-3 bg-white/80 border border-gray-200 rounded-xl text-sm font-medium text-gray-700 hover:border-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500/30 focus:border-indigo-500 transition appearance-none cursor-pointer">
+                <option value="">All Departments</option>
+                {% for val, label in department_choices %}
+                <option value="{{ val }}" {% if selected_department == val %}selected{% endif %}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-gray-400">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Records per page -->
         <div class="relative w-full md:w-auto">
             <select name="page_size" onchange="var p=new URLSearchParams(window.location.search);if(this.value)p.set('page_size',this.value);else p.delete('page_size');p.delete('page');window.location.search=p.toString();"
@@ -210,8 +253,127 @@
 
 
 
+<!-- CLASSIFY PROGRESS TOAST (admin only) -->
+{% if user.is_superuser or user.role == 'ADMIN' %}
+<div id="classify-toast" class="hidden fixed bottom-6 right-6 z-50 w-96 bg-white rounded-2xl shadow-2xl border border-gray-200 p-5">
+    <div class="flex items-center justify-between mb-3">
+        <div class="flex items-center gap-2">
+            <svg id="classify-spinner" class="animate-spin h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <svg id="classify-check" class="hidden h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span class="font-semibold text-gray-800 text-sm">Job Classification</span>
+        </div>
+        <button onclick="document.getElementById('classify-toast').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 text-lg leading-none">&times;</button>
+    </div>
+    <p id="classify-msg" class="text-sm text-gray-600 mb-3">Starting…</p>
+    <div class="w-full bg-gray-100 rounded-full h-2 mb-2">
+        <div id="classify-bar" class="h-2 rounded-full transition-all duration-500" style="width:0%;background-color:var(--brand-600,#4f46e5)"></div>
+    </div>
+    <p id="classify-pct" class="text-xs text-gray-400 text-right">0%</p>
+    <div id="classify-stats" class="hidden mt-3 text-xs text-gray-500 grid grid-cols-2 gap-1"></div>
+</div>
+{% endif %}
+
 <!-- RESULTS -->
 <div id="job-list-results">
     {% include 'jobs/_job_list_partial.html' %}
 </div>
+{% if user.is_superuser or user.role == 'ADMIN' %}
+<script>
+const CLASSIFY_URL = "{% url 'job-classify' %}";
+let _classifyPollTimer = null;
+
+function triggerClassify(force) {
+    const toast   = document.getElementById('classify-toast');
+    const msg     = document.getElementById('classify-msg');
+    const bar     = document.getElementById('classify-bar');
+    const pct     = document.getElementById('classify-pct');
+    const stats   = document.getElementById('classify-stats');
+    const spinner = document.getElementById('classify-spinner');
+    const check   = document.getElementById('classify-check');
+
+    toast.classList.remove('hidden');
+    spinner.classList.remove('hidden');
+    check.classList.add('hidden');
+    stats.classList.add('hidden');
+    stats.innerHTML = '';
+    msg.textContent = 'Queuing task…';
+    bar.style.width = '0%';
+    pct.textContent = '0%';
+
+    const btn = document.getElementById('classify-btn');
+    if (btn) { btn.disabled = true; btn.classList.add('opacity-50'); }
+
+    fetch(CLASSIFY_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: force ? 'force=1' : '',
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'already_running') {
+            msg.textContent = data.message;
+            return;
+        }
+        msg.textContent = 'Classification started…';
+        pollClassify(data.task_id, toast, msg, bar, pct, stats, spinner, check, btn);
+    })
+    .catch(err => { msg.textContent = 'Error: ' + err; });
+}
+
+function pollClassify(taskId, toast, msg, bar, pct, stats, spinner, check, btn) {
+    if (_classifyPollTimer) clearTimeout(_classifyPollTimer);
+    fetch(CLASSIFY_URL + '?task_id=' + taskId)
+    .then(r => r.json())
+    .then(data => {
+        const state = data.state;
+        const info  = data.info || {};
+
+        if (state === 'PROGRESS') {
+            const cur   = info.current || 0;
+            const total = info.total   || 1;
+            const width = Math.round((cur / total) * 100);
+            bar.style.width = width + '%';
+            pct.textContent = width + '%';
+            msg.textContent = info.message || ('Classified ' + cur + ' / ' + total);
+            _classifyPollTimer = setTimeout(() => pollClassify(taskId, toast, msg, bar, pct, stats, spinner, check, btn), 1800);
+        } else if (state === 'SUCCESS') {
+            bar.style.width = '100%';
+            pct.textContent = '100%';
+            msg.textContent = 'Done — ' + (info.classified || 0).toLocaleString() + ' jobs classified.';
+            spinner.classList.add('hidden');
+            check.classList.remove('hidden');
+            if (btn) { btn.disabled = false; btn.classList.remove('opacity-50'); }
+            // Show breakdown stats
+            const skipKeys = new Set(['status','total','classified','country_found']);
+            const entries = Object.entries(info).filter(([k]) => !skipKeys.has(k) && info[k] > 0);
+            if (entries.length || info.country_found) {
+                stats.classList.remove('hidden');
+                let html = '';
+                if (info.country_found) html += `<span class="col-span-2">🌍 Countries detected: <strong>${info.country_found.toLocaleString()}</strong></span>`;
+                entries.forEach(([k, v]) => { html += `<span>${k}: <strong>${v}</strong></span>`; });
+                stats.innerHTML = html;
+            }
+        } else if (state === 'FAILURE') {
+            msg.textContent = 'Failed: ' + (info || 'Unknown error');
+            spinner.classList.add('hidden');
+            if (btn) { btn.disabled = false; btn.classList.remove('opacity-50'); }
+        } else {
+            _classifyPollTimer = setTimeout(() => pollClassify(taskId, toast, msg, bar, pct, stats, spinner, check, btn), 1800);
+        }
+    })
+    .catch(err => {
+        msg.textContent = 'Poll error: ' + err;
+        _classifyPollTimer = setTimeout(() => pollClassify(taskId, toast, msg, bar, pct, stats, spinner, check, btn), 3000);
+    });
+}
+</script>
+{% endif %}
 {% endblock %}

@@ -1,0 +1,430 @@
+# Department classification rules
+# Format: department_key: [keyword list] (matched against lowercased, cleaned title)
+# Ordered by priority — more specific rules first.
+# Consulting-specific titles (SAP, Oracle, Salesforce) handled explicitly.
+
+# ── Highest priority: consulting-specific tech platforms ─────────────────────
+software_dev:
+  # Enterprise platforms → IT
+  - sap abap
+  - sap fiori
+  - sap hana
+  - sap btp
+  - sap developer
+  - salesforce developer
+  - salesforce engineer
+  - salesforce architect
+  - mulesoft developer
+  - servicenow developer
+  - pega developer
+  - oracle developer
+  - oracle forms
+  - oracle apex
+  - dynamics developer
+  - sharepoint developer
+  - software engineer
+  - software developer
+  - web developer
+  - frontend developer
+  - front-end developer
+  - front end developer
+  - backend developer
+  - back-end developer
+  - back end developer
+  - full stack developer
+  - fullstack developer
+  - mobile developer
+  - ios developer
+  - android developer
+  - react developer
+  - angular developer
+  - vue developer
+  - node developer
+  - python developer
+  - java developer
+  - dotnet developer
+  - .net developer
+  - c# developer
+  - ruby developer
+  - golang developer
+  - rust developer
+  - embedded developer
+  - firmware engineer
+  - game developer
+  - application developer
+  - api developer
+  - integration developer
+  - integration engineer
+  - software architect
+  - solutions developer
+  - programmer
+
+systems_network:
+  # SAP/Oracle DBA roles → IT (systems)
+  - sap basis
+  - sap fico consultant
+  - sap mm consultant
+  - sap sd consultant
+  - sap pp consultant
+  - sap wm consultant
+  - sap ewm consultant
+  - sap pm consultant
+  - sap hr consultant
+  - sap scm consultant
+  - oracle dba
+  - oracle database
+  - oracle financials consultant
+  - sql server dba
+  - database administrator
+  - database engineer
+  - systems administrator
+  - sysadmin
+  - network administrator
+  - network engineer
+  - network architect
+  - linux administrator
+  - windows administrator
+  - active directory
+  - exchange administrator
+  - storage administrator
+  - backup administrator
+  - it administrator
+  - systems engineer
+  - infrastructure engineer
+  - infrastructure architect
+
+devops_cloud:
+  - devops engineer
+  - devops architect
+  - site reliability engineer
+  - sre
+  - cloud engineer
+  - cloud architect
+  - cloud administrator
+  - platform engineer
+  - kubernetes engineer
+  - docker engineer
+  - ci/cd engineer
+  - devsecops
+  - mlops engineer
+  - aws engineer
+  - azure engineer
+  - gcp engineer
+  - terraform engineer
+  - ansible engineer
+  - automation engineer
+
+data_analytics:
+  - data scientist
+  - data analyst
+  - data engineer
+  - data architect
+  - business intelligence
+  - bi developer
+  - bi analyst
+  - bi engineer
+  - analytics engineer
+  - machine learning engineer
+  - ml engineer
+  - ai engineer
+  - nlp engineer
+  - computer vision engineer
+  - etl developer
+  - etl engineer
+  - tableau developer
+  - power bi developer
+  - looker developer
+  - quantitative analyst
+  - research scientist
+  - applied scientist
+  - statistician
+
+security:
+  - security engineer
+  - security analyst
+  - cybersecurity analyst
+  - cybersecurity engineer
+  - information security
+  - infosec engineer
+  - penetration tester
+  - pen tester
+  - ethical hacker
+  - soc analyst
+  - soc engineer
+  - threat analyst
+  - vulnerability analyst
+  - network security engineer
+  - cloud security engineer
+  - appsec engineer
+  - devsecops engineer
+  - iam engineer
+  - siem engineer
+  - security architect
+  - ciso
+
+it_support:
+  - help desk
+  - helpdesk
+  - it support
+  - desktop support
+  - end user support
+  - technical support analyst
+  - support analyst
+  - support technician
+  - pc technician
+  - it technician
+  - service desk
+  - it operations
+  - deskside support
+
+qa_testing:
+  - qa engineer
+  - quality assurance engineer
+  - test engineer
+  - software tester
+  - test automation engineer
+  - sdet
+  - qa analyst
+  - quality analyst
+  - test analyst
+  - manual tester
+  - automation tester
+  - performance tester
+  - load tester
+  - selenium engineer
+
+it_management:
+  - it manager
+  - it director
+  - it lead
+  - technical lead
+  - tech lead
+  - engineering manager
+  - director of engineering
+  - vp of engineering
+  - head of engineering
+  - solutions architect
+  - enterprise architect
+  - chief technology officer
+  - cto
+  - chief information officer
+  - cio
+  - it governance
+  - delivery manager
+
+healthcare_it:
+  - ehr analyst
+  - emr analyst
+  - epic analyst
+  - cerner analyst
+  - meditech analyst
+  - hl7 analyst
+  - fhir developer
+  - pacs administrator
+  - health informatics
+  - clinical informatics
+  - healthcare it analyst
+  - healthcare data analyst
+  - health it specialist
+  - telehealth engineer
+  - biomedical equipment technician
+
+# ── Non-IT ────────────────────────────────────────────────────────────────────
+
+hr:
+  # HR must come before management to catch "HR Manager" correctly
+  - it staffing recruiter
+  - technical recruiter
+  - technology recruiter
+  - it recruiter
+  - hr manager
+  - hr generalist
+  - hr director
+  - recruiter
+  - talent acquisition
+  - talent partner
+  - people operations
+  - people partner
+  - hris analyst
+  - payroll specialist
+  - compensation analyst
+  - benefits analyst
+  - hr business partner
+  - hrbp
+  - workforce planning
+  - learning and development
+  - l&d specialist
+
+sales:
+  # Pre-sales must be before generic sales
+  - pre-sales engineer
+  - presales engineer
+  - sales engineer
+  - solution engineer
+  - account executive
+  - business development representative
+  - bdr
+  - sales development representative
+  - sdr
+  - business development manager
+  - account manager
+  - regional sales manager
+  - enterprise account manager
+  - inside sales
+  - outside sales
+  - channel partner manager
+  - partnership manager
+
+marketing:
+  - marketing manager
+  - marketing specialist
+  - digital marketing
+  - content marketing
+  - seo specialist
+  - sem specialist
+  - social media manager
+  - brand manager
+  - growth marketer
+  - demand generation
+  - email marketing
+  - marketing analyst
+  - product marketing manager
+  - communications manager
+  - pr manager
+  - public relations
+
+finance:
+  - financial analyst
+  - finance manager
+  - finance director
+  - chief financial officer
+  - cfo
+  - accountant
+  - controller
+  - fp&a analyst
+  - treasury analyst
+  - tax analyst
+  - auditor
+  - bookkeeper
+  - accounts payable
+  - accounts receivable
+  - payroll accountant
+  - budget analyst
+  - cost accountant
+
+operations:
+  - operations manager
+  - operations director
+  - supply chain manager
+  - logistics coordinator
+  - logistics manager
+  - procurement manager
+  - project manager
+  - program manager
+  - scrum master
+  - agile coach
+  - business analyst
+  - process improvement
+  - six sigma
+  - lean specialist
+  - office manager
+  - facility manager
+
+legal:
+  - legal counsel
+  - corporate attorney
+  - compliance officer
+  - compliance manager
+  - paralegal
+  - contract manager
+  - contract specialist
+  - regulatory affairs
+  - privacy counsel
+  - gdpr specialist
+  - risk manager
+  - general counsel
+
+customer_success:
+  - customer success manager
+  - customer success specialist
+  - client success manager
+  - customer onboarding
+  - customer support representative
+  - client services manager
+  - account manager
+  - customer experience manager
+  - support representative
+  - customer support specialist
+
+design:
+  - ux designer
+  - ui designer
+  - ux/ui designer
+  - product designer
+  - graphic designer
+  - visual designer
+  - art director
+  - creative director
+  - brand designer
+  - motion designer
+  - interaction designer
+  - user researcher
+  - design lead
+
+admin:
+  - administrative assistant
+  - executive assistant
+  - office administrator
+  - receptionist
+  - data entry
+  - coordinator
+  - office coordinator
+  - personal assistant
+
+civil_eng:
+  - civil engineer
+  - structural engineer
+  - construction manager
+  - site engineer
+  - project engineer construction
+  - geotechnical engineer
+  - transportation engineer
+  - land surveyor
+  - quantity surveyor
+  - construction superintendent
+  - building inspector
+  - urban planner
+  - cad technician
+
+healthcare:
+  - registered nurse
+  - physician
+  - surgeon
+  - medical assistant
+  - nurse practitioner
+  - physician assistant
+  - pharmacist
+  - physical therapist
+  - occupational therapist
+  - radiologic technologist
+  - medical lab technician
+  - clinical psychologist
+  - dentist
+  - dental hygienist
+  - paramedic
+  - medical coder
+  - healthcare administrator
+  - public health analyst
+
+management:
+  - chief executive officer
+  - ceo
+  - chief operating officer
+  - coo
+  - general manager
+  - managing director
+  - vice president
+  - senior vice president
+  - executive director
+  - director of operations
+  - president
