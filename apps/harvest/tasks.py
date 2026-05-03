@@ -924,29 +924,10 @@ def fetch_raw_jobs_for_company_task(
                 **enriched,
             }
 
-            # ── Cross-platform dedup guard (content_hash) ─────────────────────
-            # Prevents the same job from being ingested twice when a company posts
-            # on multiple boards (e.g. Greenhouse + LinkedIn). Only blocks active
-            # jobs — closed/inactive re-posts are allowed through.
-            _ch = defaults["content_hash"]
-            if _ch:
-                _cross_dup = (
-                    RawJob.objects.filter(
-                        company=label.company,
-                        content_hash=_ch,
-                        is_active=True,
-                    )
-                    .exclude(url_hash=url_hash)
-                    .values_list("pk", flat=True)
-                    .first()
-                )
-                if _cross_dup:
-                    jobs_duplicate += 1
-                    continue
-
             # ── Dedup guard (ATS external_id): same label+external_id = same job ──
-            # Some platforms append tracker params or alternate paths to the same job.
-            # We treat external_id as stable identity when present and update in place.
+            # Must run BEFORE content_hash check — external_id is the strongest
+            # identity signal (same ATS posting, different URL variant). Content_hash
+            # is only for cross-platform dedup where external_id is absent.
             existing_by_external = None
             if external_id:
                 ext_q = RawJob.objects.filter(
@@ -985,6 +966,26 @@ def fetch_raw_jobs_for_company_task(
                 existing_by_external.save()
                 jobs_updated += 1
                 continue
+
+            # ── Cross-platform dedup guard (content_hash) ─────────────────────
+            # Prevents the same job from being ingested twice when a company posts
+            # on multiple boards (e.g. Greenhouse + LinkedIn). Runs after external_id
+            # check so ATS URL variants aren't incorrectly blocked here.
+            _ch = defaults["content_hash"]
+            if _ch:
+                _cross_dup = (
+                    RawJob.objects.filter(
+                        company=label.company,
+                        content_hash=_ch,
+                        is_active=True,
+                    )
+                    .exclude(url_hash=url_hash)
+                    .values_list("pk", flat=True)
+                    .first()
+                )
+                if _cross_dup:
+                    jobs_duplicate += 1
+                    continue
 
             # ── Query-variant reconciliation: same path, tracker query changed ──
             base_url = original_url.split("?", 1)[0].strip()
