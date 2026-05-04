@@ -131,6 +131,13 @@
         </div>
         {% endif %}
 
+        {% if rawjob.responsibilities %}
+        <div class="border-b border-slate-200 p-6">
+          <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Responsibilities</h3>
+          <div class="text-sm leading-7 text-slate-700">{{ rawjob.responsibilities|linebreaksbr }}</div>
+        </div>
+        {% endif %}
+
         {% if rawjob.benefits %}
         <div class="border-b border-slate-200 p-6">
           <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Benefits</h3>
@@ -218,9 +225,25 @@
             {% if rawjob.job_category %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Category</dt><dd class="font-semibold text-slate-800">{{ rawjob.job_category }}</dd></div>{% endif %}
             {% if rawjob.years_required %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Experience</dt><dd class="text-slate-700">{{ rawjob.years_required }}{% if rawjob.years_required_max %}–{{ rawjob.years_required_max }}{% else %}+{% endif %} years</dd></div>{% endif %}
             {% if rawjob.education_required %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Education</dt><dd class="text-slate-700">{{ rawjob.get_education_required_display }}</dd></div>{% endif %}
+            {% if rawjob.schedule_type %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Schedule</dt><dd class="text-slate-700">{{ rawjob.schedule_type }}</dd></div>{% endif %}
+            {% if rawjob.shift_schedule %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Shift</dt><dd class="text-slate-700">{{ rawjob.shift_schedule }}</dd></div>{% endif %}
             {% if rawjob.travel_required %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Travel</dt><dd class="text-slate-700">{{ rawjob.travel_required }}</dd></div>{% endif %}
           </dl>
         </section>
+
+        {% if rawjob.vendor_job_identification or rawjob.vendor_job_category or rawjob.vendor_degree_level or rawjob.vendor_job_schedule or rawjob.vendor_job_shift or rawjob.vendor_location_block %}
+        <section class="card-padded">
+          <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Vendor Source Fields</h3>
+          <dl class="space-y-2 text-sm">
+            {% if rawjob.vendor_job_identification %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Job Identification</dt><dd class="font-mono text-xs text-slate-700 break-all">{{ rawjob.vendor_job_identification }}</dd></div>{% endif %}
+            {% if rawjob.vendor_job_category %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Job Category</dt><dd class="text-slate-700">{{ rawjob.vendor_job_category }}</dd></div>{% endif %}
+            {% if rawjob.vendor_degree_level %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Degree Level</dt><dd class="text-slate-700">{{ rawjob.vendor_degree_level }}</dd></div>{% endif %}
+            {% if rawjob.vendor_job_schedule %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Vendor Schedule</dt><dd class="text-slate-700">{{ rawjob.vendor_job_schedule }}</dd></div>{% endif %}
+            {% if rawjob.vendor_job_shift %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Vendor Shift</dt><dd class="text-slate-700">{{ rawjob.vendor_job_shift }}</dd></div>{% endif %}
+            {% if rawjob.vendor_location_block %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Vendor Location</dt><dd class="text-slate-700 break-words">{{ rawjob.vendor_location_block }}</dd></div>{% endif %}
+          </dl>
+        </section>
+        {% endif %}
 
         <section class="card-padded">
           <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Key Signals</h3>

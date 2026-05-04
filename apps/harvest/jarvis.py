@@ -54,6 +54,104 @@ def _safe_text(val) -> str:
     return str(val)
 
 
+def _oracle_safe_text(val: Any) -> str:
+    """Oracle detail fields may be plain strings, dicts, or lists of dicts."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, dict):
+        for key in ("displayValue", "Meaning", "meaning", "value", "Value", "label", "Label", "name", "Name", "text", "content"):
+            if val.get(key):
+                return _oracle_safe_text(val.get(key))
+        return ""
+    if isinstance(val, list):
+        parts = [_oracle_safe_text(v) for v in val]
+        return " | ".join(p for p in parts if p)
+    return str(val).strip()
+
+
+def _oracle_first(payload: dict, *keys: str) -> str:
+    for key in keys:
+        if key in payload:
+            val = _oracle_safe_text(payload.get(key))
+            if val:
+                return val
+    return ""
+
+
+def _oracle_normalize_country(value: str) -> str:
+    country = (value or "").strip()
+    if country.upper() == "US":
+        return "United States"
+    return country
+
+
+def _oracle_parse_location_parts(location_block: str) -> tuple[str, str, str]:
+    text = (location_block or "").strip()
+    if not text:
+        return "", "", ""
+    compact = re.sub(r"\s+", " ", text)
+    us_match = re.search(
+        r"(?P<city>[^,]+),\s*(?P<state>[A-Z]{2}),\s*(?P<postal>\d{5}(?:-\d{4})?)?,?\s*(?P<country>US|USA|United States)\b",
+        compact,
+        re.I,
+    )
+    if us_match:
+        return (
+            us_match.group("city").strip(),
+            us_match.group("state").strip(),
+            _oracle_normalize_country(us_match.group("country")),
+        )
+    parts = [p.strip() for p in compact.split(",") if p.strip()]
+    if len(parts) >= 3:
+        return parts[-3], parts[-2], _oracle_normalize_country(parts[-1])
+    return "", "", ""
+
+
+def _oracle_work_location(detail: dict[str, Any]) -> dict[str, Any]:
+    work_locations = detail.get("workLocation") or detail.get("WorkLocation") or []
+    if isinstance(work_locations, list) and work_locations:
+        first = work_locations[0]
+        if isinstance(first, dict):
+            return first
+    return {}
+
+
+def _oracle_map_employment_type(*values: str) -> str:
+    text = " ".join(v.lower() for v in values if v).strip()
+    if not text:
+        return ""
+    if "intern" in text:
+        return "INTERNSHIP"
+    if "contract" in text or "contingent" in text:
+        return "CONTRACT"
+    if "temp" in text:
+        return "TEMPORARY"
+    if "part" in text:
+        return "PART_TIME"
+    if "full" in text or "regular" in text:
+        return "FULL_TIME"
+    return ""
+
+
+def _oracle_map_education_level(value: str) -> str:
+    text = (value or "").lower()
+    if not text:
+        return ""
+    if "doctor" in text or "phd" in text:
+        return "PHD"
+    if "master" in text or text in {"ms", "m.s"}:
+        return "MS"
+    if "bachelor" in text or text in {"bs", "b.s", "ba", "b.a", "be", "b.e"}:
+        return "BS"
+    if "associate" in text:
+        return "ASSOCIATE"
+    if "high school" in text or text == "hs":
+        return "HS"
+    return ""
+
+
 _WORKDAY_COUNT_RE = re.compile(r"^\d+\s+locations?$", re.IGNORECASE)
 
 
@@ -1137,21 +1235,101 @@ class JobJarvis:
         if not items:
             return None
         req = items[0]
+        work_location = _oracle_work_location(req)
 
-        title = req.get("Title") or ""
-        desc = req.get("ExternalDescriptionStr") or req.get("ShortDescriptionStr") or ""
-        loc_raw = req.get("PrimaryLocation") or ""
+        primary_loc = req.get("primaryLocation") or {}
+        if isinstance(primary_loc, dict):
+            city = _oracle_first(primary_loc, "City", "city")
+            state = _oracle_first(primary_loc, "State", "state")
+            country = _oracle_normalize_country(_oracle_first(primary_loc, "Country", "country"))
+        else:
+            city = ""
+            state = ""
+            country = ""
+        city = city or _oracle_first(work_location, "TownOrCity", "City")
+        state = state or _oracle_first(work_location, "Region2", "State", "StateProvince")
+        country = country or _oracle_normalize_country(_oracle_first(work_location, "Country", "CountryCode"))
+        work_location_line = ", ".join(
+            part
+            for part in [
+                _oracle_first(work_location, "AddressLine1"),
+                _oracle_first(work_location, "TownOrCity", "City"),
+                _oracle_first(work_location, "Region2", "State", "StateProvince"),
+                _oracle_first(work_location, "PostalCode"),
+                _oracle_normalize_country(_oracle_first(work_location, "Country", "CountryCode")),
+            ]
+            if part
+        )
+        location_block = _oracle_first(
+            {"LocationLine": work_location_line},
+            "LocationLine",
+        ) or _oracle_first(
+            req,
+            "Locations",
+            "Location",
+            "PrimaryLocation",
+            "PrimaryWorkLocation",
+            "JobLocation",
+            "Address",
+        )
+        parsed_city, parsed_state, parsed_country = _oracle_parse_location_parts(location_block)
+        city = city or parsed_city
+        state = state or parsed_state
+        country = country or parsed_country or _oracle_normalize_country(_oracle_first(req, "PrimaryLocationCountry"))
+        loc_raw = location_block or ", ".join(v for v in [city, state, country] if v)
+        title = _oracle_first(req, "Title", "title")
+        desc = _oracle_first(req, "ExternalDescriptionStr", "Description", "JobDescription", "ShortDescriptionStr")
+        requirements = _oracle_first(req, "ExternalQualificationsStr", "Qualifications", "RequiredQualifications")
+        responsibilities = _oracle_first(req, "ExternalResponsibilitiesStr", "Responsibilities", "JobResponsibilities")
+        vendor_job_category = _oracle_first(req, "JobCategory", "Job Category", "Category", "Family", "JobFunction")
+        vendor_degree_level = _oracle_first(req, "DegreeLevel", "Degree Level", "EducationLevel", "RequiredEducation", "StudyLevel")
+        vendor_job_schedule = _oracle_first(req, "JobSchedule", "Job Schedule", "FullPartTime", "RegularTemporary")
+        vendor_job_shift = _oracle_first(req, "JobShift", "Job Shift", "Shift")
+        employment_type = _oracle_map_employment_type(
+            vendor_job_schedule,
+            _oracle_first(req, "RegularTemporary"),
+            _oracle_first(req, "FullPartTime"),
+        )
+        education_required = _oracle_map_education_level(vendor_degree_level)
+        vendor_job_identification = _oracle_first(
+            req,
+            "JobIdentification",
+            "Job Identification",
+            "JobIdentifier",
+            "JobIdentifierNumber",
+            "JobCode",
+            "Job Number",
+            "RequisitionNumber",
+        ) or req_id
 
         return {
             "title": title,
             "company_name": subdomain.split(".")[0].replace("-", " ").title(),
             "location_raw": loc_raw,
+            "city": city,
+            "state": state,
+            "country": country,
             "description": desc,
-            "department": req.get("Organization") or "",
+            "requirements": requirements,
+            "responsibilities": responsibilities,
+            "department": _oracle_first(req, "Organization", "OrganizationDescriptionStr", "Department", "BusinessUnit"),
+            "job_category": vendor_job_category,
+            "education_required": education_required,
+            "schedule_type": vendor_job_schedule,
+            "shift_schedule": vendor_job_shift,
+            "shift_details": vendor_job_shift,
+            "employment_type": employment_type,
+            "posted_date_raw": _oracle_first(req, "ExternalPostedStartDate", "PostedDate", "PostingDate"),
+            "vendor_job_identification": vendor_job_identification,
+            "vendor_job_category": vendor_job_category,
+            "vendor_degree_level": vendor_degree_level,
+            "vendor_job_schedule": vendor_job_schedule,
+            "vendor_job_shift": vendor_job_shift,
+            "vendor_location_block": location_block,
             "external_id": req_id,
             "original_url": url,
             "apply_url": url,
-            "raw_payload": req,
+            "raw_payload": {"source": "oracle_hcm", "detail": req},
         }
 
     # ── UltiPro / UKG ────────────────────────────────────────────────────────

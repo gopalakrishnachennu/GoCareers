@@ -916,6 +916,7 @@ def fetch_raw_jobs_for_company_task(
             desc_meta = clean_job_content(job_dict.get("description") or "", max_len=50000)
             description = desc_meta["clean_text"]
             requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
+            responsibilities = clean_job_text(job_dict.get("responsibilities") or "", max_len=20000)
             benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
             enriched = extract_enrichments({
                 "title": job_dict.get("title") or "",
@@ -963,10 +964,17 @@ def fetch_raw_jobs_for_company_task(
                 "has_html_content": bool(desc_meta.get("has_html_content")),
                 "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
                 "requirements": requirements,
+                "responsibilities": responsibilities,
                 "benefits": benefits,
                 "posted_date": posted_date,
                 "closing_date": closing_date,
                 "platform_slug": (label.platform.slug if label.platform else "")[:64],
+                "vendor_job_identification": (job_dict.get("vendor_job_identification") or "")[:128],
+                "vendor_job_category": (job_dict.get("vendor_job_category") or "")[:128],
+                "vendor_degree_level": (job_dict.get("vendor_degree_level") or "")[:128],
+                "vendor_job_schedule": (job_dict.get("vendor_job_schedule") or "")[:128],
+                "vendor_job_shift": (job_dict.get("vendor_job_shift") or "")[:128],
+                "vendor_location_block": (job_dict.get("vendor_location_block") or "")[:512],
                 "raw_payload": job_dict.get("raw_payload") or {},
                 "is_active": True,
                 "content_hash": compute_content_hash(
@@ -3837,7 +3845,7 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
 
     update_fields: dict = {"description": desc_str[:50000], "has_description": True, "jd_backfill_locked_at": None}
 
-    for f, mx in (("requirements", 20000), ("benefits", 10000)):
+    for f, mx in (("requirements", 20000), ("responsibilities", 20000), ("benefits", 10000)):
         v = _backfill_str(data.get(f)).strip()
         if v:
             update_fields[f] = v[:mx]
@@ -3861,6 +3869,24 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
         v = _backfill_str(data.get(f)).strip()
         if v:
             update_fields[f] = v[:256]
+
+    for f, mx in (
+        ("postal_code", 32),
+        ("job_category", 64),
+        ("education_required", 12),
+        ("schedule_type", 32),
+        ("shift_schedule", 128),
+        ("shift_details", 255),
+        ("vendor_job_identification", 128),
+        ("vendor_job_category", 128),
+        ("vendor_degree_level", 128),
+        ("vendor_job_schedule", 128),
+        ("vendor_job_shift", 128),
+        ("vendor_location_block", 512),
+    ):
+        v = _backfill_str(data.get(f)).strip()
+        if v:
+            update_fields[f] = v[:mx]
 
     for f in ("is_remote", "location_type"):
         v = data.get(f)

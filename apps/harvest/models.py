@@ -512,6 +512,7 @@ class RawJob(models.Model):
     has_html_content = models.BooleanField(default=False, db_index=True)
     cleaning_version = models.CharField(max_length=20, blank=True, default="v2")
     requirements = models.TextField(blank=True)
+    responsibilities = models.TextField(blank=True)
     benefits = models.TextField(blank=True)
 
     # ── Dates ─────────────────────────────────────────────────────────────────
@@ -520,6 +521,12 @@ class RawJob(models.Model):
 
     # ── Platform meta ─────────────────────────────────────────────────────────
     platform_slug = models.CharField(max_length=64, blank=True)
+    vendor_job_identification = models.CharField(max_length=128, blank=True)
+    vendor_job_category = models.CharField(max_length=128, blank=True)
+    vendor_degree_level = models.CharField(max_length=128, blank=True)
+    vendor_job_schedule = models.CharField(max_length=128, blank=True)
+    vendor_job_shift = models.CharField(max_length=128, blank=True)
+    vendor_location_block = models.CharField(max_length=512, blank=True)
     raw_payload = models.JSONField(default=dict, blank=True)
 
     # ── Enriched: skills & tech ───────────────────────────────────────────────

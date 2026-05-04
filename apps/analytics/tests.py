@@ -21,6 +21,12 @@ class AnalyticsDateRangeTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertIn('date_range_label', resp.context)
         self.assertEqual(resp.context['date_range_label'], 'All time')
+        self.assertIn('board_health_rows', resp.context)
+        self.assertIn('harvest_summary', resp.context)
+        self.assertContains(resp, 'Analytics Control Tower')
+        self.assertContains(resp, 'Job Boards')
+        self.assertContains(resp, 'JD & Field Coverage')
+        self.assertContains(resp, 'Failures & Blockers')
 
     def test_analytics_dashboard_last_7_days(self):
         self.client.login(username='emp1', password='testpass')
@@ -29,6 +35,7 @@ class AnalyticsDateRangeTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context.get('date_range_label'), 'Last 7 days')
         self.assertEqual(resp.context.get('date_range'), '7')
+        self.assertIn('board_risk_chart_json', resp.context)
 
     def test_analytics_dashboard_last_30_days(self):
         self.client.login(username='emp1', password='testpass')
@@ -37,3 +44,4 @@ class AnalyticsDateRangeTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.context.get('date_range_label'), 'Last 30 days')
         self.assertEqual(resp.context.get('date_range'), '30')
+        self.assertIn('ops_health_rows', resp.context)

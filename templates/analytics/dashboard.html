@@ -1,465 +1,944 @@
 {% extends 'base.html' %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-6 flex flex-col gap-6">
-    <!-- HERO HEADER -->
-    <div class="hero-gradient rounded-2xl px-8 py-6 relative overflow-hidden">
-        <div class="relative z-10 flex flex-col md:flex-row justify-between items-start md:items-end gap-6">
+<div class="analytics-shell max-w-7xl mx-auto px-4 py-6 space-y-6">
+  <section class="analytics-hero rounded-[28px] p-6 md:p-8">
+    <div class="flex flex-col gap-6 xl:flex-row xl:items-end xl:justify-between">
+      <div class="max-w-3xl">
+        <div class="mb-3 flex items-center gap-3 text-sm font-semibold text-emerald-100/90">
+          {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
+          <a href="{% url 'admin-dashboard' %}" class="hover:text-white">← Dashboard</a>
+          {% else %}
+          <a href="{% url 'employee-dashboard' %}" class="hover:text-white">← Dashboard</a>
+          {% endif %}
+          <span class="rounded-full border border-white/15 bg-white/10 px-3 py-1 text-[11px] uppercase tracking-[0.24em] text-white/85">Board Intelligence</span>
+        </div>
+        <h1 class="text-3xl font-black tracking-tight text-white md:text-5xl">Analytics Control Tower</h1>
+        <p class="mt-3 max-w-2xl text-sm leading-6 text-emerald-50/85 md:text-base">
+          Monitor job board quality, fetch failures, inactive links, missing JD coverage, blocker volume, and hiring funnel movement in one place for <strong>{{ date_range_label }}</strong>.
+        </p>
+      </div>
+      <div class="flex flex-col gap-3 xl:items-end">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-100/75">Period</span>
+          <a href="?range=7" class="period-pill {% if date_range == '7' %}period-pill--active{% endif %}">Last 7 days</a>
+          <a href="?range=30" class="period-pill {% if date_range == '30' %}period-pill--active{% endif %}">Last 30 days</a>
+          <a href="?range=all" class="period-pill {% if date_range == 'all' %}period-pill--active{% endif %}">All time</a>
+        </div>
+        <div class="grid min-w-[280px] grid-cols-2 gap-3 text-sm">
+          <div class="hero-stat">
+            <p class="hero-stat__label">Worst board</p>
+            <p class="hero-stat__value">{{ harvest_summary.worst_board_name }}</p>
+          </div>
+          <div class="hero-stat">
+            <p class="hero-stat__label">Risk score</p>
+            <p class="hero-stat__value">{{ harvest_summary.worst_board_score }}</p>
+          </div>
+          <div class="hero-stat">
+            <p class="hero-stat__label">Boards tracked</p>
+            <p class="hero-stat__value">{{ harvest_summary.platforms_tracked }}</p>
+          </div>
+          <div class="hero-stat">
+            <p class="hero-stat__label">High-risk boards</p>
+            <p class="hero-stat__value">{{ harvest_summary.high_risk_boards }}</p>
+          </div>
+        </div>
+        <a href="{% url 'analytics-export-csv' %}?range={{ date_range }}" class="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20">
+          <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Export CSV
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
+    <article class="metric-tile">
+      <p class="metric-tile__label">Raw jobs</p>
+      <p class="metric-tile__value">{{ harvest_summary.raw_jobs }}</p>
+      <p class="metric-tile__sub">Tracked in range</p>
+    </article>
+    <article class="metric-tile">
+      <p class="metric-tile__label">Fetch runs</p>
+      <p class="metric-tile__value">{{ harvest_summary.fetch_runs }}</p>
+      <p class="metric-tile__sub">Board fetch attempts</p>
+    </article>
+    <article class="metric-tile metric-tile--warn">
+      <p class="metric-tile__label">Missing JD</p>
+      <p class="metric-tile__value">{{ harvest_summary.missing_jd }}</p>
+      <p class="metric-tile__sub">{{ harvest_summary.missing_jd_rate }}%</p>
+    </article>
+    <article class="metric-tile metric-tile--danger">
+      <p class="metric-tile__label">Inactive links</p>
+      <p class="metric-tile__value">{{ harvest_summary.inactive_jobs }}</p>
+      <p class="metric-tile__sub">{{ harvest_summary.inactive_rate }}%</p>
+    </article>
+    <article class="metric-tile metric-tile--warn">
+      <p class="metric-tile__label">Blocked jobs</p>
+      <p class="metric-tile__value">{{ harvest_summary.blocked_jobs }}</p>
+      <p class="metric-tile__sub">{{ harvest_summary.blocked_rate }}%</p>
+    </article>
+    <article class="metric-tile metric-tile--danger">
+      <p class="metric-tile__label">Failed runs</p>
+      <p class="metric-tile__value">{{ harvest_summary.failed_runs }}</p>
+      <p class="metric-tile__sub">{{ harvest_summary.failed_run_rate }}%</p>
+    </article>
+    <article class="metric-tile metric-tile--warn">
+      <p class="metric-tile__label">Zero-yield</p>
+      <p class="metric-tile__value">{{ harvest_summary.zero_yield_success_runs }}</p>
+      <p class="metric-tile__sub">Silent success risk</p>
+    </article>
+    <article class="metric-tile">
+      <p class="metric-tile__label">Avg board risk</p>
+      <p class="metric-tile__value">{{ harvest_summary.avg_risk_score }}</p>
+      <p class="metric-tile__sub">0–100 weighted score</p>
+    </article>
+  </section>
+
+  <section class="rounded-[24px] border border-slate-200 bg-white p-3 shadow-sm">
+    <div class="flex flex-wrap gap-2">
+      <button type="button" class="analytics-tab analytics-tab--active" data-tab-target="overview">Overview</button>
+      <button type="button" class="analytics-tab" data-tab-target="boards">Job Boards</button>
+      <button type="button" class="analytics-tab" data-tab-target="coverage">JD & Field Coverage</button>
+      <button type="button" class="analytics-tab" data-tab-target="failures">Failures & Blockers</button>
+      <button type="button" class="analytics-tab" data-tab-target="funnel">Hiring Funnel</button>
+    </div>
+  </section>
+
+  <section class="analytics-panel" data-tab-panel="overview">
+    <div class="grid gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Board risk ranking</p>
+            <h2 class="analytics-card__title">Where the harvest is hurting most</h2>
+          </div>
+          <p class="analytics-card__meta">Weighted by missing JD, inactive links, fetch failures, portal-down rate, zero-yield success runs, and blocker load.</p>
+        </div>
+        <div class="chart-wrap h-[320px]">
+          <canvas id="boardRiskChart"></canvas>
+        </div>
+      </article>
+
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Immediate watchlist</p>
+            <h2 class="analytics-card__title">Top issue boards</h2>
+          </div>
+        </div>
+        <div class="space-y-3">
+          {% for row in board_health_rows|slice:":6" %}
+          {% if row.total_jobs or row.total_runs or row.companies_tracked %}
+          <div class="watch-row">
             <div>
-                <div class="flex items-center gap-3 mb-2">
-                    {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
-                    <a href="{% url 'admin-dashboard' %}" class="hero-back-link">← Dashboard</a>
-                    {% else %}
-                    <a href="{% url 'employee-dashboard' %}" class="hero-back-link">← Dashboard</a>
-                    {% endif %}
-                </div>
-                <h1 class="text-3xl md:text-4xl font-extrabold text-white tracking-tight flex items-center gap-3">
-                    <svg class="w-8 h-8 text-blue-200 opacity-80" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                            d="M3 3v18h18M7 15l3 3 7-7M7 9h4m-4-4h8" />
-                    </svg>
-                    Analytics Dashboard
-                </h1>
-                <p class="text-blue-100 mt-2 text-sm md:text-base">
-                    Showing data for <strong>{{ date_range_label }}</strong>. See how jobs and applications move through your funnel.
-                </p>
+              <div class="flex items-center gap-2">
+                <span class="watch-row__dot" style="background: {{ row.color_hex|default:'#64748b' }}"></span>
+                <p class="font-semibold text-slate-900">{{ row.platform_name }}</p>
+              </div>
+              <p class="mt-1 text-xs text-slate-500">
+                {{ row.total_jobs|default:0 }} jobs · {{ row.total_runs|default:0 }} runs · {{ row.companies_tracked|default:0 }} companies
+              </p>
             </div>
-            <div class="flex flex-col items-end gap-2">
-                <div class="flex items-center gap-2 text-xs">
-                    <span class="text-blue-100">Period:</span>
-                    <a href="?range=7" class="px-3 py-1.5 rounded text-xs font-medium {% if date_range == '7' %}bg-white text-indigo-700{% else %}bg-white/10 text-blue-50 hover:bg-white/20{% endif %}">Last 7 days</a>
-                    <a href="?range=30" class="px-3 py-1.5 rounded text-xs font-medium {% if date_range == '30' %}bg-white text-indigo-700{% else %}bg-white/10 text-blue-50 hover:bg-white/20{% endif %}">Last 30 days</a>
-                    <a href="?range=all" class="px-3 py-1.5 rounded text-xs font-medium {% if date_range == 'all' %}bg-white text-indigo-700{% else %}bg-white/10 text-blue-50 hover:bg-white/20{% endif %}">All time</a>
-                </div>
-                <a href="{% url 'analytics-export-csv' %}?range={{ date_range }}" class="btn-hero btn-xs">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                    Export CSV
-                </a>
+            <div class="text-right">
+              <span class="risk-pill risk-pill--{{ row.risk_band }}">{{ row.risk_score }}</span>
+              <p class="mt-1 text-xs text-slate-500">JD miss {{ row.missing_jd_rate }}% · fail {{ row.fetch_fail_rate }}%</p>
             </div>
+          </div>
+          {% endif %}
+          {% empty %}
+          <p class="text-sm text-slate-500">No board health data yet.</p>
+          {% endfor %}
         </div>
+      </article>
     </div>
 
-    <!-- KPI Cards (compact) -->
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 class="text-gray-500 text-xs font-semibold uppercase tracking-wide">Total Jobs</h3>
-            <p class="text-xl font-bold text-gray-800 mt-1">{{ total_jobs }}</p>
+    <div class="grid gap-6 xl:grid-cols-2">
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Fetch throughput</p>
+            <h2 class="analytics-card__title">Boards with the most harvest volume</h2>
+          </div>
         </div>
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 class="text-gray-500 text-xs font-semibold uppercase tracking-wide">Active Jobs</h3>
-            <p class="text-xl font-bold text-gray-800 mt-1">{{ active_jobs }}</p>
+        <div class="chart-wrap h-[320px]">
+          <canvas id="boardVolumeChart"></canvas>
         </div>
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 class="text-gray-500 text-xs font-semibold uppercase tracking-wide">Total Consultants</h3>
-            <p class="text-xl font-bold text-gray-800 mt-1">{{ total_consultants }}</p>
-        </div>
-        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 class="text-gray-500 text-xs font-semibold uppercase tracking-wide">Total Applications</h3>
-            <p class="text-xl font-bold text-gray-800 mt-1">{{ total_applications }}</p>
-        </div>
-    </div>
+      </article>
 
-    <!-- Admin-aligned pipeline metrics (shared with Admin Dashboard) -->
-    {% if funnel_global %}
-    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Pipeline overview</h2>
-        <p class="text-xs text-gray-500 mb-4">Resume generation → submissions → interviews → offers (global, all time).</p>
-        <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-4">
-            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                <p class="text-xs text-gray-500">Resumes generated</p>
-                <p class="text-lg font-bold text-gray-900">{{ funnel_global.resumes }}</p>
-            </div>
-            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                <p class="text-xs text-gray-500">Submitted</p>
-                <p class="text-lg font-bold text-gray-900">{{ funnel_global.submitted }}</p>
-            </div>
-            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                <p class="text-xs text-gray-500">Interview+</p>
-                <p class="text-lg font-bold text-gray-900">{{ funnel_global.interview }}</p>
-            </div>
-            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                <p class="text-xs text-gray-500">Offers</p>
-                <p class="text-lg font-bold text-gray-900">{{ funnel_global.hired }}</p>
-            </div>
-            <div class="rounded-lg bg-slate-50 border border-slate-100 p-3">
-                <p class="text-xs text-gray-500">Rejected</p>
-                <p class="text-lg font-bold text-gray-900">{{ funnel_global.rejected }}</p>
-            </div>
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Ops health</p>
+            <h2 class="analytics-card__title">Pipeline operations in {{ date_range_label }}</h2>
+          </div>
         </div>
-        <div class="relative h-56 w-full max-w-3xl">
-            <canvas id="pipelineGlobalChart"></canvas>
-        </div>
-    </div>
-    {% endif %}
-
-    {% if time_to_hire_stages %}
-    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Time-to-hire (avg. days)</h2>
-        <p class="text-xs text-gray-500 mb-3">Bottleneck stage: <strong>{{ time_to_hire_bottleneck|default:"—" }}</strong></p>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {% for label, days in time_to_hire_stages %}
-            <div class="rounded-lg border border-gray-100 p-4">
-                <p class="text-xs text-gray-500">{{ label }}</p>
-                <p class="text-2xl font-bold text-indigo-700">{% if days is not None %}{{ days }}{% else %}—{% endif %}</p>
-                <p class="text-[10px] text-gray-400 mt-1">days</p>
-            </div>
-            {% endfor %}
-        </div>
-    </div>
-    {% endif %}
-
-    {% if employee_leaderboard %}
-    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-1">Recruiter leaderboard</h2>
-        <p class="text-xs text-gray-500 mb-4">By jobs you posted: submission → interview conversion and hires.</p>
         <div class="overflow-x-auto">
-            <table class="min-w-full text-sm text-left text-gray-700">
-                <thead>
-                    <tr class="border-b border-gray-200 text-xs uppercase text-gray-500">
-                        <th class="py-2 pr-4">#</th>
-                        <th class="py-2 pr-4">Employee</th>
-                        <th class="py-2 px-2 text-right">Submissions</th>
-                        <th class="py-2 px-2 text-right">Interviews</th>
-                        <th class="py-2 px-2 text-right">Sub→Int %</th>
-                        <th class="py-2 px-2 text-right">Hires</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in employee_leaderboard %}
-                    <tr class="border-b border-gray-50">
-                        <td class="py-2 pr-4 text-gray-500">{{ row.rank }}</td>
-                        <td class="py-2 pr-4 font-medium">{{ row.user.get_full_name|default:row.user.username }}</td>
-                        <td class="py-2 px-2 text-right">{{ row.submissions }}</td>
-                        <td class="py-2 px-2 text-right">{{ row.interviews }}</td>
-                        <td class="py-2 px-2 text-right">{% if row.sub_to_interview_rate_pct is not None %}{{ row.sub_to_interview_rate_pct }}%{% else %}—{% endif %}</td>
-                        <td class="py-2 px-2 text-right">{{ row.hires }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+          <table class="min-w-full text-sm">
+            <thead>
+              <tr class="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                <th class="py-2 pr-4">Operation</th>
+                <th class="py-2 px-2 text-right">Success</th>
+                <th class="py-2 px-2 text-right">Partial</th>
+                <th class="py-2 px-2 text-right">Failed</th>
+                <th class="py-2 px-2 text-right">Running</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for row in ops_health_rows %}
+              <tr class="border-b border-slate-100">
+                <td class="py-2 pr-4 font-medium text-slate-800">{{ row.operation }}</td>
+                <td class="py-2 px-2 text-right text-emerald-700">{{ row.success }}</td>
+                <td class="py-2 px-2 text-right text-amber-700">{{ row.partial }}</td>
+                <td class="py-2 px-2 text-right text-rose-700">{{ row.failed }}</td>
+                <td class="py-2 px-2 text-right text-sky-700">{{ row.running }}</td>
+              </tr>
+              {% empty %}
+              <tr><td colspan="5" class="py-4 text-sm text-slate-500">No ops runs in this period.</td></tr>
+              {% endfor %}
+            </tbody>
+          </table>
         </div>
-        <div class="mt-6 relative h-64 w-full">
-            <canvas id="leaderboardChart"></canvas>
-        </div>
+      </article>
     </div>
-    {% endif %}
+  </section>
 
-    {% if consultant_performance %}
-    <div class="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
-        <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide mb-3">Consultant performance</h2>
-        <div class="overflow-x-auto max-h-80">
-            <table class="min-w-full text-sm text-left">
-                <thead>
-                    <tr class="border-b text-xs uppercase text-gray-500">
-                        <th class="py-2 pr-4">Consultant</th>
-                        <th class="py-2 px-2 text-right">Subs</th>
-                        <th class="py-2 px-2 text-right">Int %</th>
-                        <th class="py-2 px-2 text-right">Offer %</th>
-                        <th class="py-2 px-2 text-right">Score</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in consultant_performance|slice:":25" %}
-                    <tr class="border-b border-gray-50">
-                        <td class="py-2 pr-4">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
-                        <td class="py-2 px-2 text-right">{{ row.total_submissions }}</td>
-                        <td class="py-2 px-2 text-right">{% if row.interview_rate_pct is not None %}{{ row.interview_rate_pct }}%{% else %}—{% endif %}</td>
-                        <td class="py-2 px-2 text-right">{% if row.hire_rate_pct is not None %}{{ row.hire_rate_pct }}%{% else %}—{% endif %}</td>
-                        <td class="py-2 px-2 text-right font-semibold">{% if row.performance_score is not None %}{{ row.performance_score }}{% else %}—{% endif %}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Conversion Snapshot (minimalist) -->
-    <div class="bg-white border border-gray-200 rounded-lg p-4 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+  <section class="analytics-panel hidden" data-tab-panel="boards">
+    <article class="analytics-card">
+      <div class="analytics-card__header">
         <div>
-            <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide">Conversion Snapshot</h2>
-            <p class="text-xs text-gray-500 mt-1">Share of applications that reached each key stage.</p>
+          <p class="analytics-card__eyebrow">All job boards</p>
+          <h2 class="analytics-card__title">Platform health matrix</h2>
         </div>
-        <div class="flex flex-wrap gap-6 text-sm">
-            <div>
-                <p class="text-gray-500">Interview rate</p>
-                <p class="text-xl font-semibold text-gray-900">{{ interview_rate }}%</p>
-            </div>
-            <div>
-                <p class="text-gray-500">Offer rate</p>
-                <p class="text-xl font-semibold text-gray-900">{{ offer_rate }}%</p>
-            </div>
-            <div>
-                <p class="text-gray-500">Rejection rate</p>
-                <p class="text-xl font-semibold text-gray-900">{{ rejection_rate }}%</p>
-            </div>
-        </div>
-    </div>
-
-    <!-- Applications by Marketing Role -->
-    <div class="bg-white border border-gray-200 rounded-lg p-4">
-        <div class="flex items-center justify-between mb-3">
-            <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide">Applications by Marketing Role</h2>
-            <p class="text-xs text-gray-500">Top roles by application volume.</p>
-        </div>
-        {% if role_funnel %}
-        <div class="overflow-x-auto">
-            <table class="min-w-full text-sm text-gray-700">
-                <thead>
-                    <tr class="border-b border-gray-200 text-xs uppercase text-gray-500">
-                        <th class="py-1 pr-4 text-left">Role</th>
-                        <th class="py-1 px-2 text-right">Total</th>
-                        <th class="py-1 px-2 text-right">Applied</th>
-                        <th class="py-1 px-2 text-right">Interview</th>
-                        <th class="py-1 px-2 text-right">Offer</th>
-                        <th class="py-1 px-2 text-right">Rejected</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for row in role_funnel %}
-                    <tr class="border-b border-gray-50">
-                        <td class="py-1 pr-4">{{ row.name }}</td>
-                        <td class="py-1 px-2 text-right">{{ row.total }}</td>
-                        <td class="py-1 px-2 text-right">{{ row.applied }}</td>
-                        <td class="py-1 px-2 text-right">{{ row.interview }}</td>
-                        <td class="py-1 px-2 text-right">{{ row.offer }}</td>
-                        <td class="py-1 px-2 text-right">{{ row.rejected }}</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <p class="text-sm text-gray-500">No applications yet for any marketing roles.</p>
-        {% endif %}
-    </div>
-
-    <!-- Charts -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Applications Status Pie Chart -->
-        <div class="bg-white p-5 rounded-lg shadow-sm">
-            <h3 class="text-xl font-bold text-gray-800 mb-4">Application Status</h3>
-            <div class="relative h-64 w-full">
-                <canvas id="appStatusChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Jobs Over Time Line Chart -->
-        <div class="bg-white p-5 rounded-lg shadow-sm">
-            <h3 class="text-xl font-bold text-gray-800 mb-4">Jobs Posted Over Time</h3>
-            <div class="relative h-64 w-full">
-                <canvas id="jobsTimeChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Applications Funnel -->
-        <div class="bg-white p-5 rounded-lg shadow-sm">
-            <h3 class="text-xl font-bold text-gray-800 mb-4">Applications Funnel</h3>
-            <div class="relative h-64 w-full">
-                <canvas id="funnelChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Applications Over Time Line Chart -->
-        <div class="bg-white p-5 rounded-lg shadow-sm lg:col-span-2">
-            <h3 class="text-xl font-bold text-gray-800 mb-4">Applications Over Time</h3>
-            <div class="relative h-64 w-full">
-                <canvas id="appsTimeChart"></canvas>
-            </div>
-        </div>
-    </div>
-
-    <!-- Top performers -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <!-- Top Employees by Jobs Posted -->
-        <div class="bg-white p-5 rounded-lg shadow-sm">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-bold text-gray-800">Top Employees by Jobs Posted</h3>
-                <span class="text-xs text-gray-500">Last all-time snapshot</span>
-            </div>
-            {% if top_employees %}
-            <div class="space-y-2">
-                {% for emp in top_employees %}
-                <div class="flex justify-between items-center p-2 rounded hover:bg-gray-50">
-                    <div>
-                        <p class="font-medium text-gray-800">{{ emp.get_full_name|default:emp.username }}</p>
-                        <p class="text-xs text-gray-500">{{ emp.email }}</p>
-                    </div>
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-blue-50 text-blue-700">
-                        {{ emp.job_count }} jobs
-                    </span>
+        <p class="analytics-card__meta">This table is the board-by-board control surface for risk, fetch reliability, inactive links, missing JD, coverage gaps, and silent zero-yield runs.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-[1320px] w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              <th class="py-3 pr-4">Board</th>
+              <th class="py-3 px-2 text-right">Risk</th>
+              <th class="py-3 px-2 text-right">Companies</th>
+              <th class="py-3 px-2 text-right">Portal down</th>
+              <th class="py-3 px-2 text-right">Jobs</th>
+              <th class="py-3 px-2 text-right">Inactive</th>
+              <th class="py-3 px-2 text-right">Missing JD</th>
+              <th class="py-3 px-2 text-right">Blocked</th>
+              <th class="py-3 px-2 text-right">Runs</th>
+              <th class="py-3 px-2 text-right">Fail %</th>
+              <th class="py-3 px-2 text-right">Partial %</th>
+              <th class="py-3 px-2 text-right">Zero-yield</th>
+              <th class="py-3 px-2 text-right">Avg min</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in board_health_rows %}
+            {% if row.total_jobs or row.total_runs or row.companies_tracked %}
+            <tr class="border-b border-slate-100 align-top">
+              <td class="py-3 pr-4">
+                <div class="flex items-center gap-2">
+                  <span class="h-2.5 w-2.5 rounded-full" style="background: {{ row.color_hex|default:'#64748b' }}"></span>
+                  <div>
+                    <p class="font-semibold text-slate-900">{{ row.platform_name }}</p>
+                    <p class="text-xs text-slate-500">{{ row.slug }}</p>
+                  </div>
                 </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="text-sm text-gray-500">No employee job postings yet.</p>
+              </td>
+              <td class="py-3 px-2 text-right"><span class="risk-pill risk-pill--{{ row.risk_band }}">{{ row.risk_score }}</span></td>
+              <td class="py-3 px-2 text-right">{{ row.companies_tracked|default:0 }}</td>
+              <td class="py-3 px-2 text-right text-rose-700">{{ row.portal_down|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.total_jobs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.inactive_jobs|default:0 }} <span class="text-xs text-slate-500">({{ row.inactive_rate }}%)</span></td>
+              <td class="py-3 px-2 text-right">{{ row.missing_jd|default:0 }} <span class="text-xs text-slate-500">({{ row.missing_jd_rate }}%)</span></td>
+              <td class="py-3 px-2 text-right">{{ row.blocked_jobs|default:0 }} <span class="text-xs text-slate-500">({{ row.blocked_rate }}%)</span></td>
+              <td class="py-3 px-2 text-right">{{ row.total_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right text-rose-700">{{ row.fetch_fail_rate }}%</td>
+              <td class="py-3 px-2 text-right text-amber-700">{{ row.fetch_partial_rate }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.zero_yield_success_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.avg_duration_minutes|default:0 }}</td>
+            </tr>
             {% endif %}
-        </div>
+            {% empty %}
+            <tr><td colspan="13" class="py-6 text-sm text-slate-500">No job board data available yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
 
-        <!-- Top Consultants by Applications -->
-        <div class="bg-white p-5 rounded-lg shadow-sm">
-            <div class="flex justify-between items-center mb-4">
-                <h3 class="text-xl font-bold text-gray-800">Top Consultants by Applications</h3>
-                <span class="text-xs text-gray-500">All-time volume</span>
-            </div>
-            {% if top_consultants %}
-            <div class="space-y-2">
-                {% for con in top_consultants %}
-                <div class="flex justify-between items-center p-2 rounded hover:bg-gray-50">
-                    <div>
-                        <p class="font-medium text-gray-800">{{ con.get_full_name|default:con.username }}</p>
-                        <p class="text-xs text-gray-500">
-                            {% if con.consultant_profile.hourly_rate %}₹{{ con.consultant_profile.hourly_rate }} / hr · {% endif %}
-                            {{ con.consultant_profile.status }}
-                        </p>
-                    </div>
-                    <span class="px-3 py-1 text-xs font-semibold rounded-full bg-purple-50 text-purple-700">
-                        {{ con.submission_count }} apps
-                    </span>
-                </div>
-                {% endfor %}
-            </div>
-            {% else %}
-            <p class="text-sm text-gray-500">No consultant applications yet.</p>
-            {% endif %}
+  <section class="analytics-panel hidden" data-tab-panel="coverage">
+    <div class="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Field completeness</p>
+            <h2 class="analytics-card__title">How much structured data each board actually gives you</h2>
+          </div>
         </div>
+        <div class="chart-wrap h-[360px]">
+          <canvas id="coverageChart"></canvas>
+        </div>
+      </article>
+
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Coverage heuristics</p>
+            <h2 class="analytics-card__title">What we are measuring</h2>
+          </div>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="coverage-note"><strong>JD coverage:</strong> `has_description=true`</div>
+          <div class="coverage-note"><strong>Geo coverage:</strong> any location string or city/state/country</div>
+          <div class="coverage-note"><strong>Department:</strong> vendor or normalized department present</div>
+          <div class="coverage-note"><strong>Schedule:</strong> schedule/shift vendor fields present</div>
+          <div class="coverage-note"><strong>Education:</strong> normalized or vendor degree field present</div>
+          <div class="coverage-note"><strong>Salary:</strong> any structured salary or salary text present</div>
+        </div>
+      </article>
     </div>
+
+    <article class="analytics-card">
+      <div class="analytics-card__header">
+        <div>
+          <p class="analytics-card__eyebrow">Board coverage table</p>
+          <h2 class="analytics-card__title">Per-platform field coverage percentages</h2>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-[1200px] w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              <th class="py-3 pr-4">Board</th>
+              <th class="py-3 px-2 text-right">JD</th>
+              <th class="py-3 px-2 text-right">Requirements</th>
+              <th class="py-3 px-2 text-right">Responsibilities</th>
+              <th class="py-3 px-2 text-right">Department</th>
+              <th class="py-3 px-2 text-right">Geo</th>
+              <th class="py-3 px-2 text-right">Category</th>
+              <th class="py-3 px-2 text-right">Schedule</th>
+              <th class="py-3 px-2 text-right">Education</th>
+              <th class="py-3 px-2 text-right">Salary</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in board_health_rows %}
+            {% if row.total_jobs %}
+            <tr class="border-b border-slate-100">
+              <td class="py-3 pr-4 font-semibold text-slate-900">{{ row.platform_name }}</td>
+              <td class="py-3 px-2 text-right">{{ row.jd_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.requirements_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.responsibilities_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.department_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.geo_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.category_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.schedule_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.education_coverage_pct }}%</td>
+              <td class="py-3 px-2 text-right">{{ row.salary_coverage_pct }}%</td>
+            </tr>
+            {% endif %}
+            {% empty %}
+            <tr><td colspan="10" class="py-6 text-sm text-slate-500">No coverage data yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="analytics-panel hidden" data-tab-panel="failures">
+    <div class="grid gap-6 xl:grid-cols-2">
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Failure mix</p>
+            <h2 class="analytics-card__title">What is breaking or degrading fetch quality</h2>
+          </div>
+        </div>
+        <div class="chart-wrap h-[320px]">
+          <canvas id="failureMixChart"></canvas>
+        </div>
+      </article>
+
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Blocker stack</p>
+            <h2 class="analytics-card__title">Why jobs are not flowing cleanly</h2>
+          </div>
+        </div>
+        <div class="chart-wrap h-[320px]">
+          <canvas id="blockerBreakdownChart"></canvas>
+        </div>
+      </article>
+    </div>
+
+    <article class="analytics-card">
+      <div class="analytics-card__header">
+        <div>
+          <p class="analytics-card__eyebrow">Silent failure watch</p>
+          <h2 class="analytics-card__title">Boards that look successful but return weak output</h2>
+        </div>
+        <p class="analytics-card__meta">`Zero-yield` means a run finished as success/partial without an explicit error, but returned no jobs.</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-[1180px] w-full text-sm">
+          <thead>
+            <tr class="border-b border-slate-200 text-left text-[11px] uppercase tracking-[0.16em] text-slate-500">
+              <th class="py-3 pr-4">Board</th>
+              <th class="py-3 px-2 text-right">Zero-yield</th>
+              <th class="py-3 px-2 text-right">Timeout</th>
+              <th class="py-3 px-2 text-right">HTTP</th>
+              <th class="py-3 px-2 text-right">Parse</th>
+              <th class="py-3 px-2 text-right">No tenant</th>
+              <th class="py-3 px-2 text-right">Rate-limited</th>
+              <th class="py-3 px-2 text-right">Platform</th>
+              <th class="py-3 px-2 text-right">Low confidence</th>
+              <th class="py-3 px-2 text-right">Low JD quality</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in board_health_rows %}
+            {% if row.total_runs or row.total_jobs %}
+            <tr class="border-b border-slate-100">
+              <td class="py-3 pr-4 font-semibold text-slate-900">{{ row.platform_name }}</td>
+              <td class="py-3 px-2 text-right">{{ row.zero_yield_success_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.timeout_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.http_error_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.parse_error_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.no_tenant_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.rate_limited_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.platform_error_runs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.low_confidence_jobs|default:0 }}</td>
+              <td class="py-3 px-2 text-right">{{ row.low_jd_quality_jobs|default:0 }}</td>
+            </tr>
+            {% endif %}
+            {% empty %}
+            <tr><td colspan="10" class="py-6 text-sm text-slate-500">No failure telemetry yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  </section>
+
+  <section class="analytics-panel hidden space-y-6" data-tab-panel="funnel">
+    {% if funnel_global %}
+    <article class="analytics-card">
+      <div class="analytics-card__header">
+        <div>
+          <p class="analytics-card__eyebrow">Hiring funnel</p>
+          <h2 class="analytics-card__title">Resume generation to offers</h2>
+        </div>
+        <p class="analytics-card__meta">Global pipeline metrics shared with the admin dashboard.</p>
+      </div>
+      <div class="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <div class="funnel-stat"><p>Resumes</p><strong>{{ funnel_global.resumes }}</strong></div>
+        <div class="funnel-stat"><p>Submitted</p><strong>{{ funnel_global.submitted }}</strong></div>
+        <div class="funnel-stat"><p>Interview+</p><strong>{{ funnel_global.interview }}</strong></div>
+        <div class="funnel-stat"><p>Offers</p><strong>{{ funnel_global.hired }}</strong></div>
+        <div class="funnel-stat"><p>Rejected</p><strong>{{ funnel_global.rejected }}</strong></div>
+      </div>
+      <div class="chart-wrap h-[280px] mt-4">
+        <canvas id="pipelineGlobalChart"></canvas>
+      </div>
+    </article>
+    {% endif %}
+
+    <div class="grid gap-6 xl:grid-cols-2">
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Application status</p>
+            <h2 class="analytics-card__title">Current status mix</h2>
+          </div>
+        </div>
+        <div class="chart-wrap h-[300px]">
+          <canvas id="appStatusChart"></canvas>
+        </div>
+      </article>
+
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Recruiter leaderboard</p>
+            <h2 class="analytics-card__title">Submission to interview conversion</h2>
+          </div>
+        </div>
+        <div class="chart-wrap h-[300px]">
+          <canvas id="leaderboardChart"></canvas>
+        </div>
+      </article>
+    </div>
+
+    <div class="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      {% if time_to_hire_stages %}
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Time to hire</p>
+            <h2 class="analytics-card__title">Average stage durations</h2>
+          </div>
+          <p class="analytics-card__meta">Bottleneck: <strong>{{ time_to_hire_bottleneck|default:"—" }}</strong></p>
+        </div>
+        <div class="grid gap-3 md:grid-cols-3">
+          {% for label, days in time_to_hire_stages %}
+          <div class="funnel-stat">
+            <p>{{ label }}</p>
+            <strong>{% if days is not None %}{{ days }}{% else %}—{% endif %}</strong>
+          </div>
+          {% endfor %}
+        </div>
+      </article>
+      {% endif %}
+
+      <article class="analytics-card">
+        <div class="analytics-card__header">
+          <div>
+            <p class="analytics-card__eyebrow">Conversion snapshot</p>
+            <h2 class="analytics-card__title">Applications reaching each stage</h2>
+          </div>
+        </div>
+        <div class="grid grid-cols-3 gap-3">
+          <div class="funnel-stat"><p>Interview rate</p><strong>{{ interview_rate }}%</strong></div>
+          <div class="funnel-stat"><p>Offer rate</p><strong>{{ offer_rate }}%</strong></div>
+          <div class="funnel-stat"><p>Rejection rate</p><strong>{{ rejection_rate }}%</strong></div>
+        </div>
+      </article>
+    </div>
+  </section>
 </div>
+
+{{ board_risk_chart_json|json_script:"board-risk-chart-data" }}
+{{ board_volume_chart_json|json_script:"board-volume-chart-data" }}
+{{ coverage_chart_json|json_script:"coverage-chart-data" }}
+{{ failure_mix_chart_json|json_script:"failure-mix-chart-data" }}
+{{ blocker_breakdown_chart_json|json_script:"blocker-breakdown-chart-data" }}
+{{ funnel_global_json|json_script:"pipeline-global-data" }}
+{{ leaderboard_chart_json|json_script:"leaderboard-chart-data" }}
+{{ app_status_labels|json_script:"app-status-labels" }}
+{{ app_status_data|json_script:"app-status-data" }}
+
+<style>
+  .analytics-hero {
+    background:
+      radial-gradient(circle at 18% 22%, rgba(255,255,255,0.12), transparent 32%),
+      radial-gradient(circle at 78% 18%, rgba(110,231,183,0.20), transparent 28%),
+      linear-gradient(135deg, #0f766e 0%, #0f766e 16%, #0f172a 58%, #155e75 100%);
+    box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+  }
+  .period-pill {
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.18);
+    padding: 0.5rem 0.9rem;
+    color: rgba(240,253,250,0.82);
+    background: rgba(255,255,255,0.06);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+  .period-pill--active {
+    background: #ffffff;
+    color: #0f172a;
+    border-color: #ffffff;
+  }
+  .hero-stat {
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.08);
+    padding: 0.9rem 1rem;
+    backdrop-filter: blur(12px);
+  }
+  .hero-stat__label {
+    color: rgba(224, 242, 254, 0.78);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+  }
+  .hero-stat__value {
+    margin-top: 0.3rem;
+    color: #ffffff;
+    font-size: 1.1rem;
+    font-weight: 800;
+  }
+  .metric-tile {
+    border-radius: 22px;
+    border: 1px solid #dbe7f0;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    padding: 1rem;
+    box-shadow: 0 10px 26px rgba(15, 23, 42, 0.05);
+  }
+  .metric-tile--warn {
+    background: linear-gradient(180deg, #fffaf0 0%, #fff7ed 100%);
+    border-color: #fed7aa;
+  }
+  .metric-tile--danger {
+    background: linear-gradient(180deg, #fff5f5 0%, #fff1f2 100%);
+    border-color: #fecdd3;
+  }
+  .metric-tile__label {
+    font-size: 0.7rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    color: #64748b;
+  }
+  .metric-tile__value {
+    margin-top: 0.5rem;
+    font-size: 1.7rem;
+    font-weight: 900;
+    color: #0f172a;
+  }
+  .metric-tile__sub {
+    margin-top: 0.3rem;
+    font-size: 0.78rem;
+    color: #64748b;
+  }
+  .analytics-tab {
+    border-radius: 999px;
+    border: 1px solid #dbe4ee;
+    background: #ffffff;
+    padding: 0.65rem 1rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #334155;
+    transition: all 0.18s ease;
+  }
+  .analytics-tab:hover,
+  .analytics-tab--active {
+    background: #0f172a;
+    border-color: #0f172a;
+    color: #ffffff;
+  }
+  .analytics-card {
+    border-radius: 24px;
+    border: 1px solid #e2e8f0;
+    background: #ffffff;
+    padding: 1.3rem;
+    box-shadow: 0 14px 38px rgba(15, 23, 42, 0.05);
+  }
+  .analytics-card__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    margin-bottom: 1rem;
+  }
+  .analytics-card__eyebrow {
+    font-size: 0.72rem;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    color: #0f766e;
+  }
+  .analytics-card__title {
+    font-size: 1.2rem;
+    font-weight: 800;
+    color: #0f172a;
+  }
+  .analytics-card__meta {
+    font-size: 0.82rem;
+    line-height: 1.5;
+    color: #64748b;
+  }
+  .chart-wrap {
+    position: relative;
+    width: 100%;
+  }
+  .watch-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.8rem;
+    border-radius: 18px;
+    border: 1px solid #e2e8f0;
+    background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+    padding: 0.95rem 1rem;
+  }
+  .watch-row__dot {
+    display: inline-block;
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 999px;
+  }
+  .risk-pill {
+    display: inline-flex;
+    min-width: 3.6rem;
+    justify-content: center;
+    border-radius: 999px;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.82rem;
+    font-weight: 800;
+  }
+  .risk-pill--healthy {
+    background: #dcfce7;
+    color: #166534;
+  }
+  .risk-pill--warning {
+    background: #fef3c7;
+    color: #92400e;
+  }
+  .risk-pill--critical {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+  .coverage-note,
+  .funnel-stat {
+    border-radius: 18px;
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    padding: 0.95rem 1rem;
+  }
+  .coverage-note {
+    font-size: 0.85rem;
+    line-height: 1.5;
+    color: #334155;
+  }
+  .funnel-stat p {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: #64748b;
+  }
+  .funnel-stat strong {
+    display: block;
+    margin-top: 0.35rem;
+    font-size: 1.35rem;
+    color: #0f172a;
+  }
+</style>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-    // Application Status Chart
-    const appCtx = document.getElementById('appStatusChart').getContext('2d');
-    new Chart(appCtx, {
-        type: 'doughnut',
-        data: {
-            labels: {{ app_status_labels|safe }},
-            datasets: [{
-                data: {{ app_status_data|safe }},
-                backgroundColor: [
-                    '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#6B7280'
-                ],
-                borderWidth: 1
-            }]
+  function readJson(id) {
+    const node = document.getElementById(id);
+    return node ? JSON.parse(node.textContent) : null;
+  }
+
+  function mountChart(id, config) {
+    const canvas = document.getElementById(id);
+    if (!canvas) return null;
+    return new Chart(canvas.getContext('2d'), config);
+  }
+
+  const sharedGrid = {
+    color: 'rgba(148, 163, 184, 0.18)',
+    drawBorder: false,
+  };
+
+  const sharedTick = {
+    color: '#475569',
+    font: { size: 11, weight: '600' },
+  };
+
+  const boardRiskData = readJson('board-risk-chart-data');
+  if (boardRiskData && boardRiskData.labels.length) {
+    mountChart('boardRiskChart', {
+      type: 'bar',
+      data: {
+        labels: boardRiskData.labels,
+        datasets: [
+          {
+            label: 'Risk score',
+            data: boardRiskData.risk,
+            backgroundColor: '#0f172a',
+            borderRadius: 10,
+          },
+          {
+            label: 'Missing JD %',
+            data: boardRiskData.missing_jd,
+            backgroundColor: '#f97316',
+            borderRadius: 10,
+          },
+          {
+            label: 'Inactive %',
+            data: boardRiskData.inactive,
+            backgroundColor: '#ef4444',
+            borderRadius: 10,
+          },
+          {
+            label: 'Failed runs %',
+            data: boardRiskData.failed_runs,
+            backgroundColor: '#8b5cf6',
+            borderRadius: 10,
+          },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#334155', font: { weight: '700' } } } },
+        scales: {
+          x: { ticks: sharedTick, grid: { display: false } },
+          y: { ticks: sharedTick, grid: sharedGrid, beginAtZero: true },
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false
-        }
+      },
     });
+  }
 
-    // Jobs Over Time Chart
-    const jobCtx = document.getElementById('jobsTimeChart').getContext('2d');
-    // Parse month labels properly if needed, but strings are fine for Chart.js
-    const jobLabels = {{ jobs_time_labels|safe }};
-    // We might need to ensure they are parsed as strings, JSON dumps does "Jan 2024"
-
-    new Chart(jobCtx, {
-        type: 'line',
-        data: {
-            labels: jobLabels,
-            datasets: [{
-                label: 'Jobs Posted',
-                data: {{ jobs_time_data|safe }},
-                borderColor: '#8B5CF6',
-                tension: 0.3,
-                fill: true,
-                backgroundColor: 'rgba(139, 92, 246, 0.1)'
-            }]
+  const boardVolumeData = readJson('board-volume-chart-data');
+  if (boardVolumeData && boardVolumeData.labels.length) {
+    mountChart('boardVolumeChart', {
+      type: 'bar',
+      data: {
+        labels: boardVolumeData.labels,
+        datasets: [
+          { label: 'Jobs', data: boardVolumeData.jobs, backgroundColor: '#14b8a6', borderRadius: 10 },
+          { label: 'Fetch runs', data: boardVolumeData.runs, backgroundColor: '#0f172a', borderRadius: 10 },
+          { label: 'Blocked jobs', data: boardVolumeData.blocked, backgroundColor: '#f97316', borderRadius: 10 },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#334155', font: { weight: '700' } } } },
+        scales: {
+          x: { ticks: sharedTick, grid: { display: false } },
+          y: { ticks: sharedTick, grid: sharedGrid, beginAtZero: true },
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: {
-                    beginAtZero: true,
-                    ticks: {
-                        stepSize: 1
-                    }
-                }
-            }
-        }
+      },
     });
+  }
 
-    // Applications Funnel Chart
-    const funnelCtx = document.getElementById('funnelChart').getContext('2d');
-    new Chart(funnelCtx, {
-        type: 'bar',
-        data: {
-            labels: {{ funnel_labels|safe }},
-            datasets: [{
-                label: 'Applications',
-                data: {{ funnel_data|safe }},
-                backgroundColor: '#3B82F6'
-            }]
+  const coverageData = readJson('coverage-chart-data');
+  if (coverageData && coverageData.labels.length) {
+    mountChart('coverageChart', {
+      type: 'bar',
+      data: {
+        labels: coverageData.labels,
+        datasets: [
+          { label: 'JD', data: coverageData.jd, backgroundColor: '#0f766e', borderRadius: 10 },
+          { label: 'Geo', data: coverageData.geo, backgroundColor: '#0ea5e9', borderRadius: 10 },
+          { label: 'Department', data: coverageData.department, backgroundColor: '#6366f1', borderRadius: 10 },
+          { label: 'Salary', data: coverageData.salary, backgroundColor: '#f59e0b', borderRadius: 10 },
+          { label: 'Schedule', data: coverageData.schedule, backgroundColor: '#ec4899', borderRadius: 10 },
+          { label: 'Education', data: coverageData.education, backgroundColor: '#84cc16', borderRadius: 10 },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#334155', font: { weight: '700' } } } },
+        scales: {
+          x: { ticks: sharedTick, grid: { display: false } },
+          y: { ticks: sharedTick, grid: sharedGrid, beginAtZero: true, max: 100 },
         },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            scales: {
-                y: {
-                    beginAtZero: true
-                }
-            }
-        }
+      },
     });
+  }
 
-    // Applications Over Time Line Chart
-    const appsTimeEl = document.getElementById('appsTimeChart');
-    if (appsTimeEl) {
-        new Chart(appsTimeEl.getContext('2d'), {
-            type: 'line',
-            data: {
-                labels: {{ apps_time_labels|safe }},
-                datasets: [{
-                    label: 'Applications',
-                    data: {{ apps_time_data|safe }},
-                    borderColor: '#10B981',
-                    tension: 0.3,
-                    fill: true,
-                    backgroundColor: 'rgba(16, 185, 129, 0.1)'
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                scales: {
-                    y: {
-                        beginAtZero: true,
-                        ticks: { stepSize: 1 }
-                    }
-                }
-            }
-        });
-    }
+  const failureMixData = readJson('failure-mix-chart-data');
+  if (failureMixData) {
+    mountChart('failureMixChart', {
+      type: 'doughnut',
+      data: {
+        labels: failureMixData.labels,
+        datasets: [{
+          data: failureMixData.values,
+          backgroundColor: ['#ef4444', '#f59e0b', '#8b5cf6', '#0ea5e9', '#f97316', '#64748b', '#ec4899', '#0f172a'],
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#334155', font: { weight: '700' } } } },
+      },
+    });
+  }
 
-    const fg = {{ funnel_global_json|safe }};
-    if (fg && fg.labels && document.getElementById('pipelineGlobalChart')) {
-        new Chart(document.getElementById('pipelineGlobalChart').getContext('2d'), {
-            type: 'bar',
-            data: {
-                labels: fg.labels,
-                datasets: [{ label: 'Count', data: fg.values, backgroundColor: '#6366f1' }]
-            },
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } } }
-        });
-    }
-    const lb = {{ leaderboard_chart_json|safe }};
-    if (lb && lb.labels && lb.labels.length && document.getElementById('leaderboardChart')) {
-        new Chart(document.getElementById('leaderboardChart').getContext('2d'), {
-            type: 'bar',
-            data: {
-                labels: lb.labels,
-                datasets: [
-                    { label: 'Sub→Interview %', data: lb.sub_to_interview, backgroundColor: '#10b981' },
-                    { label: 'Hires', data: lb.hires, backgroundColor: '#3b82f6' }
-                ]
-            },
-            options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true } } }
-        });
-    }
+  const blockerData = readJson('blocker-breakdown-chart-data');
+  if (blockerData) {
+    mountChart('blockerBreakdownChart', {
+      type: 'polarArea',
+      data: {
+        labels: blockerData.labels,
+        datasets: [{
+          data: blockerData.values,
+          backgroundColor: ['rgba(249, 115, 22, 0.82)', 'rgba(239, 68, 68, 0.82)', 'rgba(99, 102, 241, 0.82)', 'rgba(15, 118, 110, 0.82)', 'rgba(15, 23, 42, 0.82)'],
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#334155', font: { weight: '700' } } } },
+        scales: { r: { ticks: { backdropColor: 'transparent', color: '#475569' }, grid: sharedGrid } },
+      },
+    });
+  }
+
+  const pipelineData = readJson('pipeline-global-data');
+  if (pipelineData) {
+    mountChart('pipelineGlobalChart', {
+      type: 'bar',
+      data: {
+        labels: pipelineData.labels,
+        datasets: [{
+          label: 'Count',
+          data: pipelineData.values,
+          backgroundColor: ['#0f766e', '#0ea5e9', '#6366f1', '#f59e0b', '#ef4444'],
+          borderRadius: 10,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { ticks: sharedTick, grid: { display: false } },
+          y: { ticks: sharedTick, grid: sharedGrid, beginAtZero: true },
+        },
+      },
+    });
+  }
+
+  const appStatusLabels = readJson('app-status-labels') || [];
+  const appStatusData = readJson('app-status-data') || [];
+  if (appStatusLabels.length) {
+    mountChart('appStatusChart', {
+      type: 'doughnut',
+      data: {
+        labels: appStatusLabels,
+        datasets: [{
+          data: appStatusData,
+          backgroundColor: ['#0f766e', '#0ea5e9', '#6366f1', '#f59e0b', '#ef4444', '#8b5cf6'],
+          borderWidth: 0,
+        }],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#334155', font: { weight: '700' } } } },
+      },
+    });
+  }
+
+  const leaderboardData = readJson('leaderboard-chart-data');
+  if (leaderboardData && leaderboardData.labels.length) {
+    mountChart('leaderboardChart', {
+      type: 'bar',
+      data: {
+        labels: leaderboardData.labels,
+        datasets: [
+          { label: 'Sub→Interview %', data: leaderboardData.sub_to_interview, backgroundColor: '#0f766e', borderRadius: 10 },
+          { label: 'Hires', data: leaderboardData.hires, backgroundColor: '#f59e0b', borderRadius: 10 },
+        ],
+      },
+      options: {
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#334155', font: { weight: '700' } } } },
+        scales: {
+          x: { ticks: sharedTick, grid: { display: false } },
+          y: { ticks: sharedTick, grid: sharedGrid, beginAtZero: true },
+        },
+      },
+    });
+  }
+
+  const tabs = Array.from(document.querySelectorAll('[data-tab-target]'));
+  const panels = Array.from(document.querySelectorAll('[data-tab-panel]'));
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const target = tab.getAttribute('data-tab-target');
+      tabs.forEach((btn) => btn.classList.remove('analytics-tab--active'));
+      panels.forEach((panel) => panel.classList.add('hidden'));
+      tab.classList.add('analytics-tab--active');
+      const activePanel = document.querySelector(`[data-tab-panel="${target}"]`);
+      if (activePanel) activePanel.classList.remove('hidden');
+    });
+  });
 </script>
 {% endblock %}

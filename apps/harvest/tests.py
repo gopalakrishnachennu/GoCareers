@@ -18,6 +18,7 @@ from harvest.harvesters import (
     get_harvester,
 )
 from harvest.jarvis import JobJarvis
+from harvest.harvesters.oracle import OracleHCMHarvester
 from harvest.platform_engine import ImplementationKind, dedicated_slugs, kind_for_slug
 
 
@@ -411,6 +412,122 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         finder = mock_get.call_args.kwargs.get("params", {}).get("finder", "")
         self.assertIn("ById;", finder)
         self.assertNotIn("findReqDetails", finder)
+
+    def test_oracle_ce_rest_api_maps_detail_metrics(self):
+        jarvis = JobJarvis()
+        url = "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/300001"
+        api_resp = {
+            "items": [{
+                "Title": "Oracle RN",
+                "ExternalDescriptionStr": "<p>Oracle full JD body</p>",
+                "ExternalQualificationsStr": "RN required",
+                "ExternalResponsibilitiesStr": "Deliver patient care",
+                "Organization": "Nursing",
+                "JobCategory": "Nursing",
+                "StudyLevel": "Associate Degree",
+                "JobSchedule": "Full time",
+                "JobShift": "Evening",
+                "JobIdentification": "146728",
+                "ExternalPostedStartDate": "2026-05-01T15:36:26+00:00",
+                "workLocation": [{
+                    "AddressLine1": "3100 Oak Grove Rd",
+                    "TownOrCity": "Poplar Bluff",
+                    "Region2": "MO",
+                    "PostalCode": "63901",
+                    "Country": "US",
+                }],
+                "PrimaryLocationCountry": "US",
+            }]
+        }
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status = MagicMock()
+        mock_resp.json.return_value = api_resp
+        with patch.object(jarvis._session, "get", return_value=mock_resp):
+            out = jarvis._oracle(url)
+        self.assertIsNotNone(out)
+        self.assertIn("Oracle full JD body", out.get("description", ""))
+        self.assertEqual(out.get("requirements"), "RN required")
+        self.assertEqual(out.get("responsibilities"), "Deliver patient care")
+        self.assertEqual(out.get("vendor_job_identification"), "146728")
+        self.assertEqual(out.get("vendor_job_category"), "Nursing")
+        self.assertEqual(out.get("vendor_degree_level"), "Associate Degree")
+        self.assertEqual(out.get("vendor_job_schedule"), "Full time")
+        self.assertEqual(out.get("vendor_job_shift"), "Evening")
+        self.assertIn("3100 Oak Grove Rd", out.get("vendor_location_block", ""))
+        self.assertEqual(out.get("education_required"), "ASSOCIATE")
+        self.assertEqual(out.get("city"), "Poplar Bluff")
+        self.assertEqual(out.get("state"), "MO")
+        self.assertEqual(out.get("country"), "United States")
+        self.assertEqual(out.get("posted_date_raw"), "2026-05-01T15:36:26+00:00")
+
+
+class OracleHarvesterTests(SimpleTestCase):
+    def test_oracle_harvester_uses_detail_payload_for_full_metrics(self):
+        harvester = OracleHCMHarvester()
+        company = MagicMock(name="Demo Co")
+        company.name = "Demo Co"
+        list_resp = {
+            "items": [{
+                "TotalJobsCount": 1,
+                "requisitionList": [{
+                    "Id": "146728",
+                    "Title": "ER RN Evening",
+                    "primaryLocation": {
+                        "City": "Poplar Bluff",
+                        "State": "MO",
+                        "Country": "US",
+                    },
+                }],
+            }]
+        }
+        detail_resp = {
+            "items": [{
+                "Id": "146728",
+                "Title": "ER RN Evening",
+                "ExternalDescriptionStr": "<p>Job Summary</p><p>Full JD body</p>",
+                "ExternalQualificationsStr": "RN license required",
+                "ExternalResponsibilitiesStr": "Provide patient-centered care",
+                "Organization": "Nursing",
+                "JobIdentification": "146728",
+                "JobCategory": "Nursing",
+                "PostedDate": "2026-05-01T10:36:00Z",
+                "StudyLevel": "Associate Degree",
+                "JobSchedule": "Full time",
+                "JobShift": "Evening",
+                "ExternalPostedStartDate": "2026-05-01T15:36:26+00:00",
+                "workLocation": [{
+                    "AddressLine1": "3100 Oak Grove Rd",
+                    "TownOrCity": "Poplar Bluff",
+                    "Region2": "MO",
+                    "PostalCode": "63901",
+                    "Country": "US",
+                }],
+                "PrimaryLocationCountry": "US",
+            }]
+        }
+        with patch.object(harvester, "_get", side_effect=[list_resp, detail_resp]):
+            jobs = harvester.fetch_jobs(company, "eeho.fa.us2|CX", fetch_all=True)
+
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertIn("Full JD body", job["description"])
+        self.assertEqual(job["requirements"], "RN license required")
+        self.assertEqual(job["responsibilities"], "Provide patient-centered care")
+        self.assertEqual(job["job_category"], "Nursing")
+        self.assertEqual(job["education_required"], "ASSOCIATE")
+        self.assertEqual(job["schedule_type"], "Full time")
+        self.assertEqual(job["shift_schedule"], "Evening")
+        self.assertEqual(job["vendor_job_identification"], "146728")
+        self.assertEqual(job["vendor_job_category"], "Nursing")
+        self.assertEqual(job["vendor_degree_level"], "Associate Degree")
+        self.assertEqual(job["vendor_job_schedule"], "Full time")
+        self.assertEqual(job["vendor_job_shift"], "Evening")
+        self.assertEqual(job["vendor_location_block"], "3100 Oak Grove Rd, Poplar Bluff, MO, 63901, United States")
+        self.assertEqual(job["postal_code"], "63901")
+        self.assertEqual(job["country"], "United States")
+        self.assertEqual(job["posted_date_raw"], "2026-05-01T15:36:26+00:00")
+        self.assertEqual(job["raw_payload"]["source"], "oracle_hcm")
+        self.assertIn("detail", job["raw_payload"])
 
     def test_dayforce_job_detail_api(self):
         jarvis = JobJarvis()
