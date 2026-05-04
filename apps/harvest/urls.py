@@ -32,6 +32,7 @@ from .views import (
     RawJobListView,
     RawJobResumeProfileView,
     RawJobStatsView,
+    BoardAnalyticsView,
     RawJobWorkflowInsightsView,
     RunBackfillDescriptionsView,
     RunBackfillResumeContractView,
@@ -108,6 +109,7 @@ urlpatterns = [
     path("run/setup-schedule/", SetupScheduleView.as_view(), name="harvest-run-setup-schedule"),
     # API helpers
     path("api/cooldown/", FetchCooldownStatusView.as_view(), name="harvest-api-cooldown"),
+    path("api/board-analytics/", BoardAnalyticsView.as_view(), name="harvest-board-analytics"),
     # Local Harvesting Agent — push API (token-authenticated, csrf_exempt)
     path("api/push/labels/", ExportLabelsView.as_view(), name="harvest-push-labels"),
     path("api/push/jobs/", PushJobsView.as_view(), name="harvest-push-jobs"),

@@ -19,6 +19,12 @@ class JobBoardPlatform(models.Model):
         HTML_SCRAPE = "html_scrape", "HTML Scrape"
         UNKNOWN = "unknown", "Unknown"
 
+    class SupportTier(models.TextChoices):
+        HEALTHY      = "healthy",       "Healthy"
+        DEGRADED     = "degraded",      "Degraded"
+        EXPERIMENTAL = "experimental",  "Experimental"
+        UNSUPPORTED  = "unsupported",   "Unsupported"
+
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=100, unique=True)
     url_patterns = models.JSONField(
@@ -42,6 +48,12 @@ class JobBoardPlatform(models.Model):
     color_hex = models.CharField(
         max_length=7, blank=True, default="#6B7280",
         help_text="Badge colour hex e.g. #4A90D9",
+    )
+    support_tier = models.CharField(
+        max_length=16,
+        choices=SupportTier.choices,
+        default=SupportTier.HEALTHY,
+        help_text="Operational health tier. UNSUPPORTED = excluded from normal harvest rotation.",
     )
     notes = models.TextField(blank=True)
     last_harvested_at = models.DateTimeField(null=True, blank=True)
@@ -323,17 +335,31 @@ class CompanyFetchRun(models.Model):
         PENDING = "PENDING", "Pending"
         RUNNING = "RUNNING", "Running"
         SUCCESS = "SUCCESS", "Success"
+        EMPTY   = "EMPTY",   "Empty (0 jobs)"   # fetch succeeded but returned 0 jobs
         PARTIAL = "PARTIAL", "Partial"
-        FAILED = "FAILED", "Failed"
+        FAILED  = "FAILED",  "Failed"
         SKIPPED = "SKIPPED", "Skipped"
 
     class ErrorType(models.TextChoices):
-        TIMEOUT = "TIMEOUT", "Timeout"
-        HTTP_ERROR = "HTTP_ERROR", "HTTP Error"
-        PARSE_ERROR = "PARSE_ERROR", "Parse Error"
-        NO_TENANT = "NO_TENANT", "No Tenant ID"
+        TIMEOUT        = "TIMEOUT",        "Timeout"
+        HTTP_ERROR     = "HTTP_ERROR",     "HTTP Error"
+        PARSE_ERROR    = "PARSE_ERROR",    "Parse Error"
+        NO_TENANT      = "NO_TENANT",      "No Tenant ID"
         PLATFORM_ERROR = "PLATFORM_ERROR", "Platform Error"
-        RATE_LIMITED = "RATE_LIMITED", "Rate Limited"
+        RATE_LIMITED   = "RATE_LIMITED",   "Rate Limited"
+
+    class IssueCode(models.TextChoices):
+        """Fine-grained reason code — supplements error_type for analytics."""
+        NONE                = "",                   "None"
+        PORTAL_DOWN         = "PORTAL_DOWN",        "Portal Down / Unreachable"
+        PORTAL_BLOCKED      = "PORTAL_BLOCKED",     "Anti-bot / Access Blocked"
+        NO_JOBS_RETURNED    = "NO_JOBS_RETURNED",   "Portal reachable but returned 0 jobs"
+        NO_ACTIVE_TENANT    = "NO_ACTIVE_TENANT",   "Tenant has no active jobs"
+        PARSE_FAILED        = "PARSE_FAILED",       "Response received but parse failed"
+        TENANT_INVALID      = "TENANT_INVALID",     "Tenant ID missing or invalid"
+        RATE_LIMITED        = "RATE_LIMITED",       "Rate limited by platform"
+        FETCH_TIMEOUT       = "FETCH_TIMEOUT",      "Fetch timed out mid-crawl"
+        PARTIAL_RESULTS     = "PARTIAL_RESULTS",    "Partial results (e.g. timeout after some pages)"
 
     label = models.ForeignKey(
         CompanyPlatformLabel,
@@ -368,6 +394,13 @@ class CompanyFetchRun(models.Model):
         max_length=16,
         choices=ErrorType.choices,
         blank=True,
+    )
+    issue_code = models.CharField(
+        max_length=20,
+        choices=IssueCode.choices,
+        blank=True,
+        default="",
+        help_text="Fine-grained issue code for analytics (supplements error_type).",
     )
     triggered_by = models.CharField(
         max_length=16,

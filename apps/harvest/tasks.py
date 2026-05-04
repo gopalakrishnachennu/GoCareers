@@ -1164,12 +1164,23 @@ def fetch_raw_jobs_for_company_task(
                 pass
 
     # ── Update run record ─────────────────────────────────────────────────────
-    run.status = (
-        CompanyFetchRun.Status.SUCCESS
-        if jobs_failed == 0
-        else (CompanyFetchRun.Status.PARTIAL if (jobs_new + jobs_updated) > 0 else CompanyFetchRun.Status.FAILED)
-    )
-    run.jobs_found = len(raw_jobs)
+    _total_found = len(raw_jobs)
+    if jobs_failed > 0:
+        run.status = (
+            CompanyFetchRun.Status.PARTIAL
+            if (jobs_new + jobs_updated) > 0
+            else CompanyFetchRun.Status.FAILED
+        )
+        if not run.issue_code:
+            run.issue_code = CompanyFetchRun.IssueCode.PARSE_FAILED
+    elif _total_found == 0:
+        # Fetch succeeded (no errors) but returned zero jobs — silent empty, not a clean success.
+        run.status = CompanyFetchRun.Status.EMPTY
+        run.issue_code = CompanyFetchRun.IssueCode.NO_JOBS_RETURNED
+    else:
+        run.status = CompanyFetchRun.Status.SUCCESS
+
+    run.jobs_found = _total_found
     run.jobs_new = jobs_new
     run.jobs_updated = jobs_updated
     run.jobs_duplicate = jobs_duplicate
@@ -1181,15 +1192,20 @@ def fetch_raw_jobs_for_company_task(
     run.save(update_fields=[
         "status", "jobs_found", "jobs_total_available", "jobs_new", "jobs_updated",
         "jobs_duplicate", "jobs_failed", "completed_at", "error_message", "error_type",
+        "issue_code",
     ])
 
     # ── Update batch counters + auto-complete ────────────────────────────────
     _batch_just_finished = False
     if batch:
-        if run.status in (CompanyFetchRun.Status.SUCCESS, CompanyFetchRun.Status.PARTIAL):
+        if run.status in (
+            CompanyFetchRun.Status.SUCCESS,
+            CompanyFetchRun.Status.EMPTY,    # zero-yield still counts as completed, not failed
+            CompanyFetchRun.Status.PARTIAL,
+        ):
             FetchBatch.objects.filter(pk=batch.pk).update(
                 completed_companies=models.F("completed_companies") + 1,
-                total_jobs_found=models.F("total_jobs_found") + len(raw_jobs),
+                total_jobs_found=models.F("total_jobs_found") + _total_found,
                 total_jobs_new=models.F("total_jobs_new") + jobs_new,
             )
         else:
