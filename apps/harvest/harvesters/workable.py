@@ -101,7 +101,7 @@ class WorkableHarvester(BaseHarvester):
         )
 
         # ── Fetch full description from detail endpoint ────────────────────
-        description = requirements = benefits = ""
+        description = requirements = responsibilities = benefits = ""
         city = state = country = ""
         salary_min = salary_max = None
         salary_currency, salary_period, salary_raw = "USD", "", ""
@@ -109,9 +109,10 @@ class WorkableHarvester(BaseHarvester):
             try:
                 detail = self._get(DETAIL_URL.format(slug=slug, shortcode=shortcode))
                 if isinstance(detail, dict) and "error" not in detail:
-                    description  = detail.get("description") or ""
-                    requirements = detail.get("requirements") or ""
-                    benefits     = detail.get("benefits") or ""
+                    description      = detail.get("description") or ""
+                    requirements     = detail.get("requirements") or ""
+                    responsibilities = detail.get("summary") or detail.get("responsibilities") or ""
+                    benefits         = detail.get("benefits") or ""
                     # Richer location from detail
                     dloc = detail.get("location") or {}
                     city    = dloc.get("city") or ""
@@ -155,6 +156,7 @@ class WorkableHarvester(BaseHarvester):
             "salary_raw": salary_raw,
             "description": description,
             "requirements": requirements,
+            "responsibilities": responsibilities,
             "benefits": benefits,
             "posted_date_raw": job.get("created_at") or "",
             "closing_date": "",

@@ -126,8 +126,9 @@ class TaleoHarvester(BaseHarvester):
     def _inline_fetch_details(
         self, postings: list, base_section_url: str, lang: str, token_name: str, token_value: str
     ) -> None:
-        """Fetch job description for the first DETAIL_FETCH_CAP postings inline."""
+        """Fetch job description + requirements/responsibilities for first DETAIL_FETCH_CAP postings."""
         import json as _json
+        import re as _re
 
         for i, posting in enumerate(postings):
             if i >= DETAIL_FETCH_CAP:
@@ -149,10 +150,11 @@ class TaleoHarvester(BaseHarvester):
                 if not resp.ok:
                     continue
                 html = resp.text
-                # JSON-LD
-                for block in __import__("re").findall(
+
+                # JSON-LD — most reliable
+                for block in _re.findall(
                     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
-                    html, __import__("re").S | __import__("re").I,
+                    html, _re.S | _re.I,
                 ):
                     try:
                         schema = _json.loads(block)
@@ -162,20 +164,46 @@ class TaleoHarvester(BaseHarvester):
                             desc = schema.get("description") or ""
                             if desc and len(str(desc)) > 80:
                                 posting["description"] = str(desc).strip()
-                                break
+                            # Extract department from JSON-LD if missing
+                            if not posting.get("department"):
+                                dept = schema.get("occupationalCategory") or schema.get("jobCategory") or ""
+                                if dept:
+                                    posting["department"] = str(dept).strip()
+                            break
                     except Exception:
                         continue
+
                 # Taleo-specific HTML fallback
                 if not posting.get("description"):
-                    m = __import__("re").search(
+                    m = _re.search(
                         r'<div[^>]+class=["\'][^"\']*ATSJobDetailContainer[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
-                        html, __import__("re").I,
+                        html, _re.I,
                     )
                     if m:
-                        text = __import__("re").sub(r"<[^>]+>", " ", m.group(1))
-                        text = __import__("re").sub(r"\s+", " ", text).strip()
+                        text = _re.sub(r"<[^>]+>", " ", m.group(1))
+                        text = _re.sub(r"\s+", " ", text).strip()
                         if len(text) > 100:
                             posting["description"] = text
+
+                # Extract requirements / responsibilities from section headers
+                for section_pat, key in [
+                    (r'(?:Requirements?|Qualifications?|Required\s+Skills?|Must\s+Have)', "requirements"),
+                    (r'(?:Responsibilities?|What\s+You.ll\s+Do|The\s+Role)', "responsibilities"),
+                ]:
+                    if posting.get(key):
+                        continue
+                    header_re = _re.compile(
+                        rf'<(?:h[1-6]|strong|b)[^>]*>\s*{section_pat}[^<]*</(?:h[1-6]|strong|b)>'
+                        r'([\s\S]{50,2000}?)(?=<(?:h[1-6]|strong|b)|$)',
+                        _re.I,
+                    )
+                    sm = header_re.search(html)
+                    if sm:
+                        plain = _re.sub(r"<[^>]+>", " ", sm.group(1))
+                        plain = _re.sub(r"\s+", " ", plain).strip()
+                        if plain:
+                            posting[key] = plain
+
             except Exception:
                 continue
 
@@ -298,8 +326,13 @@ class TaleoHarvester(BaseHarvester):
                 continue
             columns = req.get("column") or []
             title = str(columns[0] if columns else "").strip() or "Untitled Position"
+            # Taleo REST column layout (typical): [title, department, location, category, date]
+            department = str(columns[1] if len(columns) > 1 else "").strip()
             location_raw = self._location_label(columns[2] if len(columns) > 2 else "")
             posting_date = str(columns[4] if len(columns) > 4 else "").strip()
+            # Also check top-level department fields
+            if not department:
+                department = str(req.get("department") or req.get("jobField") or req.get("jobCategory") or "").strip()
             contest_no = str(req.get("contestNo") or "").strip()
             detail_ref = contest_no or job_id
             job_url = f"{base_section_url}/jobdetail.ftl?job={quote(detail_ref)}&lang={lang}"
@@ -310,7 +343,7 @@ class TaleoHarvester(BaseHarvester):
                 "apply_url": job_url,
                 "title": title,
                 "company_name": company_name,
-                "department": "",
+                "department": department,
                 "team": "",
                 "location_raw": location_raw,
                 "city": "",
@@ -327,6 +360,7 @@ class TaleoHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": posting_date,
                 "closing_date": "",
@@ -400,6 +434,7 @@ class TaleoHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": posted_date,
                 "closing_date": "",

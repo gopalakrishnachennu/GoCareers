@@ -78,6 +78,51 @@ def _detect_experience_level(title: str, description: str) -> str:
     return "MID"
 
 
+_SALARY_PERIOD_RE = re.compile(r"\b(hour|hr|hourly|month|monthly|annual|year|yr)\b", re.I)
+
+
+def _parse_lever_salary(text: str) -> tuple:
+    """Extract (sal_min, sal_max, period, raw) from a compensation string."""
+    if not text:
+        return None, None, "", ""
+    nums = []
+    for m in re.finditer(r'\$([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)\s*([Kk])?', text):
+        v = float(m.group(1).replace(",", ""))
+        if m.group(2):
+            v *= 1000
+        if v > 0:
+            nums.append(v)
+    if not nums:
+        return None, None, "", ""
+    sal_min = min(nums)
+    sal_max = max(nums) if len(nums) > 1 else sal_min
+    pm = _SALARY_PERIOD_RE.search(text)
+    period = "HOUR" if pm and "hour" in pm.group(1).lower() or "hr" in pm.group(1).lower() else (
+        "MONTH" if pm and "month" in pm.group(1).lower() else "YEAR"
+    )
+    raw = text[:200]
+    return sal_min, sal_max, period, raw
+
+
+def _extract_lever_sections(lists: list) -> tuple[str, str, str, str]:
+    """Parse Lever `lists` array into (requirements, responsibilities, benefits, salary_text)."""
+    requirements = responsibilities = benefits = salary_text = ""
+    for item in lists or []:
+        label = (item.get("text") or "").lower().strip()
+        content = item.get("content") or ""
+        plain = re.sub(r"<[^>]+>", " ", content)
+        plain = re.sub(r"\s+", " ", plain).strip()
+        if any(k in label for k in ("requirement", "qualification", "skill", "must have", "you have", "you bring")):
+            requirements = plain
+        elif any(k in label for k in ("responsib", "what you'll do", "you will", "the role", "your role")):
+            responsibilities = plain
+        elif any(k in label for k in ("benefit", "perk", "we offer", "offer")):
+            benefits = plain
+        elif any(k in label for k in ("compensat", "salary", "pay")):
+            salary_text = plain
+    return requirements, responsibilities, benefits, salary_text
+
+
 def _normalize_lever_job(job: dict, company_name: str) -> dict:
     cats = job.get("categories", {})
     commitment = cats.get("commitment", "")
@@ -85,8 +130,12 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
     location_raw = cats.get("location", "") or ""
     location_type, is_remote = _detect_location_type(location_raw)
 
-    # Description text
+    # Description + section extraction
     description_blocks = job.get("descriptionPlain", "") or ""
+    lists = job.get("lists") or []
+    requirements, responsibilities, benefits, salary_text = _extract_lever_sections(lists)
+
+    # Build full description including all list sections
     lists_plain = job.get("listsPlain", "") or ""
     description = description_blocks
     if lists_plain:
@@ -94,6 +143,15 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
 
     title = job.get("text", "")
     experience_level = _detect_experience_level(title, description[:500])
+
+    # Salary — try compensation field, then salary text from lists, then description
+    sal_min = sal_max = None
+    sal_period = sal_raw = ""
+    comp_text = salary_text or job.get("compensation") or job.get("salaryRange") or ""
+    if not comp_text:
+        # scan first 2000 chars of description for salary pattern
+        comp_text = description[:2000]
+    sal_min, sal_max, sal_period, sal_raw = _parse_lever_salary(str(comp_text))
 
     return {
         "external_id": job.get("id", ""),
@@ -111,14 +169,15 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
         "location_type": location_type,
         "employment_type": employment_type,
         "experience_level": experience_level,
-        "salary_min": None,
-        "salary_max": None,
+        "salary_min": sal_min,
+        "salary_max": sal_max,
         "salary_currency": "USD",
-        "salary_period": "",
-        "salary_raw": "",
+        "salary_period": sal_period,
+        "salary_raw": sal_raw,
         "description": description,
-        "requirements": "",
-        "benefits": "",
+        "requirements": requirements,
+        "responsibilities": responsibilities,
+        "benefits": benefits,
         "posted_date_raw": str(job.get("createdAt", "")),
         "closing_date": "",
         "raw_payload": job,

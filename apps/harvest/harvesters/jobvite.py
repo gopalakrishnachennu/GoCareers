@@ -20,6 +20,7 @@ from urllib.parse import urljoin
 from .base import BaseHarvester, DEFAULT_TIMEOUT, BOT_USER_AGENT
 
 DETAIL_FETCH_CAP = 30
+JSON_FEED_URL = "https://jobs.jobvite.com/{slug}/job?i=Json"
 
 
 def _detect_location_type(location_raw: str) -> tuple[str, bool]:
@@ -61,15 +62,21 @@ class JobviteHarvester(BaseHarvester):
         if slug.startswith("careers/"):
             slug = slug[len("careers/"):]
 
-        jobs_url = f"{self.BASE_ORIGIN}/{slug}/jobs"
-        html = self._fetch_html(jobs_url)
-        if not html:
-            # Try alternate careers path
-            html = self._fetch_html(f"{self.BASE_ORIGIN}/careers/{slug}/jobs")
-        if not html:
+        # ── Try JSON feed first (faster, richer data) ─────────────────────────
+        postings = self._fetch_json_feed(company.name, slug)
+
+        # ── Fall back to HTML scraping ────────────────────────────────────────
+        if not postings:
+            jobs_url = f"{self.BASE_ORIGIN}/{slug}/jobs"
+            html = self._fetch_html(jobs_url)
+            if not html:
+                html = self._fetch_html(f"{self.BASE_ORIGIN}/careers/{slug}/jobs")
+            if html:
+                postings = self._parse_postings(company.name, slug, html)
+
+        if not postings:
             return []
 
-        postings = self._parse_postings(company.name, slug, html)
         for i, posting in enumerate(postings):
             if i >= DETAIL_FETCH_CAP:
                 break
@@ -77,9 +84,90 @@ class JobviteHarvester(BaseHarvester):
                 continue
             url = posting.get("original_url", "")
             if url:
-                desc = self._fetch_detail_description(url)
-                if desc:
-                    posting["description"] = desc
+                detail = self._fetch_detail_data(url)
+                if detail.get("description"):
+                    posting["description"] = detail["description"]
+                if detail.get("requirements") and not posting.get("requirements"):
+                    posting["requirements"] = detail["requirements"]
+                if detail.get("responsibilities") and not posting.get("responsibilities"):
+                    posting["responsibilities"] = detail["responsibilities"]
+        return postings
+
+    # ── JSON feed ─────────────────────────────────────────────────────────────
+
+    def _fetch_json_feed(self, company_name: str, slug: str) -> list[dict]:
+        """Try the Jobvite hidden JSON feed endpoint. Returns [] if unavailable."""
+        url = JSON_FEED_URL.format(slug=slug)
+        self._enforce_rate_limit()
+        try:
+            resp = self._session.get(
+                url, timeout=DEFAULT_TIMEOUT,
+                headers={"Accept": "application/json", "User-Agent": BOT_USER_AGENT},
+            )
+            self._last_request_at = __import__("time").monotonic()
+            if not resp.ok:
+                return []
+            data = resp.json()
+        except Exception:
+            return []
+
+        jobs_data = data if isinstance(data, list) else (data.get("jobs") or data.get("requisitions") or [])
+        if not jobs_data:
+            return []
+
+        postings = []
+        seen: set[str] = set()
+        for j in jobs_data:
+            jid = str(j.get("id") or j.get("jobId") or j.get("requisitionId") or "").strip()
+            title = str(j.get("title") or j.get("jobTitle") or "").strip()
+            if not title:
+                continue
+            href = j.get("url") or j.get("applyUrl") or j.get("link") or ""
+            abs_url = urljoin(self.BASE_ORIGIN + "/", href) if href else ""
+            if not abs_url:
+                abs_url = f"{self.BASE_ORIGIN}/{slug}/job/{jid}" if jid else ""
+            if abs_url in seen:
+                continue
+            seen.add(abs_url)
+
+            location_raw = str(j.get("location") or j.get("locationText") or "").strip()
+            location_type, is_remote = _detect_location_type(location_raw)
+            city, state, country = _split_location(location_raw)
+            department = str(j.get("department") or j.get("category") or "").strip()
+            description = str(j.get("description") or j.get("descriptionHtml") or "").strip()
+            if description:
+                description = re.sub(r"<[^>]+>", " ", description)
+                description = re.sub(r"\s+", " ", description).strip()
+            postings.append({
+                "external_id": jid or self._extract_id_from_url(abs_url),
+                "original_url": abs_url,
+                "apply_url": abs_url,
+                "title": title,
+                "company_name": company_name,
+                "department": department,
+                "team": "",
+                "location_raw": location_raw,
+                "city": city,
+                "state": state,
+                "country": country,
+                "is_remote": is_remote,
+                "location_type": location_type,
+                "employment_type": "UNKNOWN",
+                "experience_level": "UNKNOWN",
+                "salary_min": None,
+                "salary_max": None,
+                "salary_currency": "USD",
+                "salary_period": "",
+                "salary_raw": "",
+                "description": description,
+                "requirements": "",
+                "responsibilities": "",
+                "benefits": "",
+                "posted_date_raw": str(j.get("datePosted") or j.get("postedDate") or ""),
+                "closing_date": "",
+                "raw_payload": j,
+            })
+        self.last_total_available = len(postings)
         return postings
 
     # ── HTML helpers ──────────────────────────────────────────────────────────
@@ -98,11 +186,15 @@ class JobviteHarvester(BaseHarvester):
             pass
         return ""
 
-    def _fetch_detail_description(self, url: str) -> str:
+    def _fetch_detail_data(self, url: str) -> dict:
+        """Fetch job detail page, return dict with description/requirements/responsibilities."""
         import json as _json
         html = self._fetch_html(url)
         if not html:
-            return ""
+            return {}
+        result: dict = {}
+
+        # JSON-LD JobPosting
         for block in re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
             html, re.S | re.I,
@@ -114,19 +206,45 @@ class JobviteHarvester(BaseHarvester):
                 if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
                     desc = schema.get("description") or ""
                     if desc and len(str(desc)) > 80:
-                        return str(desc).strip()
+                        result["description"] = str(desc).strip()
+                    break
             except Exception:
                 continue
-        m = re.search(
-            r'<div[^>]+class=["\'][^"\']*jv-job-detail-description[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
-            html, re.I,
-        )
-        if m:
-            text = re.sub(r"<[^>]+>", " ", m.group(1))
-            text = re.sub(r"\s+", " ", text).strip()
-            if len(text) > 100:
-                return text
-        return ""
+
+        # Jobvite HTML containers
+        if "description" not in result:
+            m = re.search(
+                r'<div[^>]+class=["\'][^"\']*jv-job-detail-description[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+                html, re.I,
+            )
+            if m:
+                text = re.sub(r"<[^>]+>", " ", m.group(1))
+                text = re.sub(r"\s+", " ", text).strip()
+                if len(text) > 100:
+                    result["description"] = text
+
+        # Extract requirements / responsibilities from section headers in description HTML
+        for section_pat, key in [
+            (r'(?:Requirements?|Qualifications?|Must\s+Have|Required\s+Skills?)', "requirements"),
+            (r'(?:Responsibilities?|What\s+You.ll\s+Do|The\s+Role)', "responsibilities"),
+        ]:
+            header_re = re.compile(
+                rf'<(?:h[1-6]|strong|b)[^>]*>\s*{section_pat}[^<]*</(?:h[1-6]|strong|b)>'
+                r'([\s\S]{50,2000}?)(?=<(?:h[1-6]|strong|b)|$)',
+                re.I,
+            )
+            sm = header_re.search(html)
+            if sm:
+                plain = re.sub(r"<[^>]+>", " ", sm.group(1))
+                plain = re.sub(r"\s+", " ", plain).strip()
+                if plain:
+                    result[key] = plain
+
+        return result
+
+    def _fetch_detail_description(self, url: str) -> str:
+        """Legacy wrapper."""
+        return self._fetch_detail_data(url).get("description", "")
 
     # ── Parsing ───────────────────────────────────────────────────────────────
 
@@ -190,6 +308,7 @@ class JobviteHarvester(BaseHarvester):
                     "salary_raw": "",
                     "description": "",
                     "requirements": "",
+                    "responsibilities": "",
                     "benefits": "",
                     "posted_date_raw": "",
                     "closing_date": "",

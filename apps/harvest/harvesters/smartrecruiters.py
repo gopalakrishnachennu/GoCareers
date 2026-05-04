@@ -115,8 +115,8 @@ class SmartRecruitersHarvester(BaseHarvester):
             "part-time": "PART_TIME",
             "contract": "CONTRACT",
             "temporary": "TEMPORARY",
-            "internship": "INTERN",
-            "intern": "INTERN",
+            "internship": "INTERNSHIP",
+            "intern": "INTERNSHIP",
             "freelance": "CONTRACT",
         }
         employment_type = emp_map.get(emp_raw, "UNKNOWN")
@@ -138,16 +138,32 @@ class SmartRecruitersHarvester(BaseHarvester):
         api_posting_id = _normalize_posting_id_for_api(str(job_id)) if job_id else ""
 
         # ── Fetch full description from detail endpoint ────────────────────
-        description = requirements = benefits = ""
+        description = requirements = responsibilities = benefits = ""
+        salary_min = salary_max = None
+        salary_currency, salary_period, salary_raw = "USD", "", ""
         detail: Optional[dict] = None
         if api_posting_id and api_slug:
             try:
                 detail = self._get(DETAIL_URL.format(slug=api_slug, job_id=api_posting_id))
                 if isinstance(detail, dict) and "error" not in detail:
                     sections = (detail.get("jobAd") or {}).get("sections") or {}
-                    description  = (sections.get("jobDescription") or {}).get("text") or ""
-                    requirements = (sections.get("qualifications") or {}).get("text") or ""
-                    benefits     = (sections.get("additionalInformation") or {}).get("text") or ""
+                    description      = (sections.get("jobDescription") or {}).get("text") or ""
+                    requirements     = (sections.get("qualifications") or {}).get("text") or ""
+                    responsibilities = (sections.get("jobSummary") or sections.get("tasks") or {}).get("text") or ""
+                    benefits         = (sections.get("additionalInformation") or {}).get("text") or ""
+                    # Salary from compensation data
+                    comp = detail.get("compensation") or {}
+                    if comp:
+                        salary_min = comp.get("min") or None
+                        salary_max = comp.get("max") or None
+                        salary_currency = comp.get("currency") or "USD"
+                        sal_period_raw = (comp.get("payPeriod") or "YEAR").upper()
+                        salary_period = sal_period_raw if sal_period_raw in ("HOUR", "MONTH", "YEAR") else "YEAR"
+                        if salary_min:
+                            salary_raw = (
+                                f"{salary_min:,.0f}–{salary_max:,.0f} {salary_currency}/{salary_period}"
+                                if salary_max else f"{salary_min:,.0f} {salary_currency}/{salary_period}"
+                            )
             except Exception:
                 pass  # fall through — description stays empty, no crash
 
@@ -187,13 +203,14 @@ class SmartRecruitersHarvester(BaseHarvester):
             "location_type": location_type,
             "employment_type": employment_type,
             "experience_level": experience_level,
-            "salary_min": None,
-            "salary_max": None,
-            "salary_currency": "USD",
-            "salary_period": "",
-            "salary_raw": "",
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "salary_currency": salary_currency,
+            "salary_period": salary_period,
+            "salary_raw": salary_raw,
             "description": description,
             "requirements": requirements,
+            "responsibilities": responsibilities,
             "benefits": benefits,
             "posted_date_raw": p.get("releasedDate") or "",
             "closing_date": "",

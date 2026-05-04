@@ -4477,6 +4477,8 @@ def enrich_existing_jobs_task(
         "field_confidence", "field_provenance",
         "resume_ready_score", "description_clean", "description_raw_html",
         "has_html_content", "cleaning_version",
+        # Section extraction
+        "requirements", "responsibilities",
     ]
 
     for idx, job in enumerate(jobs, start=1):

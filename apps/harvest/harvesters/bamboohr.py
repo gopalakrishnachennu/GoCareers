@@ -101,6 +101,31 @@ class BambooHRHarvester(BaseHarvester):
                             d = dr.json()
                             jo = (d.get("result") or {}).get("jobOpening") or {}
                             record["description"] = jo.get("description") or ""
+                            record["requirements"] = jo.get("requirements") or jo.get("qualifications") or ""
+                            record["responsibilities"] = jo.get("responsibilities") or jo.get("summary") or ""
+                            # Salary fields from detail
+                            sal_min = jo.get("minSalary") or jo.get("salaryMin")
+                            sal_max = jo.get("maxSalary") or jo.get("salaryMax")
+                            sal_raw = jo.get("salaryRange") or jo.get("compensation") or ""
+                            if sal_min:
+                                try:
+                                    record["salary_min"] = float(str(sal_min).replace(",", ""))
+                                except ValueError:
+                                    pass
+                            if sal_max:
+                                try:
+                                    record["salary_max"] = float(str(sal_max).replace(",", ""))
+                                except ValueError:
+                                    pass
+                            if sal_raw:
+                                record["salary_raw"] = str(sal_raw).strip()
+                                tl = sal_raw.lower()
+                                if "hour" in tl or "/hr" in tl:
+                                    record["salary_period"] = "HOUR"
+                                elif "month" in tl:
+                                    record["salary_period"] = "MONTH"
+                                else:
+                                    record["salary_period"] = "YEAR"
                             # Better location from detail if missing
                             if not record["city"]:
                                 dloc = jo.get("location") or {}
@@ -191,6 +216,7 @@ class BambooHRHarvester(BaseHarvester):
             "salary_raw": "",
             "description": "",
             "requirements": "",
+            "responsibilities": "",
             "benefits": "",
             "posted_date_raw": j.get("datePosted") or j.get("created_at") or "",
             "closing_date": "",

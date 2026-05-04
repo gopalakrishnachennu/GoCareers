@@ -144,9 +144,13 @@ class UltiProHarvester(BaseHarvester):
             if posting.get("description"):
                 continue
             job_url = posting.get("original_url", "")
-            desc = self._fetch_job_description(company_code, jobboard_id, job_url)
-            if desc:
-                posting["description"] = desc
+            detail = self._fetch_job_detail(company_code, jobboard_id, job_url)
+            if detail.get("description"):
+                posting["description"] = detail["description"]
+            if detail.get("requirements") and not posting.get("requirements"):
+                posting["requirements"] = detail["requirements"]
+            if detail.get("responsibilities") and not posting.get("responsibilities"):
+                posting["responsibilities"] = detail["responsibilities"]
 
         return results
 
@@ -253,12 +257,15 @@ class UltiProHarvester(BaseHarvester):
 
     # ── Per-job detail fetch ──────────────────────────────────────────────────
 
-    def _fetch_job_description(self, company_code: str, jobboard_id: str, job_url: str) -> str:
-        """Fetch JD for a single UltiPro job via GetJob JSON endpoint or HTML page."""
+    def _fetch_job_detail(self, company_code: str, jobboard_id: str, job_url: str) -> dict:
+        """Fetch full job detail for a single UltiPro job. Returns dict with description/requirements/responsibilities."""
         import re as _re
         import time as _t
+        import json as _json
 
-        # Extract opportunityId from job URL
+        result: dict = {}
+
+        # Path 1: GetJob JSON endpoint
         opp_m = _re.search(r"opportunityId=([^&\s]+)", job_url, _re.I)
         if opp_m and jobboard_id:
             opp_id = opp_m.group(1)
@@ -277,12 +284,20 @@ class UltiProHarvester(BaseHarvester):
                         or d.get("JobDescription") or d.get("FullDescription") or ""
                     )
                     if desc and len(str(desc)) > 80:
-                        return str(desc).strip()
+                        result["description"] = str(desc).strip()
+                    req = d.get("Qualifications") or d.get("Requirements") or ""
+                    if req:
+                        result["requirements"] = str(req).strip()
+                    resp_text = d.get("Responsibilities") or d.get("EssentialFunctions") or ""
+                    if resp_text:
+                        result["responsibilities"] = str(resp_text).strip()
             except Exception:
                 pass
 
-        # HTML fallback — try fetching the page and extracting JSON-LD
-        import json as _json, re as _re2
+        if result.get("description"):
+            return result
+
+        # Path 2: HTML page + JSON-LD
         self._enforce_rate_limit()
         try:
             resp2 = self._session.get(
@@ -292,8 +307,8 @@ class UltiProHarvester(BaseHarvester):
             self._last_request_at = _t.monotonic()
             if resp2.ok:
                 html = resp2.text
-                for block in _re2.findall(
-                    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re2.S | _re2.I
+                for block in _re.findall(
+                    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, _re.S | _re.I
                 ):
                     try:
                         schema = _json.loads(block)
@@ -302,12 +317,35 @@ class UltiProHarvester(BaseHarvester):
                         if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
                             d2 = schema.get("description") or ""
                             if d2 and len(str(d2)) > 80:
-                                return str(d2).strip()
+                                result["description"] = str(d2).strip()
+                            break
                     except Exception:
                         continue
+                # Section extraction from HTML headers
+                for section_pat, key in [
+                    (r'(?:Requirements?|Qualifications?|Required\s+Skills?)', "requirements"),
+                    (r'(?:Responsibilities?|Essential\s+Functions?)', "responsibilities"),
+                ]:
+                    if result.get(key):
+                        continue
+                    hdr = _re.compile(
+                        rf'<(?:h[1-6]|strong|b)[^>]*>\s*{section_pat}[^<]*</(?:h[1-6]|strong|b)>'
+                        r'([\s\S]{{50,2000}}?)(?=<(?:h[1-6]|strong|b)|$)',
+                        _re.I,
+                    )
+                    sm = hdr.search(html)
+                    if sm:
+                        plain = _re.sub(r"<[^>]+>", " ", sm.group(1))
+                        plain = _re.sub(r"\s+", " ", plain).strip()
+                        if plain:
+                            result[key] = plain
         except Exception:
             pass
-        return ""
+        return result
+
+    def _fetch_job_description(self, company_code: str, jobboard_id: str, job_url: str) -> str:
+        """Legacy wrapper."""
+        return self._fetch_job_detail(company_code, jobboard_id, job_url).get("description", "")
 
     # ── Path 2: HTML scrape ───────────────────────────────────────────────────
 

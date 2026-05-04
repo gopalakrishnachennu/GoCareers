@@ -299,6 +299,7 @@ class AshbyHarvester(BaseHarvester):
                 "salary_raw":       salary_raw,
                 "description":      description,
                 "requirements":     "",
+                "responsibilities": "",
                 "benefits":         "",
                 "posted_date_raw":  posted_date,
                 "closing_date":     "",
