@@ -271,34 +271,33 @@ def _oracle_hcm_liveness(url: str) -> "LinkHealthResult | None":
         return None
 
     host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
-    # Filter directly by requisitionId — never rely on the job appearing in
-    # a generic first-page list (tenants with >N jobs would give false negatives).
-    api_url = (
-        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-        f"?onlyData=true&expand=requisitionList&limit=1"
-        f"&finder=findReqs;siteNumber={sites_id},requisitionId={req_num}"
+    # Query Oracle HCM detail endpoint by requisition ID directly.
+    # The detail endpoint is more reliable than the list endpoint for individual lookups.
+    detail_url = (
+        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails"
+        f"?onlyData=true&expand=all"
+        f"&finder=ById;Id={req_num},siteNumber={sites_id}"
     )
 
     try:
         resp = requests.get(
-            api_url,
+            detail_url,
             headers={"Accept": "application/json", **_UA},
             timeout=15,
         )
         status = int(resp.status_code or 0)
+        if status == 404:
+            return LinkHealthResult(False, status, "oracle_hcm_not_found", detail_url)
         if status >= 400:
             # API not accessible — fall through to HTML check
             return None
         data = resp.json() if resp.content else {}
         items = data.get("items") or []
-        req_list = items[0].get("requisitionList", []) if items else []
-        for req in req_list:
-            if str(req.get("Id") or "") == req_num:
-                return LinkHealthResult(True, status, "oracle_hcm_live", api_url)
-        # Queried by exact requisitionId — empty result means definitively gone
-        if req_list is not None:
-            return LinkHealthResult(False, status, "oracle_hcm_not_found", api_url)
-        return None
+        if items and isinstance(items[0], dict):
+            # Check if the posting is still active (ExternalPostedEndDate not set, or in future)
+            return LinkHealthResult(True, status, "oracle_hcm_live", detail_url)
+        # Empty items = requisition not found or not publicly visible = closed
+        return LinkHealthResult(False, status, "oracle_hcm_not_found", detail_url)
     except Exception:
         return None
 
