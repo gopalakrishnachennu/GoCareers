@@ -754,6 +754,75 @@ _QUALITY_CHECKS: list[tuple[str, float]] = [
     ("department",       0.05),
 ]
 
+def extract_sections(description: str) -> dict[str, str]:
+    """
+    Extract requirements and responsibilities from a job description.
+
+    Looks for section headers (Requirements, Qualifications, Responsibilities,
+    What You'll Do, etc.) and returns the text under each section.
+
+    Returns:
+        {
+          "requirements": "...",       # empty str if not found
+          "responsibilities": "...",   # empty str if not found
+          "benefits": "...",           # empty str if not found
+        }
+    """
+    if not description:
+        return {"requirements": "", "responsibilities": "", "benefits": ""}
+
+    plain = _strip_html(description)
+
+    # Section header patterns (case-insensitive)
+    _REQ_HEADERS = re.compile(
+        r"(?:^|\n)\s*(?:##?\s*)?"
+        r"(?:requirements?|qualifications?|required\s+skills?|what\s+you(?:'ll|'d|\s+will)\s+bring"
+        r"|what\s+we(?:'re|\s+are)\s+looking\s+for|minimum\s+qualifications?"
+        r"|preferred\s+qualifications?|you\s+(?:have|bring|possess))"
+        r"\s*[:\-–]?\s*\n",
+        re.I | re.M,
+    )
+    _RESP_HEADERS = re.compile(
+        r"(?:^|\n)\s*(?:##?\s*)?"
+        r"(?:responsibilities?|what\s+you(?:'ll|'d|\s+will)\s+do|role\s+overview"
+        r"|key\s+responsibilities?|your\s+(?:role|responsibilities?|impact)"
+        r"|duties|the\s+role|about\s+the\s+role|what\s+you(?:'ll|'d|\s+will)\s+(?:own|work|be))"
+        r"\s*[:\-–]?\s*\n",
+        re.I | re.M,
+    )
+    _BENEFITS_HEADERS = re.compile(
+        r"(?:^|\n)\s*(?:##?\s*)?"
+        r"(?:benefits?|perks?|what\s+we\s+offer|we\s+offer|compensation|what\s+you(?:'ll|'d|\s+will)\s+get)"
+        r"\s*[:\-–]?\s*\n",
+        re.I | re.M,
+    )
+    # Any section-looking header to detect where the current section ends
+    _ANY_SECTION = re.compile(
+        r"(?:^|\n)\s*(?:##?\s*)?[A-Z][A-Za-z ]{3,40}\s*[:\-–]\s*\n",
+        re.M,
+    )
+
+    def _extract_after(header_pattern: re.Pattern, text: str) -> str:
+        m = header_pattern.search(text)
+        if not m:
+            return ""
+        start = m.end()
+        # Find next section header after our match
+        next_section = _ANY_SECTION.search(text, start)
+        end = next_section.start() if next_section else min(start + 2000, len(text))
+        section_text = text[start:end].strip()
+        # Only return if it looks like real content (≥40 chars, has letters)
+        if len(section_text) >= 40 and re.search(r"[a-zA-Z]{4}", section_text):
+            return section_text[:2000]
+        return ""
+
+    return {
+        "requirements":    _extract_after(_REQ_HEADERS, plain),
+        "responsibilities": _extract_after(_RESP_HEADERS, plain),
+        "benefits":        _extract_after(_BENEFITS_HEADERS, plain),
+    }
+
+
 def _quality_score(job: dict) -> float:
     score = 0.0
     for field, weight in _QUALITY_CHECKS:
@@ -829,8 +898,21 @@ def extract_enrichments(job: dict) -> dict:
     normalized_title = normalize_job_title(raw_title or title)
     content_meta = clean_job_content(job.get("description") or "", max_len=50000)
     description = content_meta["clean_text"]
-    requirements = clean_job_text(job.get("requirements") or "", max_len=20000)
-    benefits = clean_job_text(job.get("benefits") or "", max_len=10000)
+
+    # Auto-extract requirements/responsibilities from description if not already set.
+    # Harvesters that don't parse these sections get them for free here.
+    _existing_req = (job.get("requirements") or "").strip()
+    _existing_resp = (job.get("responsibilities") or "").strip()
+    if not _existing_req or not _existing_resp:
+        _sections = extract_sections(job.get("description") or "")
+        if not _existing_req:
+            _existing_req = _sections.get("requirements", "")
+        if not _existing_resp:
+            _existing_resp = _sections.get("responsibilities", "")
+
+    requirements = clean_job_text(_existing_req, max_len=20000)
+    _raw_benefits = (job.get("benefits") or "").strip() or _sections.get("benefits", "")
+    benefits = clean_job_text(_raw_benefits, max_len=10000)
     location_raw = clean_job_text(job.get("location_raw") or "", max_len=512)
     detected_country = infer_country_from_location(
         location_raw=location_raw,
@@ -1176,4 +1258,7 @@ def extract_enrichments(job: dict) -> dict:
         "description_raw_html": content_meta["raw_html"],
         "has_html_content":     content_meta["has_html_content"],
         "cleaning_version":     content_meta["cleaning_version"],
+        # Extracted sections (populated even for harvesters that don't parse them)
+        "requirements":         requirements,
+        "responsibilities":     _existing_resp,
     }

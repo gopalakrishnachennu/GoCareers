@@ -1356,6 +1356,8 @@ def fetch_raw_jobs_for_company_task(
                     "field_confidence", "field_provenance",
                     "resume_ready_score", "description_clean", "description_raw_html",
                     "has_html_content", "cleaning_version",
+                    # Section extraction — populated by extract_enrichments if not set by harvester
+                    "requirements", "responsibilities",
                 ]
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:

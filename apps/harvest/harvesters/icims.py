@@ -85,16 +85,23 @@ class IcimsHarvester(BaseHarvester):
                     seen_urls.add(url)
                     collected.append(posting)
 
-        # Inline JD fetch for the first DETAIL_FETCH_CAP jobs.
+        # Inline detail fetch for the first DETAIL_FETCH_CAP jobs.
         # Remaining jobs will be filled by the background backfill engine.
         for i, posting in enumerate(collected):
             if i >= DETAIL_FETCH_CAP:
                 break
             url = posting.get("original_url", "")
             if url and not posting.get("description"):
-                desc = self._fetch_detail_description(url)
-                if desc:
-                    posting["description"] = desc
+                detail = self._fetch_detail_data(url)
+                if detail.get("description"):
+                    posting["description"] = detail["description"]
+                if detail.get("department") and not posting.get("department"):
+                    posting["department"] = detail["department"]
+                if detail.get("salary_min") and not posting.get("salary_min"):
+                    posting["salary_min"] = detail["salary_min"]
+                    posting["salary_max"] = detail.get("salary_max")
+                    posting["salary_period"] = detail.get("salary_period", "YEAR")
+                    posting["salary_raw"] = detail.get("salary_raw", "")
 
             next_url = self._extract_next_page(page_html, page_url)
             if not next_url:
@@ -107,8 +114,8 @@ class IcimsHarvester(BaseHarvester):
 
     # ── Detail JD fetch ───────────────────────────────────────────────────────
 
-    def _fetch_detail_description(self, url: str) -> str:
-        """Fetch the job detail page and extract description via JSON-LD or HTML."""
+    def _fetch_detail_data(self, url: str) -> dict:
+        """Fetch the job detail page and extract description + department + salary."""
         import json as _json
 
         detail_url = re.sub(r"\?.*$", "", url)
@@ -119,9 +126,11 @@ class IcimsHarvester(BaseHarvester):
 
         html = self._fetch_html(detail_url)
         if not html:
-            return ""
+            return {}
 
-        # JSON-LD JobPosting schema
+        result: dict = {}
+
+        # JSON-LD JobPosting schema (most reliable)
         for block in re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.S | re.I
         ):
@@ -129,26 +138,68 @@ class IcimsHarvester(BaseHarvester):
                 schema = _json.loads(block)
                 if isinstance(schema, list):
                     schema = schema[0]
-                if isinstance(schema, dict) and schema.get("@type") in ("JobPosting",):
+                if isinstance(schema, dict) and schema.get("@type") == "JobPosting":
                     desc = schema.get("description") or ""
                     if desc and len(str(desc)) > 80:
-                        return str(desc).strip()
+                        result["description"] = str(desc).strip()
+                    # Department from JSON-LD occupationalCategory or hiringOrganization
+                    dept = (
+                        schema.get("occupationalCategory")
+                        or schema.get("jobCategory")
+                        or ""
+                    )
+                    if dept:
+                        result["department"] = str(dept).strip()
+                    # Salary
+                    sal = schema.get("baseSalary")
+                    if isinstance(sal, dict):
+                        val = sal.get("value", {})
+                        if isinstance(val, dict):
+                            result["salary_min"] = val.get("minValue")
+                            result["salary_max"] = val.get("maxValue")
+                            result["salary_period"] = val.get("unitText", "YEAR").upper()
+                            if result.get("salary_min"):
+                                result["salary_raw"] = (
+                                    f"{result['salary_min']:,.0f}–{result['salary_max']:,.0f}"
+                                    if result.get("salary_max") else f"{result['salary_min']:,.0f}"
+                                )
+                    if "description" in result:
+                        break
             except Exception:
                 continue
 
-        # iCIMS-specific div containers
-        for pat in [
-            r'<div[^>]+class=["\'][^"\']*iCIMS_JobDescription[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
-            r'<div[^>]+id=["\']requisitionDescriptionInterface[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
-        ]:
-            m = re.search(pat, html, re.I)
-            if m:
-                text = re.sub(r"<[^>]+>", " ", m.group(1))
-                text = re.sub(r"\s+", " ", text).strip()
-                if len(text) > 100:
-                    return text
+        # iCIMS-specific div containers for description fallback
+        if "description" not in result:
+            for pat in [
+                r'<div[^>]+class=["\'][^"\']*iCIMS_JobDescription[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+                r'<div[^>]+id=["\']requisitionDescriptionInterface[^"\']*["\'][^>]*>([\s\S]{100,}?)</div>',
+            ]:
+                m = re.search(pat, html, re.I)
+                if m:
+                    text = re.sub(r"<[^>]+>", " ", m.group(1))
+                    text = re.sub(r"\s+", " ", text).strip()
+                    if len(text) > 100:
+                        result["description"] = text
+                        break
 
-        return ""
+        # Department from iCIMS header fields (JobHeaderData)
+        if "department" not in result:
+            for dept_pat in [
+                r'field-label">\s*(?:Job\s+)?(?:Category|Department|Function|Group)\s*</span>\s*</dt>\s*<dd[^>]*>\s*<span[^>]*>([\s\S]*?)</span>',
+                r'iCIMS_InfoMsg_Job[^>]*>\s*(?:Category|Department|Function):\s*([\w\s,&/-]+)',
+            ]:
+                dm = re.search(dept_pat, html, re.I)
+                if dm:
+                    dept_val = re.sub(r"<[^>]+>", "", dm.group(1)).strip()
+                    if dept_val:
+                        result["department"] = dept_val
+                        break
+
+        return result
+
+    def _fetch_detail_description(self, url: str) -> str:
+        """Legacy wrapper — returns description string only."""
+        return self._fetch_detail_data(url).get("description", "")
 
     # ── HTML helpers ──────────────────────────────────────────────────────────
 

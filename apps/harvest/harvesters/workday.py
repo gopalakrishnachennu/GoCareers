@@ -135,6 +135,54 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         else ""
     )
 
+    # ── Employment type from jobScheduleType / workerSubType ─────────────────
+    sched = (job.get("jobScheduleType") or job.get("workerSubType") or "").lower()
+    if "part" in sched:
+        employment_type = "PART_TIME"
+    elif "contract" in sched or "temp" in sched:
+        employment_type = "CONTRACT"
+    elif "intern" in sched:
+        employment_type = "INTERNSHIP"
+    elif "full" in sched or "regular" in sched:
+        employment_type = "FULL_TIME"
+    else:
+        employment_type = "UNKNOWN"
+
+    # ── Salary from various Workday fields ────────────────────────────────────
+    salary_raw = (
+        job.get("annualCompensationSummary")
+        or job.get("compensationGrade")
+        or job.get("compensationRangeStr")
+        or ""
+    )
+    if isinstance(salary_raw, dict):
+        salary_raw = salary_raw.get("descriptor") or salary_raw.get("summary") or ""
+    salary_raw = str(salary_raw).strip()
+
+    # Try to parse min/max from salary_raw
+    sal_min = sal_max = None
+    sal_period = ""
+    if salary_raw:
+        import re as _re
+        nums = _re.findall(r"[\d,]+(?:\.\d+)?", salary_raw.replace(",", ""))
+        cleaned = []
+        for n in nums:
+            try:
+                v = float(n.replace(",", ""))
+                if 1000 < v < 10_000_000:  # plausible salary range
+                    cleaned.append(v)
+            except ValueError:
+                pass
+        sal_min = cleaned[0] if cleaned else None
+        sal_max = cleaned[1] if len(cleaned) > 1 else sal_min
+        tl = salary_raw.lower()
+        if "hour" in tl or "/hr" in tl:
+            sal_period = "HOUR"
+        elif "month" in tl:
+            sal_period = "MONTH"
+        else:
+            sal_period = "YEAR"
+
     return {
         "external_id": ext_id,
         "original_url": job_url,
@@ -149,13 +197,13 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "country": "",
         "is_remote": is_remote,
         "location_type": location_type,
-        "employment_type": "UNKNOWN",
+        "employment_type": employment_type,
         "experience_level": exp_level,
-        "salary_min": None,
-        "salary_max": None,
+        "salary_min": sal_min,
+        "salary_max": sal_max,
         "salary_currency": "USD",
-        "salary_period": "",
-        "salary_raw": "",
+        "salary_period": sal_period,
+        "salary_raw": salary_raw,
         "description": description,
         "requirements": "",
         "benefits": "",

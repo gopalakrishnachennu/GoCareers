@@ -185,6 +185,25 @@ class GreenhouseHarvester(BaseHarvester):
             description = content if content else ""
             experience_level = _detect_experience_level(job.get("title", ""), description[:500])
 
+            # Salary — Greenhouse API returns pay_input_ranges[] on some listings
+            salary_raw = ""
+            sal_min = sal_max = None
+            sal_period = ""
+            pay_ranges = job.get("pay_input_ranges") or []
+            if pay_ranges and isinstance(pay_ranges, list):
+                pr = pay_ranges[0]
+                sal_min = pr.get("min_cents") / 100 if pr.get("min_cents") else None
+                sal_max = pr.get("max_cents") / 100 if pr.get("max_cents") else None
+                sal_period = pr.get("pay_period", "YEAR").upper()
+                salary_raw = pr.get("title") or (
+                    f"{sal_min:,.0f}–{sal_max:,.0f}" if (sal_min and sal_max) else ""
+                )
+            else:
+                # Fallback: look for salary pattern in description
+                sal_min, sal_max, sal_period = _parse_salary(description[:2000])
+                if sal_min:
+                    salary_raw = f"{sal_min:,.0f}–{sal_max:,.0f}" if sal_max else f"{sal_min:,.0f}"
+
             results.append({
                 "external_id": str(job.get("id", "")),
                 "original_url": job.get("absolute_url", ""),
@@ -201,11 +220,11 @@ class GreenhouseHarvester(BaseHarvester):
                 "location_type": location_type,
                 "employment_type": employment_type,
                 "experience_level": experience_level,
-                "salary_min": None,
-                "salary_max": None,
+                "salary_min": sal_min,
+                "salary_max": sal_max,
                 "salary_currency": "USD",
-                "salary_period": "",
-                "salary_raw": "",
+                "salary_period": sal_period,
+                "salary_raw": salary_raw,
                 "description": description,
                 "requirements": "",
                 "benefits": "",
