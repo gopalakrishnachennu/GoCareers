@@ -1765,11 +1765,31 @@ class RawJobWorkflowInsightsView(SuperuserRequiredMixin, View):
 
 
 @method_decorator(never_cache, name="dispatch")
+class BoardAnalyticsDashboardView(SuperuserRequiredMixin, View):
+    """
+    GET /harvest/board-analytics/ — HTML dashboard with sortable platform table.
+    """
+
+    def get(self, request):
+        from .board_analytics import get_board_analytics
+        try:
+            window = int(request.GET.get("window_days", 30))
+            window = max(1, min(90, window))
+        except (ValueError, TypeError):
+            window = 30
+
+        data = get_board_analytics(window_days=window)
+        return render(request, "harvest/board_analytics.html", {
+            "data": data,
+            "window_choices": [7, 14, 30, 60, 90],
+        })
+
+
 class BoardAnalyticsView(SuperuserRequiredMixin, View):
     """
     GET /harvest/api/board-analytics/?window_days=30
 
-    Returns unified per-platform analytics.  All "blocked" and "jobs" metrics
+    Returns unified per-platform analytics as JSON.  All "blocked" and "jobs" metrics
     share the same denominator (total RawJob rows) so impossible ratios cannot occur.
 
     Query params:

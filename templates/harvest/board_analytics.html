@@ -1,0 +1,242 @@
+{% extends 'base.html' %}
+{% block title %}Board Analytics{% endblock %}
+
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<div class="container mx-auto px-4 max-w-7xl pb-16">
+
+  {# ── Header ─────────────────────────────────────────────────────────────── #}
+  <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Board Analytics</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Per-platform harvest quality • generated {{ data.generated_at|truncatechars:19 }} UTC</p>
+    </div>
+    {# Window selector #}
+    <form method="get" class="flex items-center gap-2">
+      <label class="text-sm text-gray-500 font-medium">Window:</label>
+      {% for w in window_choices %}
+      <button type="submit" name="window_days" value="{{ w }}"
+              class="px-3 py-1.5 rounded-lg text-sm font-semibold border transition
+                     {% if w == data.window_days %}bg-indigo-600 text-white border-indigo-600{% else %}bg-white text-gray-600 border-gray-300 hover:border-indigo-400 hover:text-indigo-600{% endif %}">
+        {{ w }}d
+      </button>
+      {% endfor %}
+    </form>
+  </div>
+
+  {# ── Totals strip ────────────────────────────────────────────────────────── #}
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">ATS Boards</p>
+      <p class="text-2xl font-bold text-gray-900">{{ data.totals.ats_boards }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Total Raw Jobs</p>
+      <p class="text-2xl font-bold text-gray-900">{{ data.totals.total_rawjobs|floatformat:"0" }}</p>
+    </div>
+    <div class="bg-green-50 rounded-xl border border-green-200 shadow-sm p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Synced</p>
+      <p class="text-2xl font-bold text-green-700">{{ data.totals.total_synced|floatformat:"0" }}</p>
+    </div>
+    <div class="bg-amber-50 rounded-xl border border-amber-200 shadow-sm p-4">
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Pending Sync</p>
+      <p class="text-2xl font-bold text-amber-700">{{ data.totals.total_pending|floatformat:"0" }}</p>
+    </div>
+  </div>
+
+  {# ── Main platform table ──────────────────────────────────────────────────── #}
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-8">
+    <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+      <h2 class="text-sm font-semibold text-gray-700">ATS Platforms — Risk-Sorted ({{ data.window_days }}d run window)</h2>
+      <a href="{% url 'harvest-board-analytics-api' %}?window_days={{ data.window_days }}" target="_blank"
+         class="text-xs text-indigo-600 hover:underline flex items-center gap-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/></svg>
+        JSON API
+      </a>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm" id="boardTable">
+        <thead>
+          <tr class="border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600 uppercase tracking-wider text-left">
+            <th class="px-4 py-3 sticky left-0 bg-gray-50 z-10">Platform</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(1)">Jobs ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(2)">Synced%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(3)">Pending%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(4)">Runs</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(5)">Success%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(6)">ZeroYield%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(7)">Fail%</th>
+            <th class="px-4 py-3 text-right">JD%</th>
+            <th class="px-4 py-3 text-right">Req%</th>
+            <th class="px-4 py-3 text-right">Resp%</th>
+            <th class="px-4 py-3 text-right">Salary%</th>
+            <th class="px-4 py-3 text-right">Dept%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(13)">Risk ↕</th>
+            <th class="px-4 py-3 text-right">Last Run</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100" id="boardTbody">
+          {% for p in data.platforms %}
+          <tr class="hover:bg-gray-50 transition-colors {% if p.risk_score != None and p.risk_score >= 60 %}bg-red-50/40{% elif p.risk_score != None and p.risk_score >= 35 %}bg-amber-50/40{% endif %}"
+              data-slug="{{ p.slug }}">
+            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[140px]">
+              <div class="flex items-center gap-2">
+                {# Tier badge #}
+                {% if p.support_tier == 'healthy' %}
+                  <span class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="Healthy"></span>
+                {% elif p.support_tier == 'degraded' %}
+                  <span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0" title="Degraded"></span>
+                {% elif p.support_tier == 'experimental' %}
+                  <span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0" title="Experimental"></span>
+                {% else %}
+                  <span class="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0" title="{{ p.support_tier }}"></span>
+                {% endif %}
+                <span class="font-semibold text-gray-800">{{ p.name|default:p.slug }}</span>
+              </div>
+              <div class="text-xs text-gray-400 ml-4">{{ p.slug }}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-mono text-gray-700" data-val="{{ p.total_jobs }}">{{ p.total_jobs|floatformat:"0" }}</td>
+            <td class="px-4 py-3 text-right" data-val="{{ p.synced|default:0 }}">
+              {% with pct=p.total_jobs|add:"0" %}
+              {% if p.total_jobs %}
+                {% widthratio p.synced p.total_jobs 100 as synced_pct %}
+                <span class="{% if synced_pct|add:"0" >= 80 %}text-green-600 font-semibold{% elif synced_pct|add:"0" >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">
+                  {{ synced_pct }}%
+                </span>
+              {% else %}—{% endif %}
+              {% endwith %}
+            </td>
+            <td class="px-4 py-3 text-right" data-val="{{ p.pending_pct|default:0 }}">
+              {% if p.pending_pct != None %}
+                <span class="{% if p.pending_pct >= 30 %}text-amber-600 font-semibold{% else %}text-gray-600{% endif %}">{{ p.pending_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-gray-600 font-mono" data-val="{{ p.runs }}">{{ p.runs }}</td>
+            <td class="px-4 py-3 text-right" data-val="{{ p.success_rate_pct|default:0 }}">
+              {% if p.success_rate_pct != None %}
+                <span class="{% if p.success_rate_pct >= 80 %}text-green-600 font-semibold{% elif p.success_rate_pct >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">{{ p.success_rate_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right" data-val="{{ p.zero_yield_pct|default:0 }}">
+              {% if p.zero_yield_pct != None %}
+                <span class="{% if p.zero_yield_pct >= 40 %}text-red-600 font-semibold{% elif p.zero_yield_pct >= 20 %}text-amber-600{% else %}text-gray-600{% endif %}">{{ p.zero_yield_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right" data-val="{{ p.fail_rate_pct|default:0 }}">
+              {% if p.fail_rate_pct != None %}
+                <span class="{% if p.fail_rate_pct >= 20 %}text-red-600 font-semibold{% elif p.fail_rate_pct >= 10 %}text-amber-600{% else %}text-gray-600{% endif %}">{{ p.fail_rate_pct }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            {# JD coverage = 100 - missing_jd_pct #}
+            <td class="px-4 py-3 text-right" data-val="{{ p.missing_jd_pct|default:0 }}">
+              {% if p.missing_jd_pct != None %}
+                <span class="{% if p.missing_jd_pct <= 5 %}text-green-600 font-semibold{% elif p.missing_jd_pct <= 20 %}text-amber-600{% else %}text-red-600{% endif %}">
+                  {{ p.missing_jd_pct }}% miss
+                </span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.requirements|default:0 }}">
+              {% if p.coverage.requirements != None %}
+                <span class="{% if p.coverage.requirements >= 50 %}text-green-700{% elif p.coverage.requirements >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.requirements }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.responsibilities|default:0 }}">
+              {% if p.coverage.responsibilities != None %}
+                <span class="{% if p.coverage.responsibilities >= 50 %}text-green-700{% elif p.coverage.responsibilities >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.responsibilities }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.salary|default:0 }}">
+              {% if p.coverage.salary != None %}
+                <span class="{% if p.coverage.salary >= 30 %}text-green-700{% elif p.coverage.salary >= 10 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.salary }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.department|default:0 }}">
+              {% if p.coverage.department != None %}
+                <span class="{% if p.coverage.department >= 50 %}text-green-700{% elif p.coverage.department >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.department }}%</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right font-mono" data-val="{{ p.risk_score|default:999 }}">
+              {% if p.risk_score != None %}
+                <span class="px-2 py-0.5 rounded-full text-xs font-bold
+                             {% if p.risk_score >= 60 %}bg-red-100 text-red-700
+                             {% elif p.risk_score >= 35 %}bg-amber-100 text-amber-700
+                             {% else %}bg-green-100 text-green-700{% endif %}">
+                  {{ p.risk_score }}
+                </span>
+              {% else %}<span class="text-gray-300 text-xs">n/a</span>{% endif %}
+            </td>
+            <td class="px-4 py-3 text-right text-xs text-gray-400">
+              {% if p.last_run %}{{ p.last_run|truncatechars:10 }}{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="15" class="px-4 py-8 text-center text-gray-400">No platform data yet — run a harvest batch first.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ── Jarvis summary ────────────────────────────────────────────────────────── #}
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-8">
+    <h2 class="text-sm font-semibold text-gray-700 mb-3">Jarvis / Manual Ingest</h2>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+      <div><span class="text-gray-400">Total:</span> <span class="font-semibold">{{ data.jarvis.total_jobs|floatformat:"0" }}</span></div>
+      <div><span class="text-gray-400">Synced:</span> <span class="font-semibold text-green-600">{{ data.jarvis.synced|floatformat:"0" }}</span></div>
+      <div><span class="text-gray-400">Pending:</span> <span class="font-semibold text-amber-600">{{ data.jarvis.pending|floatformat:"0" }}</span></div>
+      <div><span class="text-gray-400">Missing JD:</span> <span class="font-semibold text-red-600">{{ data.jarvis.missing_jd|floatformat:"0" }}</span></div>
+    </div>
+    <p class="text-xs text-gray-400 mt-2">{{ data.jarvis.note }}</p>
+  </div>
+
+  {# ── Unsupported platforms ─────────────────────────────────────────────────── #}
+  {% if data.unsupported %}
+  <div class="bg-gray-50 rounded-xl border border-gray-200 p-5">
+    <h2 class="text-sm font-semibold text-gray-500 mb-2">Unsupported / No Active Harvester</h2>
+    <div class="flex flex-wrap gap-2">
+      {% for u in data.unsupported %}
+      <span class="px-3 py-1 rounded-full bg-gray-200 text-gray-600 text-xs font-mono">{{ u.slug }}</span>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+
+{# ── Sort JS ──────────────────────────────────────────────────────────────────── #}
+<script>
+let _sortCol = 13;  // default: risk
+let _sortDir = -1;  // -1 = descending
+
+function sortTable(col) {
+  if (_sortCol === col) {
+    _sortDir *= -1;
+  } else {
+    _sortCol = col;
+    _sortDir = col === 0 ? 1 : -1;  // text cols: ascending by default
+  }
+  const tbody = document.getElementById('boardTbody');
+  const rows = Array.from(tbody.querySelectorAll('tr'));
+  rows.sort((a, b) => {
+    const aCells = a.querySelectorAll('td');
+    const bCells = b.querySelectorAll('td');
+    if (!aCells[col] || !bCells[col]) return 0;
+    const aVal = aCells[col].dataset.val !== undefined
+      ? parseFloat(aCells[col].dataset.val) || 0
+      : aCells[col].textContent.trim();
+    const bVal = bCells[col].dataset.val !== undefined
+      ? parseFloat(bCells[col].dataset.val) || 0
+      : bCells[col].textContent.trim();
+    if (typeof aVal === 'number') return (aVal - bVal) * _sortDir;
+    return aVal.localeCompare(bVal) * _sortDir;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+}
+// Initial sort by risk
+sortTable(13);
+</script>
+
+{% endblock %}
