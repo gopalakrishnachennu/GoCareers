@@ -1573,6 +1573,9 @@ class SystemOpsCenterView(AdminRequiredMixin, TemplateView):
         ctx["ops_summary"] = snapshot.get("summary", {})
         ctx["ops_alerts"] = snapshot.get("alerts", [])
         ctx["ops_generated_at"] = snapshot.get("generated_at", "")
+        from harvest.models import FetchBatch
+
+        ctx["latest_fetch_batch"] = FetchBatch.objects.order_by("-created_at").first()
         return ctx
 
 

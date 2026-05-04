@@ -6,7 +6,7 @@ from celery import shared_task
 from celery.exceptions import SoftTimeLimitExceeded
 from django.core.cache import cache
 from django.db import connection, models, transaction
-from django.db.models import F, IntegerField, Q, Value
+from django.db.models import Count, F, IntegerField, Q, Value
 from django.db.models.functions import Coalesce, Length, Mod, Trim
 from django.utils import timezone
 
@@ -21,7 +21,24 @@ HTML_SCRAPE_PLATFORMS = {"html_scrape", "icims", "taleo", "jobvite", "ultipro",
                          "applicantpro", "applytojob", "theapplicantmanager",
                          "zoho", "recruitee", "breezy", "teamtailor"}
 
-# Circuit breaker — skip a company after this many consecutive fetch failures
+# ─── Harvest batch run_kind (stored on FetchBatch.audit_payload + logs) ─────
+
+
+def _resolve_harvest_run_kind(
+    *,
+    run_kind: str | None,
+    test_mode: bool,
+    fetch_all: bool,
+    platform_slug: str | None,
+) -> str:
+    """Normalize UI/source of batch: quick_sync | full_crawl_* | platform_smoke."""
+    if run_kind:
+        return run_kind
+    if test_mode:
+        return "platform_smoke"
+    if fetch_all:
+        return "full_crawl_platform" if platform_slug else "full_crawl_all"
+    return "quick_sync"
 MAX_CONSECUTIVE_FAILURES = 3
 
 logger = logging.getLogger(__name__)
@@ -254,8 +271,9 @@ def detect_company_platforms_task(
     from jobs.models import PipelineEvent
 
     from companies.models import Company
-    from .models import JobBoardPlatform, CompanyPlatformLabel
+    from .models import HarvestOpsRun, JobBoardPlatform, CompanyPlatformLabel
     from .detectors import run_detection_pipeline, extract_tenant
+    from .ops_audit import begin_ops_run, finish_ops_run
 
     stale_threshold = timezone.now() - timedelta(days=7)
 
@@ -273,8 +291,24 @@ def detect_company_platforms_task(
         )
         company_ids = list(set(stale_ids + unlabeled_ids))[:batch_size]
 
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.DETECT_PLATFORMS,
+        getattr(self.request, "id", "") or "",
+        user_id=triggered_user_id,
+        queue={
+            "batch_size": batch_size,
+            "force_recheck": force_recheck,
+            "companies_planned": len(company_ids),
+        },
+    )
+
     if not company_ids:
         logger.info("No companies need platform detection.")
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.SUCCESS,
+            {"detected": 0, "total": 0, "note": "no_companies_targeted"},
+        )
         return {"detected": 0, "total": 0}
 
     companies = Company.objects.filter(id__in=company_ids).order_by("id")
@@ -328,11 +362,31 @@ def detect_company_platforms_task(
             status=PipelineEvent.Status.SUCCESS if status == "SUCCESS" else PipelineEvent.Status.FAILED,
             meta={"detected": detected, "total": len(company_ids), "errors": errors[:10]},
         )
+        ops_fin_status = (
+            HarvestOpsRun.Status.SUCCESS
+            if status == "SUCCESS"
+            else (HarvestOpsRun.Status.PARTIAL if detected else HarvestOpsRun.Status.FAILED)
+        )
+        finish_ops_run(
+            ops_run,
+            ops_fin_status,
+            {
+                "detected": detected,
+                "total": len(company_ids),
+                "errors_sample": errors[:10],
+                "ops_audit_note": "see PipelineEvent for legacy row",
+            },
+        )
         logger.info("Detection done: %s/%s detected.", detected, len(company_ids))
         return {"detected": detected, "total": len(company_ids)}
 
     except Exception as e:
         logger.exception("detect_company_platforms_task failed: %s", e)
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.FAILED,
+            {"detected": detected, "total": len(company_ids), "error": str(e)[:500]},
+        )
         PipelineEvent.record(
             task_name="harvest.detect_company_platforms",
             celery_id=self.request.id or "",
@@ -1155,6 +1209,82 @@ def fetch_raw_jobs_for_company_task(
                 ).update(status=final_status, completed_at=timezone.now())
                 if wrote == 1:
                     _batch_just_finished = True
+                    try:
+                        bdone = FetchBatch.objects.filter(pk=batch.pk).first()
+                        status_rows = (
+                            CompanyFetchRun.objects.filter(batch_id=batch.pk)
+                            .values("status")
+                            .annotate(c=Count("id"))
+                        )
+                        by_status = {row["status"]: row["c"] for row in status_rows}
+                        plat_rows = (
+                            CompanyFetchRun.objects.filter(batch_id=batch.pk)
+                            .values("label__platform__slug")
+                            .annotate(
+                                n=Count("id"),
+                                ok=Count(
+                                    "id",
+                                    filter=Q(
+                                        status__in=[
+                                            CompanyFetchRun.Status.SUCCESS,
+                                            CompanyFetchRun.Status.PARTIAL,
+                                        ]
+                                    ),
+                                ),
+                                bad=Count(
+                                    "id",
+                                    filter=Q(
+                                        status__in=[
+                                            CompanyFetchRun.Status.FAILED,
+                                            CompanyFetchRun.Status.SKIPPED,
+                                        ]
+                                    ),
+                                ),
+                            )
+                            .order_by("-n")[:30]
+                        )
+                        logger.info(
+                            "[HARVEST_AUDIT done] run_kind=%s batch_id=%s batch_status=%s "
+                            "total_companies=%s completed_counter=%s failed_counter=%s "
+                            "total_jobs_found=%s total_jobs_new=%s by_status=%s by_platform=%s",
+                            ((bdone.audit_payload or {}).get("queue") or {}).get("run_kind", "")
+                            if bdone
+                            else "",
+                            batch.pk,
+                            final_status,
+                            (bdone.total_companies if bdone else 0),
+                            (bdone.completed_companies if bdone else 0),
+                            (bdone.failed_companies if bdone else 0),
+                            (bdone.total_jobs_found if bdone else 0),
+                            (bdone.total_jobs_new if bdone else 0),
+                            by_status,
+                            list(plat_rows),
+                        )
+                        completion_audit = {
+                            "phase": "completed",
+                            "batch_status": final_status,
+                            "total_companies": bdone.total_companies if bdone else 0,
+                            "completed_companies": bdone.completed_companies if bdone else 0,
+                            "failed_companies": bdone.failed_companies if bdone else 0,
+                            "total_jobs_found": bdone.total_jobs_found if bdone else 0,
+                            "total_jobs_new": bdone.total_jobs_new if bdone else 0,
+                            "by_status": by_status,
+                            "by_platform": list(plat_rows),
+                            "logged_at": timezone.now().isoformat(),
+                            "last_company_task_id": getattr(self.request, "id", "") or "",
+                            "notes": (
+                                "failed_companies includes SKIPPED early exits (no tenant / no harvester). "
+                                "See batch detail page for per-company rows."
+                            ),
+                        }
+                        with transaction.atomic():
+                            locked = FetchBatch.objects.select_for_update().get(pk=batch.pk)
+                            merged = dict(locked.audit_payload or {})
+                            merged["completion"] = completion_audit
+                            locked.audit_payload = merged
+                            locked.save(update_fields=["audit_payload"])
+                    except Exception as exc:
+                        logger.warning("HARVEST_AUDIT completion persist/log failed: %s", exc)
 
     logger.info(
         "fetch_raw_jobs: label=%s new=%d updated=%d enriched_inline=pending failed=%d",
@@ -1309,9 +1439,13 @@ def fetch_raw_jobs_batch_task(
     skip_platforms: list = None,
     min_hours_since_fetch: int = 6,
     fetch_all: bool = False,
+    run_kind: str | None = None,
 ):
     """
     Create a FetchBatch and dispatch fetch_raw_jobs_for_company_task for every matching label.
+
+    run_kind — explicit audit label for logs/UI: quick_sync | full_crawl_all |
+        full_crawl_platform | platform_smoke (inferred from fetch_all/test_mode when omitted).
 
     test_mode=True — picks up to `companies_per_platform` companies per platform,
     passes max_jobs=test_max_jobs (no full pagination). Useful for smoke-testing.
@@ -1398,6 +1532,8 @@ def fetch_raw_jobs_batch_task(
                 len(fresh_label_pks), min_hours_since_fetch,
             )
 
+    all_pks: list[int] = []
+    skipped_fresh = 0
     if test_mode:
         # Pick up to `companies_per_platform` companies per platform slug
         per_plat = max(1, companies_per_platform)
@@ -1427,8 +1563,51 @@ def fetch_raw_jobs_batch_task(
 
     total = len(label_list)
 
+    rk = _resolve_harvest_run_kind(
+        run_kind=run_kind,
+        test_mode=test_mode,
+        fetch_all=fetch_all,
+        platform_slug=platform_slug,
+    )
+    queue_audit = {
+        "phase": "queued",
+        "run_kind": rk,
+        "fetch_all": bool(fetch_all),
+        "platform_filter": platform_slug or "",
+        "test_mode": bool(test_mode),
+        "eligible_labels": len(all_pks) if not test_mode else None,
+        "skipped_fresh": int(skipped_fresh) if not test_mode else None,
+        "skipped_fresh_explanation": (
+            None
+            if test_mode
+            else "NOT queued: had SUCCESS/PARTIAL CompanyFetchRun within min_hours_since_successful_fetch."
+        ),
+        "queued_companies": total,
+        "min_hours_since_successful_fetch": min_hours_since_fetch,
+        "incremental_since_hours_for_api_boards": 25,
+        "what_quick_fetch_does_not_do": (
+            "Does not bypass fresh skip; does not crawl disabled/dead labels; "
+            "HTML scraper platforms still fetch full board (no date filter)."
+            if rk == "quick_sync"
+            else None
+        ),
+        "orchestrator_task_id": self.request.id or "",
+        "logged_at": timezone.now().isoformat(),
+    }
     batch.total_companies = total
-    batch.save(update_fields=["total_companies"])
+    batch.audit_payload = {"queue": queue_audit}
+    batch.save(update_fields=["total_companies", "audit_payload"])
+
+    logger.info(
+        "[HARVEST_AUDIT queue] run_kind=%s batch_id=%s fetch_all=%s eligible=%s skipped_fresh=%s queued=%s orch_task=%s",
+        rk,
+        batch.pk,
+        fetch_all,
+        queue_audit["eligible_labels"],
+        queue_audit["skipped_fresh"],
+        total,
+        self.request.id or "",
+    )
 
     update_task_progress(self, current=0, total=total, message=f"Dispatching {total} company fetches…")
 
@@ -1525,7 +1704,8 @@ def validate_raw_job_urls_task(
     max_jobs      — cap total checked (for quick spot-checks)
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    from .models import RawJob
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
     from .url_health import check_job_posting_live, is_definitive_inactive
 
     qs = RawJob.objects.filter(is_active=True).exclude(original_url="")
@@ -1539,145 +1719,191 @@ def validate_raw_job_urls_task(
         qs = qs[:max_jobs]
 
     total = qs.count()
-    update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.VALIDATE_URLS,
+        getattr(self.request, "id", "") or "",
+        queue={
+            "platform_slug": platform_slug or "",
+            "batch_size": batch_size,
+            "concurrency": concurrency,
+            "max_jobs": max_jobs,
+            "pending_only": pending_only,
+            "recent_hours": recent_hours,
+            "urls_planned": total,
+        },
+    )
 
     checked = alive = dead = inconclusive = errors = 0
     reason_counts: dict[str, int] = {}
 
-    def check_url(job_id: int, url: str, slug: str) -> tuple[int, object]:
-        """Returns (job_id, LinkHealthResult)."""
-        try:
-            result = check_job_posting_live(url, platform_slug=slug or "")
-            return job_id, result
-        except Exception:
-            return job_id, check_job_posting_live("", platform_slug=slug or "")  # missing_url (non-fatal)
+    try:
+        update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
 
-    offset = 0
-    while True:
-        chunk = list(qs.values("id", "original_url", "platform_slug")[offset: offset + batch_size])
-        if not chunk:
-            break
-        if max_jobs and offset >= max_jobs:
-            break
+        def check_url(job_id: int, url: str, slug: str) -> tuple[int, object]:
+            """Returns (job_id, LinkHealthResult)."""
+            try:
+                result = check_job_posting_live(url, platform_slug=slug or "")
+                return job_id, result
+            except Exception:
+                return job_id, check_job_posting_live("", platform_slug=slug or "")  # missing_url (non-fatal)
 
-        with ThreadPoolExecutor(max_workers=concurrency) as pool:
-            futures = {
-                pool.submit(check_url, row["id"], row["original_url"], row.get("platform_slug") or platform_slug or ""): row["id"]
-                for row in chunk
-            }
-            dead_ids = []
-            alive_ids = []
-            inactive_reasons: dict[int, str] = {}
-            for future in as_completed(futures):
-                job_id, result = future.result()
-                checked += 1
-                reason = (getattr(result, "reason", "") or "unknown").strip()[:120]
-                reason_counts[reason] = reason_counts.get(reason, 0) + 1
-                if bool(result.is_live):
-                    alive += 1
-                    alive_ids.append(job_id)
-                else:
-                    if is_definitive_inactive(result):
-                        dead += 1
-                        dead_ids.append(job_id)
-                        inactive_reasons[job_id] = reason
+        offset = 0
+        while True:
+            chunk = list(qs.values("id", "original_url", "platform_slug")[offset: offset + batch_size])
+            if not chunk:
+                break
+            if max_jobs and offset >= max_jobs:
+                break
+
+            with ThreadPoolExecutor(max_workers=concurrency) as pool:
+                futures = {
+                    pool.submit(check_url, row["id"], row["original_url"], row.get("platform_slug") or platform_slug or ""): row["id"]
+                    for row in chunk
+                }
+                dead_ids = []
+                alive_ids = []
+                inactive_reasons: dict[int, str] = {}
+                for future in as_completed(futures):
+                    job_id, result = future.result()
+                    checked += 1
+                    reason = (getattr(result, "reason", "") or "unknown").strip()[:120]
+                    reason_counts[reason] = reason_counts.get(reason, 0) + 1
+                    if bool(result.is_live):
+                        alive += 1
+                        alive_ids.append(job_id)
                     else:
-                        inconclusive += 1
+                        if is_definitive_inactive(result):
+                            dead += 1
+                            dead_ids.append(job_id)
+                            inactive_reasons[job_id] = reason
+                        else:
+                            inconclusive += 1
 
-            # Mark definitively closed jobs inactive in one batch update.
-            if dead_ids:
-                now = timezone.now()
-                RawJob.objects.filter(pk__in=dead_ids).update(is_active=False)
-                # Store reason metadata for auditability on detail page.
-                for raw in RawJob.objects.filter(pk__in=dead_ids).only("id", "raw_payload"):
-                    payload = dict(raw.raw_payload or {})
-                    payload["link_health"] = {
-                        "is_live": False,
-                        "reason": inactive_reasons.get(raw.id, "inactive"),
-                        "checked_at": now.isoformat(),
-                        "decisive": True,
-                    }
-                    raw.raw_payload = payload
-                    raw.save(update_fields=["raw_payload", "updated_at"])
+                # Mark definitively closed jobs inactive in one batch update.
+                if dead_ids:
+                    now = timezone.now()
+                    RawJob.objects.filter(pk__in=dead_ids).update(is_active=False)
+                    # Store reason metadata for auditability on detail page.
+                    for raw in RawJob.objects.filter(pk__in=dead_ids).only("id", "raw_payload"):
+                        payload = dict(raw.raw_payload or {})
+                        payload["link_health"] = {
+                            "is_live": False,
+                            "reason": inactive_reasons.get(raw.id, "inactive"),
+                            "checked_at": now.isoformat(),
+                            "decisive": True,
+                        }
+                        raw.raw_payload = payload
+                        raw.save(update_fields=["raw_payload", "updated_at"])
 
-                # Propagate to linked Job records — no second HTTP call needed.
-                try:
-                    from jobs.models import Job
-                    from jobs.notify import notify_job_posting_link_unhealthy
-                    linked_jobs = list(
+                    # Propagate to linked Job records — no second HTTP call needed.
+                    try:
+                        from jobs.models import Job
+                        from jobs.notify import notify_job_posting_link_unhealthy
+                        linked_jobs = list(
+                            Job.objects.filter(
+                                source_raw_job_id__in=dead_ids,
+                                status__in=[Job.Status.OPEN, Job.Status.POOL],
+                                is_archived=False,
+                            ).only("id", "status", "possibly_filled", "original_link")
+                        )
+                        for job in linked_jobs:
+                            was_pf = job.possibly_filled
+                            job.original_link_is_live = False
+                            job.original_link_last_checked_at = now
+                            job.possibly_filled = job.status == Job.Status.OPEN
+                            job.save(update_fields=[
+                                "original_link_is_live", "original_link_last_checked_at", "possibly_filled"
+                            ])
+                            if job.possibly_filled and not was_pf:
+                                try:
+                                    notify_job_posting_link_unhealthy(job)
+                                except Exception:
+                                    pass
+                    except Exception:
+                        logger.warning("validate_raw_job_urls: failed to propagate dead status to Jobs", exc_info=True)
+
+                # Stamp last_checked_at on linked Jobs whose URL is still live.
+                if alive_ids:
+                    try:
+                        from jobs.models import Job
                         Job.objects.filter(
-                            source_raw_job_id__in=dead_ids,
+                            source_raw_job_id__in=alive_ids,
                             status__in=[Job.Status.OPEN, Job.Status.POOL],
                             is_archived=False,
-                        ).only("id", "status", "possibly_filled", "original_link")
-                    )
-                    for job in linked_jobs:
-                        was_pf = job.possibly_filled
-                        job.original_link_is_live = False
-                        job.original_link_last_checked_at = now
-                        job.possibly_filled = job.status == Job.Status.OPEN
-                        job.save(update_fields=[
-                            "original_link_is_live", "original_link_last_checked_at", "possibly_filled"
-                        ])
-                        if job.possibly_filled and not was_pf:
-                            try:
-                                notify_job_posting_link_unhealthy(job)
-                            except Exception:
-                                pass
-                except Exception:
-                    logger.warning("validate_raw_job_urls: failed to propagate dead status to Jobs", exc_info=True)
+                        ).update(original_link_is_live=True, original_link_last_checked_at=timezone.now())
+                    except Exception:
+                        logger.warning("validate_raw_job_urls: failed to stamp live status on Jobs", exc_info=True)
 
-            # Stamp last_checked_at on linked Jobs whose URL is still live.
-            if alive_ids:
-                try:
-                    from jobs.models import Job
-                    Job.objects.filter(
-                        source_raw_job_id__in=alive_ids,
-                        status__in=[Job.Status.OPEN, Job.Status.POOL],
-                        is_archived=False,
-                    ).update(original_link_is_live=True, original_link_last_checked_at=timezone.now())
-                except Exception:
-                    logger.warning("validate_raw_job_urls: failed to stamp live status on Jobs", exc_info=True)
+            offset += batch_size
+            update_task_progress(
+                self, current=checked, total=total,
+                message=f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive",
+            )
 
-        offset += batch_size
-        update_task_progress(
-            self, current=checked, total=total,
-            message=f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive",
+        logger.info(
+            "validate_raw_job_urls: checked=%d live=%d inactive=%d inconclusive=%d errors=%d reasons=%s",
+            checked, alive, dead, inconclusive, errors, reason_counts,
         )
+        out = {
+            "checked": checked,
+            "live": alive,
+            "inactive": dead,
+            "inconclusive": inconclusive,
+            "reason_counts": reason_counts,
+        }
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
+        return out
 
-    logger.info(
-        "validate_raw_job_urls: checked=%d live=%d inactive=%d inconclusive=%d errors=%d reasons=%s",
-        checked, alive, dead, inconclusive, errors, reason_counts,
-    )
-    return {
-        "checked": checked,
-        "live": alive,
-        "inactive": dead,
-        "inconclusive": inconclusive,
-        "reason_counts": reason_counts,
-    }
+    except Exception as e:
+        logger.exception("validate_raw_job_urls_task failed: %s", e)
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.FAILED,
+            {
+                "error": str(e)[:500],
+                "checked": checked,
+                "live": alive,
+                "inactive": dead,
+                "inconclusive": inconclusive,
+                "reason_counts": reason_counts,
+            },
+        )
+        raise
 
 
-@shared_task(name="harvest.cleanup_harvested_jobs")
-def cleanup_harvested_jobs_task():
+@shared_task(bind=True, name="harvest.cleanup_harvested_jobs")
+def cleanup_harvested_jobs_task(self):
     """Phase 5: clean expired RawJob rows (HarvestedJob/HarvestRun removed)."""
-    from .models import RawJob
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
 
-    now = timezone.now()
-    expired, _ = RawJob.objects.filter(
-        expires_at__lt=now,
-        sync_status__in=["PENDING", "SKIPPED"],
-        is_active=True,
-    ).update(is_active=False), 0  # soft-delete, not hard delete
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.CLEANUP,
+        getattr(self.request, "id", "") or "",
+        queue={},
+    )
+    try:
+        now = timezone.now()
+        deactivated = RawJob.objects.filter(
+            expires_at__lt=now,
+            sync_status__in=["PENDING", "SKIPPED"],
+            is_active=True,
+        ).update(is_active=False)
 
-    old_cutoff = now - timedelta(days=30)
-    purged, _ = RawJob.objects.filter(
-        is_active=False,
-        fetched_at__lt=old_cutoff,
-    ).delete()
+        old_cutoff = now - timedelta(days=30)
+        purged = RawJob.objects.filter(
+            is_active=False,
+            fetched_at__lt=old_cutoff,
+        ).delete()[0]
 
-    logger.info("Cleanup: %d RawJobs deactivated, %d purged.", expired[0] if isinstance(expired, tuple) else 0, purged)
-    return {"deactivated": expired[0] if isinstance(expired, tuple) else expired, "purged": purged}
+        logger.info("Cleanup: %d RawJobs deactivated, %d purged.", deactivated, purged)
+        out = {"deactivated": deactivated, "purged": purged}
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
+        return out
+    except Exception as e:
+        logger.exception("cleanup_harvested_jobs_task failed: %s", e)
+        finish_ops_run(ops_run, HarvestOpsRun.Status.FAILED, {"error": str(e)[:500]})
+        raise
 
 
 
@@ -1696,7 +1922,8 @@ def sync_harvested_to_pool_task(
     moves meaningful jobs quickly across all pages instead of sampling just the
     newest pending rows.
     """
-    from .models import RawJob
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
     from jobs.models import Job, PipelineEvent
     from jobs.dedup import find_existing_job_by_url
     from jobs.quality import compute_quality_score
@@ -1708,6 +1935,12 @@ def sync_harvested_to_pool_task(
     system_user = User.objects.filter(is_superuser=True).first()
     if not system_user:
         logger.error("No superuser found for sync task.")
+        ops_run = begin_ops_run(
+            HarvestOpsRun.Operation.SYNC_POOL,
+            getattr(self.request, "id", "") or "",
+            queue={"precheck_failed": True, "reason": "no_superuser"},
+        )
+        finish_ops_run(ops_run, HarvestOpsRun.Status.FAILED, {"error": "No superuser found"})
         return {"synced": 0}
 
     max_jobs = int(max_jobs or 0)
@@ -1753,9 +1986,21 @@ def sync_harvested_to_pool_task(
         ),
     )
 
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.SYNC_POOL,
+        getattr(self.request, "id", "") or "",
+        queue={
+            "qualified_only": qualified_only,
+            "max_jobs": max_jobs,
+            "chunk_size": chunk_size,
+            "total_candidates": total_candidates,
+            "total_target": total_target,
+        },
+    )
+
     if total_target == 0:
         logger.info("Sync task: 0 qualifying candidates. qualified_only=%s", qualified_only)
-        return {
+        out = {
             "qualified_only": bool(qualified_only),
             "processed": 0,
             "candidates": total_candidates,
@@ -1764,55 +2009,234 @@ def sync_harvested_to_pool_task(
             "failed": 0,
             "skipped_reasons": {},
         }
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
+        return out
 
-    last_pk = None
-    while processed < total_target:
-        take = min(chunk_size, total_target - processed)
-        page_qs = base_qs
-        if last_pk is not None:
-            page_qs = page_qs.filter(pk__lt=last_pk)
-        batch = list(
-            page_qs.order_by("-pk")
-            .select_related("company", "job_platform", "platform_label", "platform_label__platform")[:take]
-        )
-        if not batch:
-            break
-        last_pk = batch[-1].pk
-        for rj in batch:
-            processed += 1
-            gate = evaluate_raw_job_gate(rj)
-
-            existing = (
-                (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
-                or find_existing_job_by_url(rj.original_url)
-                or Job.objects.filter(original_link=rj.original_url).first()
+    try:
+        last_pk = None
+        while processed < total_target:
+            take = min(chunk_size, total_target - processed)
+            page_qs = base_qs
+            if last_pk is not None:
+                page_qs = page_qs.filter(pk__lt=last_pk)
+            batch = list(
+                page_qs.order_by("-pk")
+                .select_related("company", "job_platform", "platform_label", "platform_label__platform")[:take]
             )
-            if existing:
-                payload = dict(rj.raw_payload or {})
-                payload["vet_gate"] = {
-                    "status": "duplicate",
-                    "reason_code": "DUPLICATE_EXISTING",
-                    "existing_job_id": existing.pk,
-                    "checked_at": _tz.now().isoformat(),
-                }
-                rj.sync_status = "SKIPPED"
-                rj.raw_payload = payload
-                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
-                PipelineEvent.record(
-                    job=existing,
-                    url_hash=rj.url_hash or "",
-                    from_stage=getattr(existing, "stage", "") or "",
-                    to_stage=getattr(existing, "stage", "") or "",
-                    task_name="harvest.sync_harvested_to_pool",
-                    celery_id=getattr(self.request, "id", "") or "",
-                    status=PipelineEvent.Status.SKIPPED,
-                    meta={
-                        "raw_job_id": rj.pk,
-                        "qualified_only": bool(qualified_only),
-                        "reason_code": "DUPLICATE_EXISTING",
-                    },
+            if not batch:
+                break
+            last_pk = batch[-1].pk
+            for rj in batch:
+                processed += 1
+                gate = evaluate_raw_job_gate(rj)
+    
+                existing = (
+                    (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
+                    or find_existing_job_by_url(rj.original_url)
+                    or Job.objects.filter(original_link=rj.original_url).first()
                 )
-                skipped += 1
+                if existing:
+                    payload = dict(rj.raw_payload or {})
+                    payload["vet_gate"] = {
+                        "status": "duplicate",
+                        "reason_code": "DUPLICATE_EXISTING",
+                        "existing_job_id": existing.pk,
+                        "checked_at": _tz.now().isoformat(),
+                    }
+                    rj.sync_status = "SKIPPED"
+                    rj.raw_payload = payload
+                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    PipelineEvent.record(
+                        job=existing,
+                        url_hash=rj.url_hash or "",
+                        from_stage=getattr(existing, "stage", "") or "",
+                        to_stage=getattr(existing, "stage", "") or "",
+                        task_name="harvest.sync_harvested_to_pool",
+                        celery_id=getattr(self.request, "id", "") or "",
+                        status=PipelineEvent.Status.SKIPPED,
+                        meta={
+                            "raw_job_id": rj.pk,
+                            "qualified_only": bool(qualified_only),
+                            "reason_code": "DUPLICATE_EXISTING",
+                        },
+                    )
+                    skipped += 1
+                    if total_target:
+                        update_task_progress(
+                            self,
+                            current=processed,
+                            total=total_target,
+                            message=(
+                                f"Qualified sync {processed:,}/{total_target:,}"
+                                if qualified_only
+                                else f"Sync {processed:,}/{total_target:,}"
+                            ),
+                        )
+                    continue
+    
+                if not gate.passed:
+                    if qualified_only:
+                        # For qualified-only runs, keep non-passing rows pending so they can
+                        # be re-enriched/revalidated later instead of being force-failed here.
+                        reason_key = (gate.reason_code or "UNKNOWN").strip() or "UNKNOWN"
+                        skipped_reasons[reason_key] = skipped_reasons.get(reason_key, 0) + 1
+                        skipped += 1
+                        if total_target:
+                            update_task_progress(
+                                self,
+                                current=processed,
+                                total=total_target,
+                                message=f"Qualified sync {processed:,}/{total_target:,}",
+                            )
+                        continue
+                    payload = dict(rj.raw_payload or {})
+                    payload["vet_gate"] = {
+                        "status": "blocked",
+                        "reason_code": gate.reason_code,
+                        "reasons": gate.reasons,
+                        "checks": gate.checks,
+                        "scores": {
+                            "data_quality": gate.data_quality_score,
+                            "trust": gate.trust_score,
+                            "candidate_fit": gate.candidate_fit_score,
+                            "vet_priority": gate.vet_priority_score,
+                        },
+                        "checked_at": _tz.now().isoformat(),
+                    }
+                    rj.sync_status = "FAILED"
+                    rj.raw_payload = payload
+                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    failed += 1
+                    if total_target:
+                        update_task_progress(
+                            self,
+                            current=processed,
+                            total=total_target,
+                            message=f"Sync {processed:,}/{total_target:,}",
+                        )
+                    continue
+    
+                try:
+                    platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
+                    with transaction.atomic():
+                        job = Job.objects.create(
+                            title=rj.title,
+                            company=rj.company_name or (rj.company.name if rj.company else ""),
+                            company_obj=rj.company,
+                            location=rj.location_raw or "",
+                            description=rj.description or rj.title,
+                            original_link=rj.original_url,
+                            salary_range=rj.salary_raw or "",
+                            job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
+                            status="POOL",
+                            stage=Job.Stage.VETTED,
+                            stage_changed_at=_tz.now(),
+                            url_hash=rj.url_hash or "",
+                            job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
+                            posted_by=system_user,
+                            source_raw_job=rj,
+                            queue_entered_at=_tz.now(),
+                            # Propagate classification from RawJob if available
+                            country=rj.country or "",
+                            department=rj.department_normalized or "",
+                        )
+                        apply_gate_result_to_job(job, gate)
+                        job.quality_score = compute_quality_score(job)
+                        job.validation_score = int(round(gate.vet_priority_score * 100))
+                        job.validation_result = {
+                            "score": job.validation_score,
+                            "lane": gate.lane,
+                            "gate_status": gate.status,
+                            "reason_code": gate.reason_code,
+                            "reasons": gate.reasons,
+                            "checks": gate.checks,
+                            "multi_score": {
+                                "data_quality": gate.data_quality_score,
+                                "trust": gate.trust_score,
+                                "candidate_fit": gate.candidate_fit_score,
+                                "vet_priority": gate.vet_priority_score,
+                            },
+                        }
+                        job.validation_run_at = _tz.now()
+                        job.gate_checked_at = _tz.now()
+                        job.save(
+                            update_fields=[
+                                "hard_gate_passed", "gate_status", "vet_lane",
+                                "pipeline_reason_code", "pipeline_reason_detail",
+                                "hard_gate_failures", "hard_gate_checks",
+                                "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
+                                "quality_score", "validation_score", "validation_result", "validation_run_at",
+                                "gate_checked_at",
+                            ]
+                        )
+                        payload = dict(rj.raw_payload or {})
+                        payload["vet_gate"] = {
+                            "status": "eligible",
+                            "lane": gate.lane,
+                            "reason_code": gate.reason_code,
+                            "checks": gate.checks,
+                            "scores": {
+                                "data_quality": gate.data_quality_score,
+                                "trust": gate.trust_score,
+                                "candidate_fit": gate.candidate_fit_score,
+                                "vet_priority": gate.vet_priority_score,
+                            },
+                            "job_id": job.pk,
+                            "checked_at": _tz.now().isoformat(),
+                        }
+                        rj.sync_status = "SYNCED"
+                        rj.raw_payload = payload
+                        rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                        PipelineEvent.record(
+                            job=job,
+                            from_stage=Job.Stage.ENRICHED,
+                            to_stage=Job.Stage.VETTED,
+                            task_name="harvest.sync_harvested_to_pool",
+                            celery_id=getattr(self.request, "id", "") or "",
+                            status=PipelineEvent.Status.SUCCESS,
+                            meta={
+                                "raw_job_id": rj.pk,
+                                "qualified_only": bool(qualified_only),
+                                "gate_status": gate.status,
+                                "lane": gate.lane,
+                                "reason_code": gate.reason_code,
+                                "scores": {
+                                    "data_quality": gate.data_quality_score,
+                                    "trust": gate.trust_score,
+                                    "candidate_fit": gate.candidate_fit_score,
+                                    "vet_priority": gate.vet_priority_score,
+                                },
+                            },
+                        )
+                        synced += 1
+                except Exception as e:
+                    payload = dict(rj.raw_payload or {})
+                    payload["vet_gate"] = {
+                        "status": "failed",
+                        "reason_code": "POOL_SYNC_ERROR",
+                        "error": str(e)[:240],
+                        "checked_at": _tz.now().isoformat(),
+                    }
+                    rj.sync_status = "FAILED"
+                    rj.raw_payload = payload
+                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    PipelineEvent.record(
+                        url_hash=rj.url_hash or "",
+                        from_stage="ENRICHED",
+                        to_stage="ERROR",
+                        task_name="harvest.sync_harvested_to_pool",
+                        celery_id=getattr(self.request, "id", "") or "",
+                        status=PipelineEvent.Status.FAILED,
+                        error=str(e)[:240],
+                        meta={
+                            "raw_job_id": rj.pk,
+                            "qualified_only": bool(qualified_only),
+                            "reason_code": "POOL_SYNC_ERROR",
+                        },
+                    )
+                    logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
+                    failed += 1
+    
                 if total_target:
                     update_task_progress(
                         self,
@@ -1824,198 +2248,43 @@ def sync_harvested_to_pool_task(
                             else f"Sync {processed:,}/{total_target:,}"
                         ),
                     )
-                continue
 
-            if not gate.passed:
-                if qualified_only:
-                    # For qualified-only runs, keep non-passing rows pending so they can
-                    # be re-enriched/revalidated later instead of being force-failed here.
-                    reason_key = (gate.reason_code or "UNKNOWN").strip() or "UNKNOWN"
-                    skipped_reasons[reason_key] = skipped_reasons.get(reason_key, 0) + 1
-                    skipped += 1
-                    if total_target:
-                        update_task_progress(
-                            self,
-                            current=processed,
-                            total=total_target,
-                            message=f"Qualified sync {processed:,}/{total_target:,}",
-                        )
-                    continue
-                payload = dict(rj.raw_payload or {})
-                payload["vet_gate"] = {
-                    "status": "blocked",
-                    "reason_code": gate.reason_code,
-                    "reasons": gate.reasons,
-                    "checks": gate.checks,
-                    "scores": {
-                        "data_quality": gate.data_quality_score,
-                        "trust": gate.trust_score,
-                        "candidate_fit": gate.candidate_fit_score,
-                        "vet_priority": gate.vet_priority_score,
-                    },
-                    "checked_at": _tz.now().isoformat(),
-                }
-                rj.sync_status = "FAILED"
-                rj.raw_payload = payload
-                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
-                failed += 1
-                if total_target:
-                    update_task_progress(
-                        self,
-                        current=processed,
-                        total=total_target,
-                        message=f"Sync {processed:,}/{total_target:,}",
-                    )
-                continue
+        _invalidate_rawjobs_dashboard_cache()
+        logger.info(
+            "Sync complete: qualified_only=%s processed=%d synced=%d skipped=%d failed=%d target=%d candidates=%d skipped_reasons=%s",
+            qualified_only, processed, synced, skipped, failed, total_target, total_candidates, skipped_reasons,
+        )
+        out = {
+            "qualified_only": bool(qualified_only),
+            "processed": processed,
+            "candidates": total_candidates,
+            "target": total_target,
+            "synced": synced,
+            "skipped": skipped,
+            "failed": failed,
+            "skipped_reasons": skipped_reasons,
+        }
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
+        return out
 
-            try:
-                platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
-                with transaction.atomic():
-                    job = Job.objects.create(
-                        title=rj.title,
-                        company=rj.company_name or (rj.company.name if rj.company else ""),
-                        company_obj=rj.company,
-                        location=rj.location_raw or "",
-                        description=rj.description or rj.title,
-                        original_link=rj.original_url,
-                        salary_range=rj.salary_raw or "",
-                        job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
-                        status="POOL",
-                        stage=Job.Stage.VETTED,
-                        stage_changed_at=_tz.now(),
-                        url_hash=rj.url_hash or "",
-                        job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
-                        posted_by=system_user,
-                        source_raw_job=rj,
-                        queue_entered_at=_tz.now(),
-                        # Propagate classification from RawJob if available
-                        country=rj.country or "",
-                        department=rj.department_normalized or "",
-                    )
-                    apply_gate_result_to_job(job, gate)
-                    job.quality_score = compute_quality_score(job)
-                    job.validation_score = int(round(gate.vet_priority_score * 100))
-                    job.validation_result = {
-                        "score": job.validation_score,
-                        "lane": gate.lane,
-                        "gate_status": gate.status,
-                        "reason_code": gate.reason_code,
-                        "reasons": gate.reasons,
-                        "checks": gate.checks,
-                        "multi_score": {
-                            "data_quality": gate.data_quality_score,
-                            "trust": gate.trust_score,
-                            "candidate_fit": gate.candidate_fit_score,
-                            "vet_priority": gate.vet_priority_score,
-                        },
-                    }
-                    job.validation_run_at = _tz.now()
-                    job.gate_checked_at = _tz.now()
-                    job.save(
-                        update_fields=[
-                            "hard_gate_passed", "gate_status", "vet_lane",
-                            "pipeline_reason_code", "pipeline_reason_detail",
-                            "hard_gate_failures", "hard_gate_checks",
-                            "data_quality_score", "trust_score", "candidate_fit_score", "vet_priority_score",
-                            "quality_score", "validation_score", "validation_result", "validation_run_at",
-                            "gate_checked_at",
-                        ]
-                    )
-                    payload = dict(rj.raw_payload or {})
-                    payload["vet_gate"] = {
-                        "status": "eligible",
-                        "lane": gate.lane,
-                        "reason_code": gate.reason_code,
-                        "checks": gate.checks,
-                        "scores": {
-                            "data_quality": gate.data_quality_score,
-                            "trust": gate.trust_score,
-                            "candidate_fit": gate.candidate_fit_score,
-                            "vet_priority": gate.vet_priority_score,
-                        },
-                        "job_id": job.pk,
-                        "checked_at": _tz.now().isoformat(),
-                    }
-                    rj.sync_status = "SYNCED"
-                    rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
-                    PipelineEvent.record(
-                        job=job,
-                        from_stage=Job.Stage.ENRICHED,
-                        to_stage=Job.Stage.VETTED,
-                        task_name="harvest.sync_harvested_to_pool",
-                        celery_id=getattr(self.request, "id", "") or "",
-                        status=PipelineEvent.Status.SUCCESS,
-                        meta={
-                            "raw_job_id": rj.pk,
-                            "qualified_only": bool(qualified_only),
-                            "gate_status": gate.status,
-                            "lane": gate.lane,
-                            "reason_code": gate.reason_code,
-                            "scores": {
-                                "data_quality": gate.data_quality_score,
-                                "trust": gate.trust_score,
-                                "candidate_fit": gate.candidate_fit_score,
-                                "vet_priority": gate.vet_priority_score,
-                            },
-                        },
-                    )
-                    synced += 1
-            except Exception as e:
-                payload = dict(rj.raw_payload or {})
-                payload["vet_gate"] = {
-                    "status": "failed",
-                    "reason_code": "POOL_SYNC_ERROR",
-                    "error": str(e)[:240],
-                    "checked_at": _tz.now().isoformat(),
-                }
-                rj.sync_status = "FAILED"
-                rj.raw_payload = payload
-                rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
-                PipelineEvent.record(
-                    url_hash=rj.url_hash or "",
-                    from_stage="ENRICHED",
-                    to_stage="ERROR",
-                    task_name="harvest.sync_harvested_to_pool",
-                    celery_id=getattr(self.request, "id", "") or "",
-                    status=PipelineEvent.Status.FAILED,
-                    error=str(e)[:240],
-                    meta={
-                        "raw_job_id": rj.pk,
-                        "qualified_only": bool(qualified_only),
-                        "reason_code": "POOL_SYNC_ERROR",
-                    },
-                )
-                logger.error("Sync failed for RawJob %s: %s", rj.pk, e)
-                failed += 1
-
-            if total_target:
-                update_task_progress(
-                    self,
-                    current=processed,
-                    total=total_target,
-                    message=(
-                        f"Qualified sync {processed:,}/{total_target:,}"
-                        if qualified_only
-                        else f"Sync {processed:,}/{total_target:,}"
-                    ),
-                )
-
-    _invalidate_rawjobs_dashboard_cache()
-    logger.info(
-        "Sync complete: qualified_only=%s processed=%d synced=%d skipped=%d failed=%d target=%d candidates=%d skipped_reasons=%s",
-        qualified_only, processed, synced, skipped, failed, total_target, total_candidates, skipped_reasons,
-    )
-    return {
-        "qualified_only": bool(qualified_only),
-        "processed": processed,
-        "candidates": total_candidates,
-        "target": total_target,
-        "synced": synced,
-        "skipped": skipped,
-        "failed": failed,
-        "skipped_reasons": skipped_reasons,
-    }
+    except Exception as e:
+        logger.exception("sync_harvested_to_pool_task failed: %s", e)
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.FAILED,
+            {
+                "error": str(e)[:500],
+                "qualified_only": bool(qualified_only),
+                "processed": processed,
+                "candidates": total_candidates,
+                "target": total_target,
+                "synced": synced,
+                "skipped": skipped,
+                "failed": failed,
+                "skipped_reasons": skipped_reasons,
+            },
+        )
+        raise
 
 
 # ─── Job Jarvis — single-URL ingestion ───────────────────────────────────────
@@ -3180,11 +3449,11 @@ def _fast_icims_description(job_url: str) -> str:
 
 
 def _fast_oracle_description(job_url: str) -> str:
-    """Oracle HCM — ShortDescriptionStr from REST API + og:description fallback.
+    """Oracle HCM — fetch description for a specific requisition via REST API.
 
-    The Oracle CX public REST API only exposes ShortDescriptionStr (summary).
-    Full description lives in the SPA (requires JS). We return ShortDescriptionStr
-    when available; Jarvis handles the full render if still empty after backfill.
+    Queries the Oracle HCM REST API filtering directly by requisitionId so we
+    always get the right job regardless of how many postings the tenant has.
+    Falls back to HTML scraping if the API is unavailable.
     """
     import re as _re
     import requests as _req
@@ -3201,28 +3470,32 @@ def _fast_oracle_description(job_url: str) -> str:
     else:
         host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
 
+    # Build finder — always filter by requisitionId so we hit exactly the one job.
+    # siteNumber scopes to the right tenant portal when available.
+    finder = f"findReqs;requisitionId={req_num}"
     if sites_id:
-        api_url = (
-            f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-            f"?onlyData=true&expand=requisitionList&limit=5"
-            f"&finder=findReqs;siteNumber={sites_id}"
-        )
-        try:
-            resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
-            if resp.ok:
-                items = resp.json().get("items") or []
-                req_list = items[0].get("requisitionList", []) if items else []
-                for req in req_list:
-                    if str(req.get("Id") or "") == req_num:
-                        for key in ("ShortDescriptionStr", "ExternalDescriptionStr",
-                                    "ExternalQualificationsStr", "ExternalResponsibilitiesStr"):
-                            val = str(req.get(key) or "").strip()
-                            if val:
-                                return val
-        except Exception:
-            pass
+        finder = f"findReqs;siteNumber={sites_id},requisitionId={req_num}"
 
-    # HTML fallback — og:description is usually populated
+    api_url = (
+        f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
+        f"?onlyData=true&expand=requisitionList&limit=1&finder={finder}"
+    )
+    try:
+        resp = _req.get(api_url, headers={"Accept": "application/json"}, timeout=15)
+        if resp.ok:
+            items = resp.json().get("items") or []
+            req_list = items[0].get("requisitionList", []) if items else []
+            for req in req_list:
+                if str(req.get("Id") or "") == req_num:
+                    for key in ("ExternalDescriptionStr", "ShortDescriptionStr",
+                                "ExternalQualificationsStr", "ExternalResponsibilitiesStr"):
+                        val = str(req.get(key) or "").strip()
+                        if val:
+                            return val
+    except Exception:
+        pass
+
+    # HTML fallback — og:description is usually populated on Oracle CX pages
     return _html_jd_extract(job_url, extra_selectors=["requisition-description", "job-detail__description"])
 
 
@@ -3759,7 +4032,8 @@ def backfill_descriptions_task(
 
     from celery.exceptions import SoftTimeLimitExceeded
 
-    from .models import RawJob
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
 
     if offset:
         logger.warning(
@@ -3788,6 +4062,21 @@ def backfill_descriptions_task(
                         "backfill_descriptions: instance %s already running — skipping this Beat firing.",
                         _t["id"],
                     )
+                    dup_op = begin_ops_run(
+                        HarvestOpsRun.Operation.BACKFILL_JD,
+                        getattr(self.request, "id", "") or "",
+                        queue={
+                            "skipped_duplicate_instance": True,
+                            "other_task_id": _t.get("id"),
+                            "batch_size": batch_size,
+                            "parallel_workers": parallel_workers,
+                        },
+                    )
+                    finish_ops_run(
+                        dup_op,
+                        HarvestOpsRun.Status.SKIPPED,
+                        {"reason": "duplicate_worker", "other_task_id": _t.get("id")},
+                    )
                     return {"message": "Skipped — another backfill instance is already running.", "updated": 0}
     except Exception:
         pass  # inspect is best-effort; proceed if it fails
@@ -3808,6 +4097,22 @@ def backfill_descriptions_task(
 
     total = _backfill_eligible_queryset(platform_slug).count()
     if total == 0:
+        empty_op = begin_ops_run(
+            HarvestOpsRun.Operation.BACKFILL_JD,
+            getattr(self.request, "id", "") or "",
+            queue={
+                "eligible_total": 0,
+                "claim_size": claim_size,
+                "parallel_workers": parallelism,
+                "platform_slug": platform_slug or "",
+                "force_jarvis": force_jarvis,
+            },
+        )
+        finish_ops_run(
+            empty_op,
+            HarvestOpsRun.Status.SUCCESS,
+            {"message": "All jobs already have descriptions.", "updated": 0},
+        )
         return {"message": "All jobs already have descriptions.", "updated": 0}
 
     updated = skipped = failed = 0
@@ -3884,6 +4189,21 @@ def backfill_descriptions_task(
         total=total,
         message=start_msg,
         detail=_make_detail(),
+    )
+
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.BACKFILL_JD,
+        getattr(self.request, "id", "") or "",
+        queue={
+            "eligible_total": total,
+            "claim_size": claim_size,
+            "parallel_workers": parallelism,
+            "workers_requested": workers_requested,
+            "platform_slug": platform_slug or "",
+            "force_jarvis": force_jarvis,
+            "reset_locks": reset_locks,
+            "use_pk_sharding": use_pk_sharding,
+        },
     )
 
     try:
@@ -4002,13 +4322,30 @@ def backfill_descriptions_task(
             "Backfill orchestrator soft time limit — processed %s jobs",
             processed,
         )
-        return {
+        completion = {
             "updated": updated,
             "skipped": skipped,
             "failed": failed,
             "remaining": _backfill_eligible_queryset(platform_slug).count(),
             "parallel_workers": parallelism,
+            "soft_time_limit": True,
         }
+        finish_ops_run(ops_run, HarvestOpsRun.Status.PARTIAL, completion)
+        return completion
+
+    except Exception as e:
+        logger.exception("backfill_descriptions_task failed: %s", e)
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.FAILED,
+            {
+                "error": str(e)[:500],
+                "updated": updated,
+                "skipped": skipped,
+                "failed": failed,
+            },
+        )
+        raise
 
     remaining_n = _backfill_eligible_queryset(platform_slug).count()
     result = {
@@ -4022,6 +4359,7 @@ def backfill_descriptions_task(
         "chained_next": False,
     }
     logger.info("Backfill descriptions FINISHED: %s", result)
+    finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, result)
     return result
 
 

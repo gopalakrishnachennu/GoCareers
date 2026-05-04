@@ -1550,6 +1550,7 @@ class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
         if cache.get(CLASSIFY_LOCK_KEY):
             return JsonResponse({"status": "already_running", "message": "Classification is already in progress."})
 
+        # classify_jobs_task now targets all 135k RawJob records
         result = classify_jobs_task.apply_async(kwargs={"force_reclassify": force})
         return JsonResponse({"status": "started", "task_id": result.id})
 

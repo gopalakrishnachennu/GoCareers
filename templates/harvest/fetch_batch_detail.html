@@ -1,0 +1,260 @@
+{% extends "base.html" %}
+{% block title %}Harvest batch #{{ batch.pk }}{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl px-4 py-8">
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Harvest batch</p>
+      <h1 class="mt-1 text-2xl font-black text-slate-900">#{{ batch.pk }} — {{ batch.name|default:"(unnamed)" }}</h1>
+      <p class="mt-2 max-w-3xl text-sm text-slate-600">
+        Every row below is one <strong>company + ATS board</strong> that was <em>queued</em> for this batch.
+        Companies that were skipped as “too fresh” or excluded (dead portal, missing tenant) never appear here — see the yellow note.
+      </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="{% url 'jobs-pipeline' %}?tab=raw" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">← Jobs Command Center</a>
+      <a href="{% url 'harvest-batch-activity' %}" class="rounded-lg border border-violet-300 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-900 hover:bg-violet-100">All batch activity</a>
+    </div>
+  </div>
+
+  <div class="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
+    <p class="font-semibold text-amber-900">What you never see on this page</p>
+    <ul class="mt-2 list-disc space-y-1 pl-5 text-amber-900/90">
+      <li><strong>Skipped “fresh”</strong> — labels that already had a successful fetch within <code>HarvestEngineConfig.min_hours_since_fetch</code> are not queued, so they are not rows here. See <strong>Harvest batch activity</strong> or grep logs for <code>[HARVEST_AUDIT queue]</code> (<code>skipped_fresh</code>).</li>
+      <li><strong>Excluded labels</strong> — dead career portals (<code>portal_alive=False</code>), disabled platforms, or empty <code>tenant_id</code> are filtered out before any batch row exists.</li>
+      <li><strong>After the batch finishes</strong> — the system may auto-queue URL validation and pool sync (see <code>HarvestEngineConfig</code>). That work is separate Celery tasks, not listed as company rows.</li>
+      <li><strong>“Failed” batch counter</strong> includes <code>SKIPPED</code> company runs (e.g. missing harvester), not only HTTP failures.</li>
+    </ul>
+  </div>
+
+  <div class="mb-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Batch status</p>
+      <p class="mt-2 text-xl font-bold text-slate-900">{{ batch.status }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Companies queued</p>
+      <p class="mt-2 text-xl font-bold text-slate-900">{{ batch.total_companies }}</p>
+      <p class="text-xs text-slate-500">Finished OK-ish: {{ batch.completed_companies }} · Failed/skipped bucket: {{ batch.failed_companies }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Jobs discovered (sum)</p>
+      <p class="mt-2 text-xl font-bold text-slate-900">{{ batch.total_jobs_found|default:0 }}</p>
+      <p class="text-xs text-slate-500">New rows: {{ batch.total_jobs_new|default:0 }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Progress</p>
+      <p class="mt-2 text-xl font-bold text-slate-900">{{ batch.progress_pct }}%</p>
+      {% if batch.status == "RUNNING" %}
+      <p class="text-xs text-amber-700">Still running — refresh for updates.</p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if batch.audit_payload.queue or batch.audit_payload.completion or batch.audit_payload.cancelled %}
+  <div class="mb-6 rounded-xl border border-violet-200 bg-violet-50/80 px-4 py-4 shadow-sm">
+    <h2 class="text-sm font-bold uppercase tracking-wide text-violet-900">Centralized audit (stored on this batch)</h2>
+    <p class="mt-1 text-xs text-violet-900/80">Written by Celery — visible here even when worker stdout is hard to find.</p>
+    {% if batch.audit_payload.queue %}
+    <div class="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 text-sm">
+      <div><span class="text-slate-500 text-xs uppercase">run_kind</span><p class="font-mono font-semibold text-violet-950">{{ batch.audit_payload.queue.run_kind }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">fetch_all</span><p class="font-semibold">{{ batch.audit_payload.queue.fetch_all }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">platform_filter</span><p class="font-mono text-xs">{{ batch.audit_payload.queue.platform_filter|default:"—" }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">eligible_labels</span><p class="font-semibold">{{ batch.audit_payload.queue.eligible_labels|default:"—" }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">skipped_fresh</span><p class="font-semibold text-amber-900">{{ batch.audit_payload.queue.skipped_fresh|default:"—" }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">queued_companies</span><p class="font-semibold">{{ batch.audit_payload.queue.queued_companies }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">min_hours_since_successful_fetch</span><p class="font-semibold">{{ batch.audit_payload.queue.min_hours_since_successful_fetch }}</p></div>
+      <div><span class="text-slate-500 text-xs uppercase">incremental API window (h)</span><p class="font-semibold">{{ batch.audit_payload.queue.incremental_since_hours_for_api_boards }}</p></div>
+      <div class="sm:col-span-2 lg:col-span-3"><span class="text-slate-500 text-xs uppercase">Notes</span>
+        <p class="text-xs text-slate-700 mt-1">{{ batch.audit_payload.queue.scraper_platforms_note }}</p>
+        {% if batch.audit_payload.queue.what_quick_fetch_does_not_do %}
+        <p class="text-xs text-amber-900 mt-1">{{ batch.audit_payload.queue.what_quick_fetch_does_not_do }}</p>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+    {% if batch.audit_payload.completion %}
+    <div class="mt-4 border-t border-violet-200 pt-4">
+      <h3 class="text-xs font-bold uppercase text-violet-900">Completion snapshot</h3>
+      <div class="mt-2 flex flex-wrap gap-3 text-sm">
+        <span class="rounded-lg bg-white px-2 py-1 border border-violet-100">status <strong>{{ batch.audit_payload.completion.batch_status }}</strong></span>
+        <span class="rounded-lg bg-white px-2 py-1 border border-violet-100">jobs_found Σ <strong>{{ batch.audit_payload.completion.total_jobs_found }}</strong></span>
+        <span class="rounded-lg bg-white px-2 py-1 border border-violet-100">jobs_new Σ <strong>{{ batch.audit_payload.completion.total_jobs_new }}</strong></span>
+      </div>
+      {% if batch.audit_payload.completion.by_status %}
+      <p class="mt-2 text-xs font-semibold text-slate-600">By company-run status</p>
+      <ul class="mt-1 flex flex-wrap gap-2 text-xs font-mono">
+        {% for k,v in batch.audit_payload.completion.by_status.items %}
+        <li class="rounded bg-white px-2 py-0.5 border border-slate-200">{{ k }}={{ v }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% elif batch.status == "RUNNING" %}
+    <p class="mt-4 text-sm text-amber-800">Completion audit appears here after the <strong>last</strong> company in this batch finishes.</p>
+    {% endif %}
+    {% if batch.audit_payload.cancelled %}
+    <div class="mt-4 border-t border-rose-200 pt-4 text-sm text-rose-900">
+      <strong>Cancelled</strong> at {{ batch.audit_payload.cancelled.at }}
+      by {{ batch.audit_payload.cancelled.by }}
+      {% if batch.audit_payload.cancelled.revoked_child_tasks is not None %}
+      · revoked {{ batch.audit_payload.cancelled.revoked_child_tasks }} child task(s)
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <div class="mb-6 grid gap-6 lg:grid-cols-2">
+    <section class="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="border-b border-slate-100 px-4 py-3">
+        <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">This batch — by platform</h2>
+        <p class="text-xs text-slate-500">Ok = SUCCESS + PARTIAL · Bad = FAILED + SKIPPED</p>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th class="px-4 py-2">Platform</th>
+              <th class="px-4 py-2">Companies</th>
+              <th class="px-4 py-2">Ok</th>
+              <th class="px-4 py-2">Bad</th>
+              <th class="px-4 py-2">Running</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for row in batch_platform_rows %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-2 font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
+              <td class="px-4 py-2">{{ row.total }}</td>
+              <td class="px-4 py-2 text-emerald-700">{{ row.ok }}</td>
+              <td class="px-4 py-2 text-rose-700">{{ row.bad }}</td>
+              <td class="px-4 py-2 text-amber-700">{{ row.running }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">No company runs recorded yet.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="rounded-xl border border-slate-200 bg-white shadow-sm">
+      <div class="border-b border-slate-100 px-4 py-3">
+        <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Last 7 days — platforms struggling most</h2>
+        <p class="text-xs text-slate-500">All batches combined · sorted by “bad” runs</p>
+      </div>
+      <div class="overflow-x-auto max-h-80 overflow-y-auto">
+        <table class="min-w-full text-sm">
+          <thead class="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th class="px-4 py-2">Platform</th>
+              <th class="px-4 py-2">Runs</th>
+              <th class="px-4 py-2">Ok</th>
+              <th class="px-4 py-2">Bad</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for row in platform_health_7d %}
+            <tr class="hover:bg-slate-50">
+              <td class="px-4 py-2 font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
+              <td class="px-4 py-2">{{ row.total }}</td>
+              <td class="px-4 py-2 text-emerald-700">{{ row.ok }}</td>
+              <td class="px-4 py-2 text-rose-700">{{ row.bad }}</td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">No harvest runs in the last 7 days.</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <section class="rounded-xl border border-slate-200 bg-white shadow-sm">
+    <div class="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+      <div>
+        <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Company-level runs</h2>
+        <p class="text-xs text-slate-500">Filter:</p>
+      </div>
+      <form method="get" class="flex flex-wrap items-center gap-2">
+        <select name="status" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
+          <option value="">All statuses</option>
+          {% for s in valid_run_statuses %}
+          <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit" class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white">Apply</button>
+      </form>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="px-4 py-2">Company</th>
+            <th class="px-4 py-2">Platform</th>
+            <th class="px-4 py-2">Status</th>
+            <th class="px-4 py-2">Found</th>
+            <th class="px-4 py-2">New</th>
+            <th class="px-4 py-2">Upd</th>
+            <th class="px-4 py-2">Dup</th>
+            <th class="px-4 py-2">Fail rows</th>
+            <th class="px-4 py-2">Error</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for run in runs %}
+          <tr class="hover:bg-slate-50 align-top">
+            <td class="px-4 py-2 font-medium text-slate-900">{{ run.label.company.name|default:"—" }}</td>
+            <td class="px-4 py-2 font-mono text-xs">{{ run.label.platform.slug|default:"—" }}</td>
+            <td class="px-4 py-2">
+              {% if run.status == "SUCCESS" %}
+              <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">{{ run.status }}</span>
+              {% elif run.status == "PARTIAL" %}
+              <span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">{{ run.status }}</span>
+              {% elif run.status == "RUNNING" %}
+              <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">{{ run.status }}</span>
+              {% else %}
+              <span class="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-800">{{ run.status }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2">{{ run.jobs_found }}</td>
+            <td class="px-4 py-2">{{ run.jobs_new }}</td>
+            <td class="px-4 py-2">{{ run.jobs_updated }}</td>
+            <td class="px-4 py-2">{{ run.jobs_duplicate }}</td>
+            <td class="px-4 py-2">{{ run.jobs_failed }}</td>
+            <td class="px-4 py-2 max-w-md text-xs text-slate-600 break-words">{{ run.error_message|default:"—"|truncatechars:160 }}</td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No runs match this filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="mt-8 rounded-xl border border-slate-200 bg-slate-50 p-4">
+    <h3 class="text-sm font-bold text-slate-800">Other recent batches</h3>
+    <ul class="mt-2 flex flex-wrap gap-2 text-sm">
+      {% for b in recent_batches %}
+      <li>
+        {% if b.pk == batch.pk %}
+        <span class="rounded-lg border border-indigo-400 bg-indigo-50 px-3 py-1 font-semibold text-indigo-900">#{{ b.pk }} (this)</span>
+        {% else %}
+        <a href="{% url 'harvest-batch-detail' b.pk %}" class="rounded-lg border border-slate-300 bg-white px-3 py-1 font-medium text-slate-700 hover:bg-slate-100">#{{ b.pk }} · {{ b.status }}</a>
+        {% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <section class="mt-6 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-600">
+    <p class="font-semibold text-slate-800">Logs to grep on your server</p>
+    <ul class="mt-2 list-disc space-y-1 pl-5 font-mono text-xs">
+      <li><code>[HARVEST_AUDIT queue]</code> — when the batch is queued (<code>run_kind</code> = <code>quick_sync</code>, <code>full_crawl_*</code>, etc.).</li>
+      <li><code>[HARVEST_AUDIT done]</code> — when the last company completes; includes platform rollup.</li>
+    </ul>
+  </section>
+</div>
+{% endblock %}

@@ -304,51 +304,62 @@ def auto_close_jobs_task():
 # ── Job Classification Engine ─────────────────────────────────────────────────
 
 CLASSIFY_LOCK_KEY = "jobs:classify_all:lock"
-CLASSIFY_LOCK_TTL = 60 * 90  # 90 minutes max
+CLASSIFY_LOCK_TTL = 60 * 180  # 3 hours max for 135k RawJobs
 
 
-@shared_task(bind=True, name="jobs.classify_all", max_retries=0, soft_time_limit=5400, time_limit=5700)
+@shared_task(bind=True, name="jobs.classify_all", max_retries=0, soft_time_limit=10800, time_limit=11100)
 def classify_jobs_task(self, force_reclassify: bool = False):
     """
-    Classify all Jobs with country + department.
+    Classify all 135k RawJob records with country + department_normalized.
     - Chunked iterator (1000/batch) — no OOM
     - Mutex lock — prevents concurrent runs
     - Idempotent — skips already-classified unless force_reclassify=True
-    - Writes classified_at per chunk — resumable after crash
-    - Never overwrites department_source="manual"
+    - Propagates country/department to Job table via existing sync logic
     """
     from django.core.cache import cache
-    from django.utils import timezone as tz
 
-    from .classifier.country import detect_country
-    from .classifier.department import classify_department
+    from harvest.models import HarvestOpsRun
+    from harvest.ops_audit import begin_ops_run, finish_ops_run
 
-    # ── Acquire lock ──────────────────────────────────────────────────────────
     acquired = cache.add(CLASSIFY_LOCK_KEY, self.request.id or "running", CLASSIFY_LOCK_TTL)
     if not acquired:
         logger.warning("classify_jobs_task: already running, aborting duplicate.")
+        dup_op = begin_ops_run(
+            HarvestOpsRun.Operation.CLASSIFY,
+            getattr(self.request, "id", "") or "",
+            queue={"force_reclassify": force_reclassify, "duplicate_lock": True},
+        )
+        finish_ops_run(dup_op, HarvestOpsRun.Status.SKIPPED, {"reason": "lock_held"})
         return {"status": "skipped", "reason": "lock_held"}
 
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.CLASSIFY,
+        getattr(self.request, "id", "") or "",
+        queue={"force_reclassify": force_reclassify},
+    )
     try:
-        return _run_classify(self, force_reclassify=force_reclassify)
+        result = _run_classify_raw(self, force_reclassify=force_reclassify)
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, result)
+        return result
+    except Exception as e:
+        logger.exception("classify_jobs_task failed: %s", e)
+        finish_ops_run(ops_run, HarvestOpsRun.Status.FAILED, {"error": str(e)[:500]})
+        raise
     finally:
         cache.delete(CLASSIFY_LOCK_KEY)
 
 
-def _run_classify(task_self, *, force_reclassify: bool) -> dict:
-    from django.utils import timezone as tz
+def _run_classify_raw(task_self, *, force_reclassify: bool) -> dict:
     from django.db.models import Q
 
+    from harvest.models import RawJob
     from .classifier.country import detect_country
     from .classifier.department import classify_department
-    from .models import Job
 
     # ── Queryset ──────────────────────────────────────────────────────────────
-    qs = Job.objects.select_related("company_obj").order_by("pk")
+    qs = RawJob.objects.filter(is_active=True).order_by("pk")
     if not force_reclassify:
-        qs = qs.filter(
-            Q(classified_at__isnull=True) | Q(needs_reclassification=True)
-        ).exclude(department_source="manual")
+        qs = qs.filter(Q(country="") | Q(department_normalized=""))
 
     total = qs.count()
     if total == 0:
@@ -356,63 +367,44 @@ def _run_classify(task_self, *, force_reclassify: bool) -> dict:
 
     update_task_progress(task_self, current=0, total=total, message="Starting classification…")
 
-    stats = {"rules": 0, "role_domain": 0, "embedding": 0, "llm": 0, "synced": 0}
+    stats: dict[str, int] = {"rules": 0, "role_domain": 0, "embedding": 0, "llm": 0}
     country_found = 0
     processed = 0
-    chunk: list[Job] = []
+    chunk: list[RawJob] = []
     CHUNK = 1000
 
-    for job in qs.iterator(chunk_size=CHUNK):
+    for rj in qs.iterator(chunk_size=CHUNK):
+        description = rj.description_clean or rj.description or ""
+
         # ── Country ──────────────────────────────────────────────────────────
-        if not job.country or job.needs_reclassification:
-            country, region = detect_country(
-                location=job.location or "",
-                title=job.title or "",
-                description=job.description or "",
+        if not rj.country or force_reclassify:
+            country, _region = detect_country(
+                location=rj.location_raw or "",
+                title=rj.title or "",
+                description=description,
             )
-            job.country = country
-            job.region = region
+            rj.country = country or ""
             if country:
                 country_found += 1
 
         # ── Department ───────────────────────────────────────────────────────
-        if not job.department or job.needs_reclassification:
-            company_industry = ""
-            if job.company_obj:
-                company_industry = job.company_obj.industry or ""
-
-            dept, conf, source = classify_department(
-                title=job.title or "",
-                description=job.description or "",
-                role_domain=(job.parsed_jd or {}).get("role_domain", ""),
-                company_industry=company_industry,
+        if not rj.department_normalized or force_reclassify:
+            dept, _conf, source = classify_department(
+                title=rj.title or "",
+                description=description,
+                role_domain=rj.department_normalized or "",
+                company_industry="",
                 use_llm=True,
                 llm_threshold=0.45,
             )
-            job.department = dept
-            job.department_confidence = round(conf, 4)
-            job.department_source = source
+            rj.department_normalized = dept or ""
             stats[source] = stats.get(source, 0) + 1
 
-            # Keep parsed_jd.role_domain in sync
-            if job.parsed_jd is not None and dept:
-                jd = dict(job.parsed_jd)
-                jd["department"] = dept
-                jd["department_confidence"] = round(conf, 4)
-                job.parsed_jd = jd
-
-        job.classified_at = tz.now()
-        job.needs_reclassification = False
-        chunk.append(job)
+        chunk.append(rj)
         processed += 1
 
-        # ── Bulk update every CHUNK jobs ──────────────────────────────────
         if len(chunk) >= CHUNK:
-            Job.objects.bulk_update(
-                chunk,
-                ["country", "region", "department", "department_confidence",
-                 "department_source", "classified_at", "needs_reclassification", "parsed_jd"],
-            )
+            RawJob.objects.bulk_update(chunk, ["country", "department_normalized"])
             chunk.clear()
             update_task_progress(
                 task_self,
@@ -424,15 +416,14 @@ def _run_classify(task_self, *, force_reclassify: bool) -> dict:
 
     # ── Final flush ───────────────────────────────────────────────────────────
     if chunk:
-        Job.objects.bulk_update(
-            chunk,
-            ["country", "region", "department", "department_confidence",
-             "department_source", "classified_at", "needs_reclassification", "parsed_jd"],
-        )
+        RawJob.objects.bulk_update(chunk, ["country", "department_normalized"])
+
+    # ── Propagate to Job table ────────────────────────────────────────────────
+    _sync_classifications_to_jobs(force=force_reclassify)
 
     update_task_progress(
         task_self, current=total, total=total,
-        message=f"Done — {processed:,} jobs classified.",
+        message=f"Done — {processed:,} raw jobs classified.",
         detail={"country_found": country_found, **stats},
     )
 
@@ -443,3 +434,132 @@ def _run_classify(task_self, *, force_reclassify: bool) -> dict:
         "country_found": country_found,
         **stats,
     }
+
+
+def _sync_classifications_to_jobs(*, force: bool = False):
+    """Copy country + department from RawJob → Job for all linked records.
+
+    force=True skips the "only update empty fields" filter so existing values
+    are overwritten (respects department_source='manual' regardless).
+    """
+    from django.db import connection
+
+    # When force=False we only touch Jobs where the field is still blank.
+    # When force=True we overwrite whatever was there (except manual dept).
+    where_filter = "" if force else """
+              AND (
+                  (r.country <> '' AND (j.country IS NULL OR j.country = ''))
+                  OR (r.department_normalized <> '' AND j.department_source <> 'manual'
+                      AND (j.department IS NULL OR j.department = ''))
+              )"""
+
+    with connection.cursor() as cur:
+        cur.execute(f"""
+            UPDATE jobs_job j
+            SET
+                country            = COALESCE(NULLIF(r.country, ''), j.country),
+                department         = CASE
+                                       WHEN j.department_source = 'manual' THEN j.department
+                                       WHEN r.department_normalized <> ''  THEN r.department_normalized
+                                       ELSE j.department
+                                     END,
+                department_source  = CASE
+                                       WHEN j.department_source = 'manual'   THEN j.department_source
+                                       WHEN r.department_normalized <> ''    THEN 'raw_job'
+                                       ELSE j.department_source
+                                     END,
+                classified_at      = NOW()
+            FROM harvest_rawjob r
+            WHERE r.id = j.source_raw_job_id
+              AND r.is_active = true
+              {where_filter}
+        """)
+
+
+# ── Legacy: classify manually-posted Jobs that have no RawJob source ──────────
+
+CLASSIFY_JOB_ONLY_LOCK_KEY = "jobs:classify_jobs_only:lock"
+
+
+@shared_task(bind=True, name="jobs.classify_manual_jobs", max_retries=0, soft_time_limit=3600, time_limit=3900)
+def classify_manual_jobs_task(self, force_reclassify: bool = False):
+    """Classify Job records that have no raw_job_id (manually-posted jobs)."""
+    from django.core.cache import cache
+    from django.utils import timezone as tz
+    from django.db.models import Q
+
+    from .classifier.country import detect_country
+    from .classifier.department import classify_department
+
+    acquired = cache.add(CLASSIFY_JOB_ONLY_LOCK_KEY, self.request.id or "running", 3600)
+    if not acquired:
+        return {"status": "skipped", "reason": "lock_held"}
+
+    try:
+        qs = Job.objects.select_related("company_obj").filter(source_raw_job__isnull=True).order_by("pk")
+        if not force_reclassify:
+            qs = qs.filter(
+                Q(classified_at__isnull=True) | Q(needs_reclassification=True)
+            ).exclude(department_source="manual")
+
+        total = qs.count()
+        if total == 0:
+            return {"status": "done", "total": 0, "classified": 0}
+
+        stats: dict[str, int] = {"rules": 0, "role_domain": 0, "embedding": 0, "llm": 0}
+        country_found = 0
+        processed = 0
+        chunk: list[Job] = []
+        CHUNK = 500
+
+        for job in qs.iterator(chunk_size=CHUNK):
+            if not job.country or force_reclassify:
+                country, region = detect_country(
+                    location=job.location or "",
+                    title=job.title or "",
+                    description=job.description or "",
+                )
+                job.country = country
+                job.region = region
+                if country:
+                    country_found += 1
+
+            if not job.department or force_reclassify:
+                company_industry = (job.company_obj.industry or "") if job.company_obj else ""
+                dept, conf, source = classify_department(
+                    title=job.title or "",
+                    description=job.description or "",
+                    role_domain=(job.parsed_jd or {}).get("role_domain", ""),
+                    company_industry=company_industry,
+                    use_llm=True,
+                    llm_threshold=0.45,
+                )
+                job.department = dept
+                job.department_confidence = round(conf, 4)
+                job.department_source = source
+                stats[source] = stats.get(source, 0) + 1
+
+            job.classified_at = tz.now()
+            job.needs_reclassification = False
+            chunk.append(job)
+            processed += 1
+
+            if len(chunk) >= CHUNK:
+                Job.objects.bulk_update(
+                    chunk,
+                    ["country", "region", "department", "department_confidence",
+                     "department_source", "classified_at", "needs_reclassification"],
+                )
+                chunk.clear()
+
+        if chunk:
+            Job.objects.bulk_update(
+                chunk,
+                ["country", "region", "department", "department_confidence",
+                 "department_source", "classified_at", "needs_reclassification"],
+            )
+
+        return {"status": "done", "total": total, "classified": processed,
+                "country_found": country_found, **stats}
+    finally:
+        cache.delete(CLASSIFY_JOB_ONLY_LOCK_KEY)

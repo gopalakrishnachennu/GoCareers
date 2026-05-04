@@ -135,10 +135,6 @@ class SmartRecruitersHarvester(BaseHarvester):
         job_id = p.get("id") or ""
         # Authoritative API slug is on each posting (case-sensitive); label tenant_id can differ.
         api_slug = ((p.get("company") or {}).get("identifier") or slug or "").strip()
-        job_url = (
-            p.get("ref")
-            or f"https://jobs.smartrecruiters.com/{api_slug}/{job_id}"
-        )
         api_posting_id = _normalize_posting_id_for_api(str(job_id)) if job_id else ""
 
         # ── Fetch full description from detail endpoint ────────────────────
@@ -157,14 +153,28 @@ class SmartRecruitersHarvester(BaseHarvester):
 
         experience_level = _detect_experience_level(p.get("name") or "", description[:500])
 
+        # ── Resolve public-facing URLs ────────────────────────────────────
+        # p.get("ref") is the API resource URL (api.smartrecruiters.com/v1/...), NOT the
+        # public job page — never use it as original_url.
+        # The detail endpoint provides postingUrl/applyUrl which are the real candidate URLs.
+        posting_url = ""
+        apply_url = ""
+        if isinstance(detail, dict) and "error" not in detail:
+            posting_url = detail.get("postingUrl") or ""
+            apply_url   = detail.get("applyUrl") or posting_url
+        if not posting_url:
+            posting_url = f"https://jobs.smartrecruiters.com/{api_slug}/{job_id}"
+        if not apply_url:
+            apply_url = posting_url
+
         raw_payload = dict(p)
         if isinstance(detail, dict) and detail and "error" not in detail:
             raw_payload["active"] = detail.get("active", True)
 
         return {
             "external_id": job_id,
-            "original_url": job_url,
-            "apply_url": job_url,
+            "original_url": posting_url,
+            "apply_url": apply_url,
             "title": p.get("name") or "",
             "company_name": company_name,
             "department": dept,

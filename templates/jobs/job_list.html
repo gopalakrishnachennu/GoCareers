@@ -33,7 +33,6 @@
                 </svg>
                 Export CSV
             </a>
-            {% endif %}
             {% if user.role == 'EMPLOYEE' or user.is_superuser %}
             <a href="{% url 'job-bulk-upload' %}" class="btn-hero" title="Bulk Upload">
                 <svg class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">

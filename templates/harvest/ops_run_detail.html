@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Ops run #{{ ops_run.pk }}{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-5xl px-4 py-8">
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Harvest ops audit</p>
+      <h1 class="mt-1 text-2xl font-black text-slate-900">Run #{{ ops_run.pk }} · {{ ops_run.get_operation_display }}</h1>
+      <p class="mt-2 text-sm text-slate-600">
+        <span class="font-mono text-xs">{{ ops_run.operation }}</span>
+        · status <strong>{{ ops_run.status }}</strong>
+        {% if ops_run.celery_task_id %}· Celery <code class="text-xs bg-slate-100 px-1 rounded">{{ ops_run.celery_task_id }}</code>{% endif %}
+      </p>
+    </div>
+    <a href="{% url 'harvest-batch-activity' %}" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">← Batch &amp; ops activity</a>
+  </div>
+
+  <dl class="mb-6 grid gap-3 text-sm sm:grid-cols-2">
+    <div class="rounded-lg border border-slate-200 bg-white p-3">
+      <dt class="text-xs uppercase tracking-wide text-slate-500">Started</dt>
+      <dd class="mt-1 font-medium">{{ ops_run.created_at|date:"Y-m-d H:i:s" }}</dd>
+    </div>
+    <div class="rounded-lg border border-slate-200 bg-white p-3">
+      <dt class="text-xs uppercase tracking-wide text-slate-500">Finished</dt>
+      <dd class="mt-1 font-medium">{% if ops_run.finished_at %}{{ ops_run.finished_at|date:"Y-m-d H:i:s" }}{% else %}—{% endif %}</dd>
+    </div>
+  </dl>
+
+  <section class="rounded-xl border border-slate-200 bg-slate-900 p-4 shadow-inner overflow-x-auto">
+    <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">audit_payload</p>
+    <pre class="text-xs text-emerald-100 font-mono whitespace-pre-wrap break-all">{{ audit_json }}</pre>
+  </section>
+  <p class="mt-4 text-xs text-slate-500">Stored on <code class="bg-slate-100 px-1 rounded">HarvestOpsRun.audit_payload</code>; grep worker logs for <code class="bg-slate-100 px-1 rounded">[HARVEST_AUDIT ops_queue]</code> / <code class="bg-slate-100 px-1 rounded">ops_done</code>.</p>
+</div>
+{% endblock %}

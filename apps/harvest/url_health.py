@@ -271,10 +271,12 @@ def _oracle_hcm_liveness(url: str) -> "LinkHealthResult | None":
         return None
 
     host, sites_id, req_num = m.group(1), m.group(2), m.group(3)
+    # Filter directly by requisitionId — never rely on the job appearing in
+    # a generic first-page list (tenants with >N jobs would give false negatives).
     api_url = (
         f"https://{host}/hcmRestApi/resources/latest/recruitingCEJobRequisitions"
-        f"?onlyData=true&expand=requisitionList&limit=20"
-        f"&finder=findReqs;siteNumber={sites_id}"
+        f"?onlyData=true&expand=requisitionList&limit=1"
+        f"&finder=findReqs;siteNumber={sites_id},requisitionId={req_num}"
     )
 
     try:
@@ -293,11 +295,10 @@ def _oracle_hcm_liveness(url: str) -> "LinkHealthResult | None":
         for req in req_list:
             if str(req.get("Id") or "") == req_num:
                 return LinkHealthResult(True, status, "oracle_hcm_live", api_url)
-        # Job ID not in results — definitively gone
-        if req_list:
+        # Queried by exact requisitionId — empty result means definitively gone
+        if req_list is not None:
             return LinkHealthResult(False, status, "oracle_hcm_not_found", api_url)
-        # Empty list could mean API pagination issue — inconclusive
-        return LinkHealthResult(False, status, "oracle_hcm_no_results", api_url)
+        return None
     except Exception:
         return None
 
@@ -370,7 +371,11 @@ def _smartrecruiters_liveness(url: str) -> "LinkHealthResult | None":
     """SmartRecruiters public API: 404 = closed."""
     m = re.search(r"(?:jobs\.smartrecruiters\.com|smartrecruiters\.com)/([^/]+)/(\d+)", url, re.I)
     if not m:
-        return None
+        # Handle legacy records where original_url was accidentally set to the API URL
+        # e.g. api.smartrecruiters.com/v1/companies/{company}/postings/{id}
+        m = re.search(r"api\.smartrecruiters\.com/v1/companies/([^/]+)/postings/(\d+)", url, re.I)
+        if not m:
+            return None
     company, job_id = m.group(1), m.group(2)
     api_url = f"https://api.smartrecruiters.com/v1/companies/{company}/postings/{job_id}"
     try:

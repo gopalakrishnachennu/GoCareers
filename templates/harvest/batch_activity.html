@@ -1,0 +1,187 @@
+{% extends "base.html" %}
+{% block title %}Harvest batch activity{% endblock %}
+
+{% block content %}
+<div class="mx-auto max-w-7xl px-4 py-8">
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Centralized harvest logs</p>
+      <h1 class="mt-1 text-2xl font-black text-slate-900">Batch activity &amp; metrics</h1>
+      <p class="mt-2 max-w-3xl text-sm text-slate-600">
+        Each <strong>Quick Fetch (25h)</strong>, <strong>Full Fetch</strong>, or smoke run creates one batch row.
+        <strong>Queue</strong> metrics are written when Celery starts dispatching; <strong>completion</strong> when the last company finishes.
+        Detection, backfill, validate links, sync, cleanup, and classify runs create <strong>HarvestOpsRun</strong> rows with the same queue/completion pattern.
+        If you do not see worker logs, use this page — data is stored on <code class="text-xs bg-slate-100 px-1 rounded">FetchBatch.audit_payload</code> and <code class="text-xs bg-slate-100 px-1 rounded">HarvestOpsRun.audit_payload</code>.
+      </p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="{% url 'jobs-pipeline' %}?tab=raw" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Jobs Command Center</a>
+      {% if latest_fetch_batch %}
+      <a href="{% url 'harvest-batch-detail' latest_fetch_batch.pk %}" class="rounded-lg border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-900 hover:bg-emerald-100">Latest batch detail</a>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="mb-6 rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-950">
+    <p class="font-semibold text-indigo-900">Log grep (Celery worker / app stdout)</p>
+    <ul class="mt-2 list-disc space-y-1 pl-5 font-mono text-xs">
+      {% for hint in grep_hints %}
+      <li><code>{{ hint }}</code>{% if 'ops_' in hint %} — ops runs (detect, backfill, validate, sync, cleanup, classify).{% else %} — includes <code>run_kind</code> (e.g. <code>quick_sync</code>) and batch id.{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+
+  <section class="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Batches started (24h)</p>
+      <p class="mt-2 text-2xl font-black text-slate-900">{{ metrics_24h.batch_count }}</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Company runs (24h)</p>
+      <p class="mt-2 text-lg font-bold text-emerald-700">Ok {{ metrics_24h.company_runs_ok_24h }}</p>
+      <p class="text-lg font-bold text-rose-700">Bad {{ metrics_24h.company_runs_bad_24h }}</p>
+      <p class="text-xs text-slate-500">SUCCESS/PARTIAL vs FAILED/SKIPPED</p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Queue totals (24h batches)</p>
+      <p class="mt-1 text-sm text-slate-700">Eligible labels Σ <strong>{{ metrics_24h.eligible_labels_sum }}</strong></p>
+      <p class="text-sm text-amber-800">Skipped fresh Σ <strong>{{ metrics_24h.skipped_fresh_sum }}</strong></p>
+      <p class="text-sm text-slate-700">Queued companies Σ <strong>{{ metrics_24h.queued_companies_sum }}</strong></p>
+    </div>
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Jobs (sum across batches 24h)</p>
+      <p class="mt-2 text-lg font-bold text-slate-900">Found Σ {{ metrics_24h.jobs_found_sum }}</p>
+      <p class="text-lg font-bold text-emerald-800">New Σ {{ metrics_24h.jobs_new_sum }}</p>
+      <p class="text-xs text-slate-500">{{ metrics_24h.completion_logged_batches }} batches with completion audit</p>
+    </div>
+  </section>
+
+  {% if metrics_24h.run_kind_counts %}
+  <section class="mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Run kind (24h)</h2>
+    <div class="mt-3 flex flex-wrap gap-2">
+      {% for kind, n in metrics_24h.run_kind_counts.items %}
+      <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-800">
+        <span class="font-mono text-indigo-700">{{ kind }}</span> · {{ n }}
+      </span>
+      {% endfor %}
+    </div>
+    <p class="mt-2 text-xs text-slate-500"><code>quick_sync</code> = Quick Fetch button · <code>full_crawl_*</code> = full / filtered full · <code>platform_smoke</code> = platform check.</p>
+  </section>
+  {% endif %}
+
+  <section class="mb-6 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Pipeline ops (24h)</p>
+      <p class="mt-2 text-2xl font-black text-slate-900">{{ metrics_24h.ops_run_count }}</p>
+      <p class="mt-1 text-xs text-slate-500">HarvestOpsRun rows (detect / backfill / validate / sync / cleanup / classify)</p>
+    </div>
+    {% if metrics_24h.ops_by_operation %}
+    <div class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm xl:col-span-2">
+      <p class="text-xs uppercase tracking-wide text-slate-500">Ops by operation (24h)</p>
+      <div class="mt-3 flex flex-wrap gap-2">
+        {% for op, n in metrics_24h.ops_by_operation.items %}
+        <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-800">
+          <span class="font-mono text-indigo-700">{{ op }}</span> · {{ n }}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </section>
+
+  <section class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden mb-6">
+    <div class="border-b border-slate-100 px-4 py-3 flex flex-wrap justify-between gap-2">
+      <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Recent pipeline ops</h2>
+      <p class="text-xs text-slate-500">Non-batch Celery runs · newest 40</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="px-4 py-3">#</th>
+            <th class="px-4 py-3">Started</th>
+            <th class="px-4 py-3">Operation</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Celery</th>
+            <th class="px-4 py-3">Completion (summary)</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for r in recent_ops_runs %}
+          <tr class="hover:bg-slate-50 align-top">
+            <td class="px-4 py-2 font-mono">{{ r.pk }}</td>
+            <td class="px-4 py-2 whitespace-nowrap">{{ r.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="px-4 py-2 font-mono text-xs">{{ r.operation }}</td>
+            <td class="px-4 py-2">{{ r.status }}</td>
+            <td class="px-4 py-2 font-mono text-xs max-w-[8rem] truncate" title="{{ r.celery_task_id }}">{{ r.celery_task_id|default:"—" }}</td>
+            <td class="px-4 py-2 text-xs text-slate-700 max-w-md truncate">{{ r.audit_payload.completion|default_if_none:""|truncatechars:120 }}</td>
+            <td class="px-4 py-2"><a href="{% url 'harvest-ops-run-detail' r.pk %}" class="text-indigo-600 font-semibold hover:underline">Detail</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="px-4 py-8 text-center text-slate-500">No ops audits yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+    <div class="border-b border-slate-100 px-4 py-3 flex flex-wrap justify-between gap-2">
+      <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Recent batches</h2>
+      <p class="text-xs text-slate-500">{{ metrics_7d_batch_count }} batches in last 7 days (all pages)</p>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <tr>
+            <th class="px-4 py-3">#</th>
+            <th class="px-4 py-3">Started</th>
+            <th class="px-4 py-3">Kind</th>
+            <th class="px-4 py-3">Status</th>
+            <th class="px-4 py-3">Eligible</th>
+            <th class="px-4 py-3">Skip fresh</th>
+            <th class="px-4 py-3">Queued</th>
+            <th class="px-4 py-3">Done</th>
+            <th class="px-4 py-3">Jobs new</th>
+            <th class="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for b in batches %}
+          <tr class="hover:bg-slate-50 align-top">
+            <td class="px-4 py-2 font-mono">{{ b.pk }}</td>
+            <td class="px-4 py-2 whitespace-nowrap">{{ b.created_at|date:"Y-m-d H:i" }}</td>
+            <td class="px-4 py-2 font-mono text-xs">{{ b.audit_payload.queue.run_kind|default:"—" }}</td>
+            <td class="px-4 py-2">{{ b.status }}</td>
+            <td class="px-4 py-2">{{ b.audit_payload.queue.eligible_labels|default:"—" }}</td>
+            <td class="px-4 py-2 text-amber-800">{{ b.audit_payload.queue.skipped_fresh|default:"—" }}</td>
+            <td class="px-4 py-2">{% firstof b.audit_payload.queue.queued_companies b.total_companies %}</td>
+            <td class="px-4 py-2 text-xs">{{ b.completed_companies }}/{{ b.failed_companies }} <span class="text-slate-400">ok/fail*</span></td>
+            <td class="px-4 py-2">{{ b.total_jobs_new }}</td>
+            <td class="px-4 py-2"><a href="{% url 'harvest-batch-detail' b.pk %}" class="text-indigo-600 font-semibold hover:underline">Detail</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="10" class="px-4 py-8 text-center text-slate-500">No batches yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  {% if is_paginated %}
+  <div class="mt-4 flex justify-center gap-2 text-sm">
+    {% if page_obj.has_previous %}
+    <a href="?page={{ page_obj.previous_page_number }}" class="text-indigo-600 hover:underline">Previous</a>
+    {% endif %}
+    <span class="text-slate-600">Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a href="?page={{ page_obj.next_page_number }}" class="text-indigo-600 hover:underline">Next</a>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  <p class="mt-6 text-xs text-slate-500">* “ok/fail” columns are <code>FetchBatch.completed_companies</code> vs <code>failed_companies</code> (fail bucket includes SKIPPED company runs).</p>
+</div>
+{% endblock %}

@@ -233,6 +233,11 @@ class FetchBatch(models.Model):
     failed_companies = models.PositiveIntegerField(default=0)
     total_jobs_found = models.PositiveIntegerField(default=0)
     total_jobs_new = models.PositiveIntegerField(default=0)
+    audit_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured harvest audit: queue snapshot + completion metrics (UI + grep-friendly logs).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
@@ -257,6 +262,58 @@ class FetchBatch(models.Model):
         if self.started_at and self.completed_at:
             return int((self.completed_at - self.started_at).total_seconds())
         return None
+
+
+class HarvestOpsRun(models.Model):
+    """Audit trail for pipeline ops that are not tied to a FetchBatch (detect, backfill, sync, etc.)."""
+
+    class Operation(models.TextChoices):
+        DETECT_PLATFORMS = "detect_platforms", "Detect platforms"
+        BACKFILL_JD = "backfill_jd", "Backfill JD"
+        VALIDATE_URLS = "validate_urls", "Validate live links"
+        SYNC_POOL = "sync_pool", "Sync to vet pool"
+        CLEANUP = "cleanup", "Cleanup harvested"
+        CLASSIFY = "classify", "Classify raw jobs"
+
+    class Status(models.TextChoices):
+        RUNNING = "RUNNING", "Running"
+        SUCCESS = "SUCCESS", "Success"
+        PARTIAL = "PARTIAL", "Partial"
+        FAILED = "FAILED", "Failed"
+        SKIPPED = "SKIPPED", "Skipped"
+
+    operation = models.CharField(max_length=64, choices=Operation.choices, db_index=True)
+    celery_task_id = models.CharField(max_length=128, blank=True, db_index=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.RUNNING,
+    )
+    audit_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text="Structured audit: queue snapshot + completion metrics (same shape spirit as FetchBatch).",
+    )
+    triggered_by_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="harvest_ops_runs",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ("-created_at",)
+        indexes = [
+            models.Index(fields=["-created_at"]),
+        ]
+        verbose_name = "Harvest ops run"
+        verbose_name_plural = "Harvest ops runs"
+
+    def __str__(self):
+        return f"{self.operation} #{self.pk} ({self.status})"
 
 
 class CompanyFetchRun(models.Model):

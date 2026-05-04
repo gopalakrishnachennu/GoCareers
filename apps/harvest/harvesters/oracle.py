@@ -41,6 +41,7 @@ class OracleHCMHarvester(BaseHarvester):
 
         results: list[dict] = []
         offset = 0
+        total_jobs = 0  # populated from TotalJobsCount on first page
 
         while True:
             params = {
@@ -48,7 +49,9 @@ class OracleHCMHarvester(BaseHarvester):
                 "limit": PAGE_SIZE,
                 "offset": offset,
                 "finder": f"findReqs;siteNumber={sites_id}",
-                "expand": "requisitionList",
+                # primaryLocation must be explicitly expanded — requisitionList alone
+                # returns an unexpanded location reference (no city/state/country fields)
+                "expand": "requisitionList,requisitionList.primaryLocation",
             }
             data = self._get(base_url, params=params)
 
@@ -57,24 +60,25 @@ class OracleHCMHarvester(BaseHarvester):
 
             items = data.get("items") or []
             if items and isinstance(items[0], dict):
-                total_from_search = int(items[0].get("TotalJobsCount") or 0)
-                if total_from_search:
-                    self.last_total_available = total_from_search
+                count = int(items[0].get("TotalJobsCount") or 0)
+                if count:
+                    total_jobs = count
+                    self.last_total_available = count
+
+            page_results: list[dict] = []
             for item in items:
                 for req in item.get("requisitionList") or []:
-                    results.append(
+                    page_results.append(
                         self._normalize(req, subdomain, sites_id, company.name)
                     )
+            results.extend(page_results)
 
-            # Oracle REST uses hasMore + totalResults
-            has_more = data.get("hasMore", False)
-            total = int(data.get("totalResults") or 0)
-            if total:
-                self.last_total_available = total
-            # API returns search wrapper items; page via explicit offset step.
             offset += PAGE_SIZE
 
-            if not fetch_all or not has_more or (total and offset >= total):
+            # Oracle wraps all jobs in ONE wrapper item, so top-level hasMore/totalResults
+            # always equal False/1 — they are useless for job-level pagination.
+            # Use TotalJobsCount (from the wrapper) as the real total.
+            if not fetch_all or not page_results or (total_jobs and offset >= total_jobs):
                 break
             time.sleep(MIN_DELAY_API)
 

@@ -88,6 +88,11 @@
           <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
             <a href="{% url 'jobs-pipeline' %}?tab=raw" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">Raw Jobs</a>
             <a href="{% url 'harvest-jarvis' %}" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">Jarvis</a>
+            <a href="{% url 'harvest-batch-activity' %}" class="rounded border border-violet-300 bg-violet-50 px-2 py-1.5 text-center font-semibold text-violet-900 hover:bg-violet-100">Harvest activity</a>
+            {% if latest_fetch_batch %}
+            <a href="{% url 'harvest-batch-detail' latest_fetch_batch.pk %}" class="rounded border border-emerald-300 bg-emerald-50 px-2 py-1.5 text-center font-semibold text-emerald-900 hover:bg-emerald-100">Latest harvest batch</a>
+            {% endif %}
+            <a href="{% url 'harvest-labels' %}" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">Harvest labels</a>
             <a href="{% url 'jobs-pipeline' %}?tab=raw" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">Raw Pipeline</a>
             <a href="{% url 'data-pipeline' %}" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">Data Pipeline</a>
             <a href="{% url 'system-status' %}" class="rounded border border-slate-300 bg-white px-2 py-1.5 text-center font-semibold text-slate-700 hover:bg-slate-100">System Health</a>

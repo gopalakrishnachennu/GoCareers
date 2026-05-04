@@ -1,3 +1,4 @@
+import json
 import logging
 from urllib.parse import urlencode
 
@@ -19,6 +20,7 @@ from django.views.decorators.cache import never_cache
 from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
 
 from core.http import redirect_with_task_progress
+from users.models import User
 
 from .forms import JobBoardPlatformForm
 from .models import (
@@ -28,6 +30,7 @@ from .models import (
     DuplicateResolution,
     FetchBatch,
     HarvestEngineConfig,
+    HarvestOpsRun,
     JobBoardPlatform,
     RawJob,
     RawJobDuplicatePair,
@@ -1073,10 +1076,217 @@ class FetchBatchListView(SuperuserRequiredMixin, View):
                     "total_jobs_new": b.total_jobs_new,
                     "progress_pct": b.progress_pct,
                     "created_at": b.created_at.strftime("%Y-%m-%d %H:%M") if b.created_at else "",
+                    "run_kind": ((b.audit_payload or {}).get("queue") or {}).get("run_kind"),
+                    "audit_has_completion": bool((b.audit_payload or {}).get("completion")),
                 })
             return JsonResponse({"batches": batches})
         # HTML batch history is consolidated into Jobs Pipeline (tab=raw).
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
+
+
+class FetchBatchDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
+    """Per-batch drill-down: every company run + platform rollup (staff visibility)."""
+
+    model = FetchBatch
+    template_name = "harvest/fetch_batch_detail.html"
+    context_object_name = "batch"
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or getattr(u, "role", None) in (
+            User.Role.ADMIN,
+            User.Role.EMPLOYEE,
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        batch = self.object
+        status_filter = (self.request.GET.get("status") or "").strip().upper()
+        runs = batch.company_runs.select_related(
+            "label__company",
+            "label__platform",
+        ).order_by("label__company__name", "pk")
+        valid_status = {choice[0] for choice in CompanyFetchRun.Status.choices}
+        if status_filter in valid_status:
+            runs = runs.filter(status=status_filter)
+
+        ctx["runs"] = runs
+        ctx["status_filter"] = status_filter
+        ctx["valid_run_statuses"] = sorted(valid_status)
+
+        ctx["batch_platform_rows"] = (
+            batch.company_runs.values("label__platform__slug")
+            .annotate(
+                total=Count("id"),
+                ok=Count(
+                    "id",
+                    filter=Q(
+                        status__in=[
+                            CompanyFetchRun.Status.SUCCESS,
+                            CompanyFetchRun.Status.PARTIAL,
+                        ]
+                    ),
+                ),
+                bad=Count(
+                    "id",
+                    filter=Q(
+                        status__in=[
+                            CompanyFetchRun.Status.FAILED,
+                            CompanyFetchRun.Status.SKIPPED,
+                        ]
+                    ),
+                ),
+                running=Count("id", filter=Q(status=CompanyFetchRun.Status.RUNNING)),
+            )
+            .order_by("-total")
+        )
+
+        since_7d = timezone.now() - timedelta(days=7)
+        ctx["platform_health_7d"] = (
+            CompanyFetchRun.objects.filter(started_at__gte=since_7d)
+            .values("label__platform__slug")
+            .annotate(
+                total=Count("id"),
+                ok=Count(
+                    "id",
+                    filter=Q(
+                        status__in=[
+                            CompanyFetchRun.Status.SUCCESS,
+                            CompanyFetchRun.Status.PARTIAL,
+                        ]
+                    ),
+                ),
+                bad=Count(
+                    "id",
+                    filter=Q(
+                        status__in=[
+                            CompanyFetchRun.Status.FAILED,
+                            CompanyFetchRun.Status.SKIPPED,
+                        ]
+                    ),
+                ),
+            )
+            .order_by("-bad")[:30]
+        )
+
+        ctx["recent_batches"] = FetchBatch.objects.order_by("-created_at")[:15]
+        return ctx
+
+
+class HarvestBatchActivityView(LoginRequiredMixin, UserPassesTestMixin, ListView):
+    """Centralized harvest batch timeline + rolled-up metrics (Quick / Full / smoke)."""
+
+    model = FetchBatch
+    template_name = "harvest/batch_activity.html"
+    context_object_name = "batches"
+    paginate_by = 40
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or getattr(u, "role", None) in (
+            User.Role.ADMIN,
+            User.Role.EMPLOYEE,
+        )
+
+    def get_queryset(self):
+        return FetchBatch.objects.order_by("-created_at")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        now = timezone.now()
+        since_24h = now - timedelta(hours=24)
+        since_7d = now - timedelta(days=7)
+
+        recent_24h = list(FetchBatch.objects.filter(created_at__gte=since_24h))
+        recent_7d = FetchBatch.objects.filter(created_at__gte=since_7d)
+
+        kind_counts: dict[str, int] = {}
+        skipped_fresh_sum = eligible_sum = queued_sum = 0
+        jobs_new_sum = jobs_found_sum = 0
+        completion_batches = 0
+
+        cr_agg = CompanyFetchRun.objects.filter(started_at__gte=since_24h).aggregate(
+            ok_24h=Count(
+                "id",
+                filter=Q(
+                    status__in=[
+                        CompanyFetchRun.Status.SUCCESS,
+                        CompanyFetchRun.Status.PARTIAL,
+                    ]
+                ),
+            ),
+            bad_24h=Count(
+                "id",
+                filter=Q(
+                    status__in=[
+                        CompanyFetchRun.Status.FAILED,
+                        CompanyFetchRun.Status.SKIPPED,
+                    ]
+                ),
+            ),
+        )
+
+        for b in recent_24h:
+            q = (b.audit_payload or {}).get("queue") or {}
+            rk = q.get("run_kind") or "unknown"
+            kind_counts[rk] = kind_counts.get(rk, 0) + 1
+            if q.get("eligible_labels") is not None:
+                eligible_sum += int(q["eligible_labels"])
+            if q.get("skipped_fresh") is not None:
+                skipped_fresh_sum += int(q["skipped_fresh"])
+            qc = q.get("queued_companies")
+            if qc is not None:
+                queued_sum += int(qc)
+            c = (b.audit_payload or {}).get("completion") or {}
+            if c:
+                completion_batches += 1
+            jobs_new_sum += int(b.total_jobs_new or 0)
+            jobs_found_sum += int(b.total_jobs_found or 0)
+
+        ctx["metrics_24h"] = {
+            "batch_count": len(recent_24h),
+            "run_kind_counts": dict(sorted(kind_counts.items(), key=lambda x: -x[1])),
+            "eligible_labels_sum": eligible_sum,
+            "skipped_fresh_sum": skipped_fresh_sum,
+            "queued_companies_sum": queued_sum,
+            "completion_logged_batches": completion_batches,
+            "jobs_new_sum": jobs_new_sum,
+            "jobs_found_sum": jobs_found_sum,
+            "company_runs_ok_24h": int(cr_agg.get("ok_24h") or 0),
+            "company_runs_bad_24h": int(cr_agg.get("bad_24h") or 0),
+        }
+        ctx["metrics_7d_batch_count"] = recent_7d.count()
+        ctx["grep_hints"] = ["[HARVEST_AUDIT queue]", "[HARVEST_AUDIT done]", "[HARVEST_AUDIT ops_queue]", "[HARVEST_AUDIT ops_done]"]
+        ctx["latest_fetch_batch"] = FetchBatch.objects.order_by("-created_at").first()
+
+        ops_since = HarvestOpsRun.objects.filter(created_at__gte=since_24h)
+        ctx["metrics_24h"]["ops_run_count"] = ops_since.count()
+        ctx["metrics_24h"]["ops_by_operation"] = {
+            row["operation"]: row["n"]
+            for row in ops_since.values("operation").annotate(n=Count("id")).order_by()
+        }
+        ctx["recent_ops_runs"] = HarvestOpsRun.objects.order_by("-created_at")[:40]
+        return ctx
+
+
+class HarvestOpsRunDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
+    """JSON-shaped audit for a single non-batch pipeline op."""
+
+    model = HarvestOpsRun
+    template_name = "harvest/ops_run_detail.html"
+    context_object_name = "ops_run"
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or getattr(u, "role", None) in (
+            User.Role.ADMIN,
+            User.Role.EMPLOYEE,
+        )
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["audit_json"] = json.dumps(self.object.audit_payload or {}, indent=2, default=str)
+        return ctx
 
 
 class CompanyFetchStatusView(SuperuserRequiredMixin, View):
@@ -1187,6 +1397,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 test_mode=False,
                 fetch_all=False,        # incremental: since_hours=25 only
                 min_hours_since_fetch=6,
+                run_kind="quick_sync",
             )
             messages.success(
                 request,
@@ -1207,16 +1418,17 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
             last_full = cd["last_full_batch"]
             remaining = cd["cooldown_remaining_sec"]
             if last_full and remaining > 0:
-                    mins = remaining // 60
-                    secs = remaining % 60
-                    messages.error(
-                        request,
-                        f"⏱ Full Crawl on cooldown — last batch ran {int(elapsed//60)} min ago. "
-                        f"Wait {mins}m {secs}s before starting another full crawl. "
-                        f"Use Quick Sync (25h) for an incremental update now.",
-                    )
-                    return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
-                    return redirect(return_to)
+                elapsed_sec = (timezone.now() - last_full.created_at).total_seconds()
+                mins = remaining // 60
+                secs = remaining % 60
+                messages.error(
+                    request,
+                    f"⏱ Full Crawl on cooldown — last batch ran {int(elapsed_sec // 60)} min ago. "
+                    f"Wait {mins}m {secs}s before starting another full crawl. "
+                    f"Use Quick Sync (25h) for an incremental update now.",
+                )
+                return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
+                return redirect(return_to)
             ts = timezone.now().strftime("%Y-%m-%d %H:%M")
             task = fetch_raw_jobs_batch_task.delay(
                 platform_slug=platform_slug or None,
@@ -1225,6 +1437,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 test_mode=False,
                 fetch_all=True,         # full pagination — all pages, all companies
                 min_hours_since_fetch=6,
+                run_kind="full_crawl_platform" if platform_slug else "full_crawl_all",
             )
             messages.success(
                 request,
@@ -1250,6 +1463,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 companies_per_platform=companies_per_platform,
                 skip_platforms=skip_platforms or None,
                 fetch_all=False,
+                run_kind="platform_smoke",
             )
             skip_note = f", skip: {', '.join(skip_platforms)}" if skip_platforms else ""
             messages.success(
@@ -1265,6 +1479,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
             )
 
         # ── Mode: Filtered Batch (platform selector form) ─────────────────────
+        filtered_rk = "full_crawl_platform" if platform_slug else "full_crawl_all"
         task = fetch_raw_jobs_batch_task.delay(
             platform_slug=platform_slug,
             batch_name=batch_name,
@@ -1272,6 +1487,7 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
             test_mode=False,
             skip_platforms=skip_platforms or None,
             fetch_all=True,
+            run_kind=filtered_rk,
         )
         messages.success(
             request,
@@ -1336,6 +1552,20 @@ class StopBatchView(SuperuserRequiredMixin, View):
         if not batch.completed_at:
             batch.completed_at = timezone.now()
         batch.save(update_fields=["status", "completed_at"])
+
+        try:
+            locked = FetchBatch.objects.filter(pk=batch.pk).first()
+            if locked:
+                ap = dict(locked.audit_payload or {})
+                ap["cancelled"] = {
+                    "at": timezone.now().isoformat(),
+                    "by": request.user.username,
+                    "revoked_child_tasks": len(task_ids),
+                }
+                locked.audit_payload = ap
+                locked.save(update_fields=["audit_payload"])
+        except Exception:
+            logger.exception("StopBatchView: failed to record audit_payload cancelled")
 
         logger.info(
             "[HARVEST] Batch #%s cancelled by %s — revoked %d task(s)",
