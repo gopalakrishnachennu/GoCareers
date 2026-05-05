@@ -30,11 +30,18 @@ class CompanyPlatformLabelAdmin(admin.ModelAdmin):
 
 @admin.register(RawJob)
 class RawJobAdmin(admin.ModelAdmin):
-    list_display = ["title", "company_name", "platform_slug", "sync_status", "employment_type", "fetched_at", "is_active"]
-    list_filter = ["platform_slug", "sync_status", "employment_type", "is_active"]
-    search_fields = ["title", "company_name", "url_hash"]
+    list_display = [
+        "title", "company_name", "platform_slug",
+        "job_domain", "job_category",
+        "sync_status", "employment_type", "fetched_at", "is_active",
+    ]
+    list_filter = [
+        "platform_slug", "sync_status", "employment_type",
+        "job_domain", "is_active",
+    ]
+    search_fields = ["title", "company_name", "url_hash", "job_domain"]
     raw_id_fields = ["company"]
-    readonly_fields = ["url_hash", "fetched_at", "updated_at"]
+    readonly_fields = ["url_hash", "fetched_at", "updated_at", "job_domain", "domain_version"]
 
 
 @admin.register(PlatformEngineConfig)

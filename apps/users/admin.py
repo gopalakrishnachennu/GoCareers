@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
-from .models import User, ConsultantProfile, EmployeeProfile, Experience, Education, Certification, Department
+from .models import User, ConsultantProfile, EmployeeProfile, Experience, Education, Certification, Department, MarketingRole
 
 @admin.register(User)
 class CustomUserAdmin(UserAdmin):
@@ -38,3 +38,37 @@ class EmployeeProfileAdmin(admin.ModelAdmin):
 class DepartmentAdmin(admin.ModelAdmin):
     list_display = ('name', 'created_at')
     search_fields = ('name',)
+
+
+@admin.register(MarketingRole)
+class MarketingRoleAdmin(admin.ModelAdmin):
+    list_display  = (
+        'name', 'slug', 'top_category', 'is_active',
+        'display_order', 'keyword_count',
+    )
+    list_filter   = ('top_category', 'is_active')
+    search_fields = ('name', 'slug', 'description')
+    prepopulated_fields = {'slug': ('name',)}
+    ordering      = ('display_order', 'name')
+    list_editable = ('is_active', 'display_order')
+
+    fieldsets = (
+        (None, {
+            'fields': ('name', 'slug', 'top_category', 'is_active', 'display_order'),
+        }),
+        ('Description', {
+            'fields': ('description',),
+        }),
+        ('Auto-classification Keywords', {
+            'description': (
+                'Lowercase keyword phrases matched against job title and description. '
+                'One phrase per line. The engine checks title first, then description. '
+                'More specific phrases should come before generic ones.'
+            ),
+            'fields': ('match_keywords',),
+        }),
+    )
+
+    @admin.display(description='# Keywords')
+    def keyword_count(self, obj):
+        return len(obj.match_keywords or [])
