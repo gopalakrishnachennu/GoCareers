@@ -6,13 +6,38 @@
 
 <div class="container mx-auto px-4 max-w-7xl pb-16">
 
+  {# ── Tooltip helper: hoverable term definitions ─────────────────────────── #}
+  <style>
+    [data-tip] { position: relative; cursor: help; border-bottom: 1px dashed #9ca3af; }
+    [data-tip]:hover::after {
+      content: attr(data-tip);
+      position: absolute; bottom: 125%; left: 50%; transform: translateX(-50%);
+      background: #1f2937; color: #f9fafb; font-size: 11px; line-height: 1.4;
+      padding: 6px 10px; border-radius: 6px; white-space: pre-wrap; max-width: 260px;
+      z-index: 50; box-shadow: 0 4px 12px rgba(0,0,0,.25); pointer-events: none;
+      text-align: left; font-weight: 400;
+    }
+    [data-tip]:hover::before {
+      content: ''; position: absolute; bottom: 110%; left: 50%; transform: translateX(-50%);
+      border: 5px solid transparent; border-top-color: #1f2937; z-index: 51; pointer-events: none;
+    }
+    .gap-badge-na     { background:#f3f4f6; color:#6b7280; }
+    .gap-badge-good   { background:#dcfce7; color:#166534; }
+    .gap-badge-parser { background:#fef3c7; color:#92400e; }
+    .gap-badge-unknown{ background:#e0e7ff; color:#3730a3; }
+    .issue-tag { display:inline-flex; align-items:center; gap:2px; padding:1px 6px;
+                 border-radius:9999px; font-size:10px; font-weight:600; white-space:nowrap; }
+    .issue-tag-red    { background:#fee2e2; color:#b91c1c; }
+    .issue-tag-amber  { background:#fef3c7; color:#b45309; }
+    .issue-tag-blue   { background:#dbeafe; color:#1d4ed8; }
+  </style>
+
   {# ── Header ─────────────────────────────────────────────────────────────── #}
   <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
     <div>
       <h1 class="text-2xl font-bold text-gray-900">Board Analytics</h1>
       <p class="text-sm text-gray-500 mt-0.5">Per-platform harvest quality • generated {{ data.generated_at|truncatechars:19 }} UTC</p>
     </div>
-    {# Window selector #}
     <form method="get" class="flex items-center gap-2">
       <label class="text-sm text-gray-500 font-medium">Window:</label>
       {% for w in window_choices %}
@@ -40,9 +65,60 @@
       <p class="text-2xl font-bold text-green-700">{{ data.totals.total_synced|floatformat:"0" }}</p>
     </div>
     <div class="bg-amber-50 rounded-xl border border-amber-200 shadow-sm p-4">
-      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Pending Sync</p>
+      <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">
+        <span data-tip="PENDING = harvested but not yet pushed to the vet pool. High pending% means sync is backlogged.">Pending Sync</span>
+      </p>
       <p class="text-2xl font-bold text-amber-700">{{ data.totals.total_pending|floatformat:"0" }}</p>
     </div>
+  </div>
+
+  {# ── Metric definitions legend ────────────────────────────────────────────── #}
+  <details class="mb-5 bg-blue-50 border border-blue-200 rounded-xl">
+    <summary class="px-5 py-3 text-sm font-semibold text-blue-800 cursor-pointer select-none">
+      📖 Metric Definitions (click to expand)
+    </summary>
+    <div class="px-5 pb-4 pt-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs text-gray-700">
+      <div><strong class="text-gray-900">Jobs</strong> — All-time RawJob rows for this platform.</div>
+      <div><strong class="text-gray-900">Synced%</strong> — % of jobs pushed to the vet pool (sync_status=SYNCED).</div>
+      <div><strong class="text-gray-900">Pending%</strong> — % of jobs waiting in PENDING sync. High = backlog or gate rejections.</div>
+      <div><strong class="text-gray-900">Runs</strong> — CompanyFetchRun records in the selected window.</div>
+      <div><strong class="text-gray-900">Success%</strong> — (SUCCESS + 0.5×PARTIAL) / total runs. Measures harvest reliability.</div>
+      <div><strong class="text-gray-900">ZeroYield%</strong> — % of runs that fetched 0 jobs (status=EMPTY). High = companies have no open roles, or board is broken.</div>
+      <div><strong class="text-gray-900">Fail%</strong> — % of runs that failed with an error (timeout, HTTP 4xx/5xx, parse error).</div>
+      <div><strong class="text-gray-900">Inactive%</strong> — % of harvested jobs marked is_active=False (closed / expired).</div>
+      <div><strong class="text-gray-900">Missing JD%</strong> — % of jobs with no description text (has_description=False). High = detail fetch broken or source withholds JD.</div>
+      <div><strong class="text-gray-900">Req% / Resp%</strong> — % of jobs with requirements / responsibilities fields populated. Source capability shown in parentheses.</div>
+      <div><strong class="text-gray-900">Salary%</strong> — % of jobs with salary_min or salary_max populated.</div>
+      <div><strong class="text-gray-900">Dept%</strong> — % of jobs with a non-empty department field.</div>
+      <div><strong class="text-gray-900">Risk</strong> — Composite score 0–100: (empty_rate×25) + (fail_rate×35) + (parse_error_rate×25) + (blocked_rate×15). Shown only when ≥{{ min_runs_for_risk }} runs exist — marked "–" otherwise.</div>
+      <div><strong class="text-gray-900">Source tier</strong> — <span class="text-green-700 font-semibold">api</span>=public REST/GraphQL, <span class="text-amber-600 font-semibold">semi</span>=unofficial JSON, <span class="text-red-500 font-semibold">scrape</span>=HTML only.</div>
+      <div><strong class="text-gray-900">Gap badges</strong> — <span class="gap-badge-na px-1 rounded">N/A</span> source doesn't provide this field. <span class="gap-badge-parser px-1 rounded">⚠ parser</span> source has it but we're not extracting it (parser gap).</div>
+    </div>
+  </details>
+
+  {# ── Filter bar ──────────────────────────────────────────────────────────── #}
+  <div class="flex flex-wrap gap-2 mb-4" id="filterBar">
+    <span class="text-xs text-gray-500 self-center mr-1">Filter:</span>
+    <button onclick="applyFilter('all')" id="f-all"
+            class="filter-btn active px-3 py-1 rounded-full text-xs font-semibold border border-indigo-600 bg-indigo-600 text-white transition">
+      All
+    </button>
+    <button onclick="applyFilter('risk')" id="f-risk"
+            class="filter-btn px-3 py-1 rounded-full text-xs font-semibold border border-red-300 text-red-600 hover:bg-red-50 transition">
+      🔴 High Risk (≥35)
+    </button>
+    <button onclick="applyFilter('zeroyield')" id="f-zeroyield"
+            class="filter-btn px-3 py-1 rounded-full text-xs font-semibold border border-amber-300 text-amber-600 hover:bg-amber-50 transition">
+      ⚠ High Zero-Yield (≥40%)
+    </button>
+    <button onclick="applyFilter('missingjd')" id="f-missingjd"
+            class="filter-btn px-3 py-1 rounded-full text-xs font-semibold border border-blue-300 text-blue-600 hover:bg-blue-50 transition">
+      📄 Missing JD (≥20%)
+    </button>
+    <button onclick="applyFilter('degraded')" id="f-degraded"
+            class="filter-btn px-3 py-1 rounded-full text-xs font-semibold border border-gray-300 text-gray-600 hover:bg-gray-50 transition">
+      🟡 Degraded / Scrape
+    </button>
   </div>
 
   {# ── Main platform table ──────────────────────────────────────────────────── #}
@@ -60,29 +136,51 @@
         <thead>
           <tr class="border-b border-gray-200 bg-gray-50 text-xs font-semibold text-gray-600 uppercase tracking-wider text-left">
             <th class="px-4 py-3 sticky left-0 bg-gray-50 z-10">Platform</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(1)">Jobs ↕</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(2)">Synced%</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(3)">Pending%</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(4)">Runs</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(5)">Success%</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(6)">ZeroYield%</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(7)">Fail%</th>
-            <th class="px-4 py-3 text-right">JD%</th>
-            <th class="px-4 py-3 text-right">Req%</th>
-            <th class="px-4 py-3 text-right">Resp%</th>
-            <th class="px-4 py-3 text-right">Salary%</th>
-            <th class="px-4 py-3 text-right">Dept%</th>
-            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(13)">Risk ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(1)"
+                title="All-time RawJob count">Jobs ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(2)"
+                title="% synced to vet pool">Sync% ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(3)"
+                title="% pending sync (backlogged)">Pend% ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(4)"
+                title="Run count in selected window">Runs ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(5)"
+                title="(SUCCESS + 0.5×PARTIAL) / runs">OK% ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(6)"
+                data-tip="% of runs that returned 0 jobs. High = no open roles, or board is broken.">Zero% ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(7)"
+                data-tip="% of runs that hit a hard error (timeout, HTTP error, parse error).">Fail% ↕</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(8)"
+                data-tip="% of jobs missing description text (has_description=False).">JD↓% ↕</th>
+            <th class="px-4 py-3 text-right"
+                data-tip="% of jobs with requirements field. Badge shows if source CAN provide it.">Req%</th>
+            <th class="px-4 py-3 text-right"
+                data-tip="% of jobs with responsibilities field. Badge shows if source CAN provide it.">Resp%</th>
+            <th class="px-4 py-3 text-right"
+                data-tip="% of jobs with salary_min or salary_max.">Sal%</th>
+            <th class="px-4 py-3 text-right"
+                data-tip="% of jobs with a non-empty department field.">Dept%</th>
+            <th class="px-4 py-3 text-right cursor-pointer hover:text-indigo-700" onclick="sortTable(13)"
+                data-tip="Risk 0–100: weighted failure signal. Only shown when ≥5 runs exist.">Risk ↕</th>
+            <th class="px-4 py-3 text-right">Issues</th>
             <th class="px-4 py-3 text-right">Last Run</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-100" id="boardTbody">
           {% for p in data.platforms %}
-          <tr class="hover:bg-gray-50 transition-colors {% if p.risk_score != None and p.risk_score >= 60 %}bg-red-50/40{% elif p.risk_score != None and p.risk_score >= 35 %}bg-amber-50/40{% endif %}"
-              data-slug="{{ p.slug }}">
-            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[140px]">
+          <tr class="hover:bg-gray-50 transition-colors
+                     {% if p.risk_score != None and p.risk_score >= 60 %}bg-red-50/40
+                     {% elif p.risk_score != None and p.risk_score >= 35 %}bg-amber-50/40{% endif %}"
+              data-slug="{{ p.slug }}"
+              data-risk="{{ p.risk_score|default:'' }}"
+              data-zeroyield="{{ p.zero_yield_pct|default:0 }}"
+              data-missingjd="{{ p.missing_jd_pct|default:0 }}"
+              data-tier="{{ p.support_tier }}"
+              data-reliability="{{ p.source_reliability }}">
+
+            {# Platform name + tier dot + source badge #}
+            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[150px]">
               <div class="flex items-center gap-2">
-                {# Tier badge #}
                 {% if p.support_tier == 'healthy' %}
                   <span class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="Healthy"></span>
                 {% elif p.support_tier == 'degraded' %}
@@ -94,89 +192,165 @@
                 {% endif %}
                 <span class="font-semibold text-gray-800">{{ p.name|default:p.slug }}</span>
               </div>
-              <div class="text-xs text-gray-400 ml-4">{{ p.slug }}</div>
+              <div class="text-xs text-gray-400 ml-4 flex items-center gap-1.5">
+                <span>{{ p.slug }}</span>
+                {% if p.source_reliability == 'api' %}
+                  <span class="px-1 rounded text-green-700 bg-green-50 border border-green-200 font-mono text-[10px]">api</span>
+                {% elif p.source_reliability == 'semi' %}
+                  <span class="px-1 rounded text-amber-700 bg-amber-50 border border-amber-200 font-mono text-[10px]">semi</span>
+                {% elif p.source_reliability == 'scrape' %}
+                  <span class="px-1 rounded text-red-600 bg-red-50 border border-red-200 font-mono text-[10px]">scrape</span>
+                {% endif %}
+              </div>
             </td>
+
+            {# Jobs #}
             <td class="px-4 py-3 text-right font-mono text-gray-700" data-val="{{ p.total_jobs }}">{{ p.total_jobs|floatformat:"0" }}</td>
+
+            {# Synced% #}
             <td class="px-4 py-3 text-right" data-val="{{ p.synced|default:0 }}">
-              {% with pct=p.total_jobs|add:"0" %}
               {% if p.total_jobs %}
                 {% widthratio p.synced p.total_jobs 100 as synced_pct %}
                 <span class="{% if synced_pct|add:"0" >= 80 %}text-green-600 font-semibold{% elif synced_pct|add:"0" >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">
                   {{ synced_pct }}%
                 </span>
               {% else %}—{% endif %}
-              {% endwith %}
             </td>
+
+            {# Pending% #}
             <td class="px-4 py-3 text-right" data-val="{{ p.pending_pct|default:0 }}">
               {% if p.pending_pct != None %}
                 <span class="{% if p.pending_pct >= 30 %}text-amber-600 font-semibold{% else %}text-gray-600{% endif %}">{{ p.pending_pct }}%</span>
               {% else %}—{% endif %}
             </td>
+
+            {# Runs #}
             <td class="px-4 py-3 text-right text-gray-600 font-mono" data-val="{{ p.runs }}">{{ p.runs }}</td>
+
+            {# Success% #}
             <td class="px-4 py-3 text-right" data-val="{{ p.success_rate_pct|default:0 }}">
               {% if p.success_rate_pct != None %}
                 <span class="{% if p.success_rate_pct >= 80 %}text-green-600 font-semibold{% elif p.success_rate_pct >= 50 %}text-amber-600{% else %}text-red-600{% endif %}">{{ p.success_rate_pct }}%</span>
               {% else %}—{% endif %}
             </td>
+
+            {# ZeroYield% #}
             <td class="px-4 py-3 text-right" data-val="{{ p.zero_yield_pct|default:0 }}">
               {% if p.zero_yield_pct != None %}
                 <span class="{% if p.zero_yield_pct >= 40 %}text-red-600 font-semibold{% elif p.zero_yield_pct >= 20 %}text-amber-600{% else %}text-gray-600{% endif %}">{{ p.zero_yield_pct }}%</span>
               {% else %}—{% endif %}
             </td>
+
+            {# Fail% #}
             <td class="px-4 py-3 text-right" data-val="{{ p.fail_rate_pct|default:0 }}">
               {% if p.fail_rate_pct != None %}
                 <span class="{% if p.fail_rate_pct >= 20 %}text-red-600 font-semibold{% elif p.fail_rate_pct >= 10 %}text-amber-600{% else %}text-gray-600{% endif %}">{{ p.fail_rate_pct }}%</span>
               {% else %}—{% endif %}
             </td>
-            {# JD coverage = 100 - missing_jd_pct #}
+
+            {# Missing JD% (inverted: we show missing%, lower is better) #}
             <td class="px-4 py-3 text-right" data-val="{{ p.missing_jd_pct|default:0 }}">
               {% if p.missing_jd_pct != None %}
-                <span class="{% if p.missing_jd_pct <= 5 %}text-green-600 font-semibold{% elif p.missing_jd_pct <= 20 %}text-amber-600{% else %}text-red-600{% endif %}">
-                  {{ p.missing_jd_pct }}% miss
+                <span class="{% if p.missing_jd_pct <= 5 %}text-green-600 font-semibold{% elif p.missing_jd_pct <= 20 %}text-amber-600{% else %}text-red-600 font-semibold{% endif %}">
+                  {{ p.missing_jd_pct }}%
                 </span>
               {% else %}—{% endif %}
             </td>
+
+            {# Req% with gap badge #}
             <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.requirements|default:0 }}">
               {% if p.coverage.requirements != None %}
                 <span class="{% if p.coverage.requirements >= 50 %}text-green-700{% elif p.coverage.requirements >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.requirements }}%</span>
               {% else %}—{% endif %}
+              {% if p.capability_gaps.requirements == 'n/a' %}
+                <span class="gap-badge-na px-1 rounded text-[9px] ml-0.5">N/A</span>
+              {% elif p.capability_gaps.requirements == 'parser' %}
+                <span class="gap-badge-parser px-1 rounded text-[9px] ml-0.5" title="Source provides requirements but parser coverage is low">⚠</span>
+              {% endif %}
             </td>
+
+            {# Resp% with gap badge #}
             <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.responsibilities|default:0 }}">
               {% if p.coverage.responsibilities != None %}
                 <span class="{% if p.coverage.responsibilities >= 50 %}text-green-700{% elif p.coverage.responsibilities >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.responsibilities }}%</span>
               {% else %}—{% endif %}
+              {% if p.capability_gaps.responsibilities == 'n/a' %}
+                <span class="gap-badge-na px-1 rounded text-[9px] ml-0.5">N/A</span>
+              {% elif p.capability_gaps.responsibilities == 'parser' %}
+                <span class="gap-badge-parser px-1 rounded text-[9px] ml-0.5" title="Source provides responsibilities but parser coverage is low">⚠</span>
+              {% endif %}
             </td>
+
+            {# Salary% with gap badge #}
             <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.salary|default:0 }}">
               {% if p.coverage.salary != None %}
                 <span class="{% if p.coverage.salary >= 30 %}text-green-700{% elif p.coverage.salary >= 10 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.salary }}%</span>
               {% else %}—{% endif %}
+              {% if p.capability_gaps.salary == 'n/a' %}
+                <span class="gap-badge-na px-1 rounded text-[9px] ml-0.5">N/A</span>
+              {% elif p.capability_gaps.salary == 'parser' %}
+                <span class="gap-badge-parser px-1 rounded text-[9px] ml-0.5" title="Source provides salary but parser coverage is low">⚠</span>
+              {% endif %}
             </td>
+
+            {# Dept% with gap badge #}
             <td class="px-4 py-3 text-right text-xs" data-val="{{ p.coverage.department|default:0 }}">
               {% if p.coverage.department != None %}
                 <span class="{% if p.coverage.department >= 50 %}text-green-700{% elif p.coverage.department >= 20 %}text-amber-600{% else %}text-red-500{% endif %}">{{ p.coverage.department }}%</span>
               {% else %}—{% endif %}
+              {% if p.capability_gaps.department == 'parser' %}
+                <span class="gap-badge-parser px-1 rounded text-[9px] ml-0.5" title="Source provides department but parser coverage is low">⚠</span>
+              {% endif %}
             </td>
+
+            {# Risk score #}
             <td class="px-4 py-3 text-right font-mono" data-val="{{ p.risk_score|default:999 }}">
-              {% if p.risk_score != None %}
+              {% if p.risk_score != None and p.risk_trusted %}
                 <span class="px-2 py-0.5 rounded-full text-xs font-bold
                              {% if p.risk_score >= 60 %}bg-red-100 text-red-700
                              {% elif p.risk_score >= 35 %}bg-amber-100 text-amber-700
                              {% else %}bg-green-100 text-green-700{% endif %}">
                   {{ p.risk_score }}
                 </span>
-              {% else %}<span class="text-gray-300 text-xs">n/a</span>{% endif %}
+              {% elif p.runs > 0 %}
+                <span class="text-gray-300 text-xs" title="Need ≥{{ min_runs_for_risk }} runs for risk score ({{ p.runs }} so far)">{{ p.runs }}/{{ min_runs_for_risk }}…</span>
+              {% else %}
+                <span class="text-gray-300 text-xs">—</span>
+              {% endif %}
             </td>
+
+            {# Issue reason badges #}
+            <td class="px-4 py-3 text-right">
+              <div class="flex flex-wrap justify-end gap-1">
+                {% for reason in p.issue_reasons %}
+                  {% if "zero" in reason or "fail" in reason %}
+                    <span class="issue-tag issue-tag-red">{{ reason }}</span>
+                  {% elif "parse" in reason or "block" in reason %}
+                    <span class="issue-tag issue-tag-amber">{{ reason }}</span>
+                  {% else %}
+                    <span class="issue-tag issue-tag-blue">{{ reason }}</span>
+                  {% endif %}
+                {% empty %}
+                  <span class="text-gray-300 text-xs">—</span>
+                {% endfor %}
+              </div>
+            </td>
+
+            {# Last run #}
             <td class="px-4 py-3 text-right text-xs text-gray-400">
               {% if p.last_run %}{{ p.last_run|truncatechars:10 }}{% else %}—{% endif %}
             </td>
           </tr>
           {% empty %}
           <tr>
-            <td colspan="15" class="px-4 py-8 text-center text-gray-400">No platform data yet — run a harvest batch first.</td>
+            <td colspan="16" class="px-4 py-8 text-center text-gray-400">No platform data yet — run a harvest batch first.</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
+    </div>
+    <div class="px-5 py-2 border-t border-gray-100 text-xs text-gray-400">
+      Risk score shown only when ≥{{ min_runs_for_risk }} runs. N/A badge = source platform doesn't provide this field. ⚠ = parser gap (source has it, we're not extracting it).
     </div>
   </div>
 
@@ -196,6 +370,7 @@
   {% if data.unsupported %}
   <div class="bg-gray-50 rounded-xl border border-gray-200 p-5">
     <h2 class="text-sm font-semibold text-gray-500 mb-2">Unsupported / No Active Harvester</h2>
+    <p class="text-xs text-gray-400 mb-3">These boards are disabled in the DB (is_enabled=False, support_tier=unsupported) and excluded from all harvest runs.</p>
     <div class="flex flex-wrap gap-2">
       {% for u in data.unsupported %}
       <span class="px-3 py-1 rounded-full bg-gray-200 text-gray-600 text-xs font-mono">{{ u.slug }}</span>
@@ -206,20 +381,16 @@
 
 </div>
 
-{# ── Sort JS ──────────────────────────────────────────────────────────────────── #}
+{# ── Sort + Filter JS ─────────────────────────────────────────────────────────── #}
 <script>
-let _sortCol = 13;  // default: risk
-let _sortDir = -1;  // -1 = descending
+let _sortCol = 13;
+let _sortDir = -1;
 
 function sortTable(col) {
-  if (_sortCol === col) {
-    _sortDir *= -1;
-  } else {
-    _sortCol = col;
-    _sortDir = col === 0 ? 1 : -1;  // text cols: ascending by default
-  }
+  if (_sortCol === col) { _sortDir *= -1; }
+  else { _sortCol = col; _sortDir = col === 0 ? 1 : -1; }
   const tbody = document.getElementById('boardTbody');
-  const rows = Array.from(tbody.querySelectorAll('tr'));
+  const rows = Array.from(tbody.querySelectorAll('tr[data-slug]'));
   rows.sort((a, b) => {
     const aCells = a.querySelectorAll('td');
     const bCells = b.querySelectorAll('td');
@@ -235,7 +406,37 @@ function sortTable(col) {
   });
   rows.forEach(r => tbody.appendChild(r));
 }
-// Initial sort by risk
+
+let _activeFilter = 'all';
+function applyFilter(filter) {
+  _activeFilter = filter;
+  // Update button styles
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.remove('active', 'bg-indigo-600', 'text-white', 'border-indigo-600');
+    b.classList.add('bg-white');
+  });
+  const active = document.getElementById('f-' + filter);
+  if (active) {
+    active.classList.add('active', 'bg-indigo-600', 'text-white', 'border-indigo-600');
+    active.classList.remove('bg-white');
+  }
+  document.querySelectorAll('tr[data-slug]').forEach(row => {
+    let show = true;
+    if (filter === 'risk') {
+      const risk = parseFloat(row.dataset.risk);
+      show = !isNaN(risk) && risk >= 35;
+    } else if (filter === 'zeroyield') {
+      show = parseFloat(row.dataset.zeroyield || 0) >= 40;
+    } else if (filter === 'missingjd') {
+      show = parseFloat(row.dataset.missingjd || 0) >= 20;
+    } else if (filter === 'degraded') {
+      show = row.dataset.tier === 'degraded' || row.dataset.reliability === 'scrape';
+    }
+    row.style.display = show ? '' : 'none';
+  });
+}
+
+// Initial sort by risk score (descending)
 sortTable(13);
 </script>
 

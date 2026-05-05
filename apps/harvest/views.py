@@ -1778,10 +1778,12 @@ class BoardAnalyticsDashboardView(SuperuserRequiredMixin, View):
         except (ValueError, TypeError):
             window = 30
 
+        from .board_analytics import MIN_RUNS_FOR_RISK
         data = get_board_analytics(window_days=window)
         return render(request, "harvest/board_analytics.html", {
             "data": data,
             "window_choices": [7, 14, 30, 60, 90],
+            "min_runs_for_risk": MIN_RUNS_FOR_RISK,
         })
 
 

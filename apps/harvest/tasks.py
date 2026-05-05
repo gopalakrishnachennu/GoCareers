@@ -1163,6 +1163,32 @@ def fetch_raw_jobs_for_company_task(
             except Exception:
                 pass
 
+    # ── Compute field_presence from harvested jobs ────────────────────────────
+    _fp: dict[str, int] = {
+        "jd": 0, "requirements": 0, "responsibilities": 0,
+        "department": 0, "geo": 0, "salary": 0,
+        "employment_type": 0, "education": 0, "experience_level": 0,
+    }
+    for jd in raw_jobs:
+        if jd.get("description") or jd.get("has_description"):
+            _fp["jd"] += 1
+        if jd.get("requirements"):
+            _fp["requirements"] += 1
+        if jd.get("responsibilities"):
+            _fp["responsibilities"] += 1
+        if jd.get("department"):
+            _fp["department"] += 1
+        if jd.get("city") or jd.get("country"):
+            _fp["geo"] += 1
+        if jd.get("salary_min") or jd.get("salary_max"):
+            _fp["salary"] += 1
+        if jd.get("employment_type") and jd.get("employment_type") not in ("UNKNOWN", ""):
+            _fp["employment_type"] += 1
+        if jd.get("education_required") and jd.get("education_required") not in ("UNKNOWN", ""):
+            _fp["education"] += 1
+        if jd.get("experience_level") and jd.get("experience_level") not in ("UNKNOWN", ""):
+            _fp["experience_level"] += 1
+
     # ── Update run record ─────────────────────────────────────────────────────
     _total_found = len(raw_jobs)
     if jobs_failed > 0:
@@ -1185,6 +1211,7 @@ def fetch_raw_jobs_for_company_task(
     run.jobs_updated = jobs_updated
     run.jobs_duplicate = jobs_duplicate
     run.jobs_failed = jobs_failed
+    run.field_presence = _fp
     run.completed_at = timezone.now()
     if upsert_errors and not run.error_message:
         run.error_message = "Upsert errors: " + " | ".join(upsert_errors)
@@ -1192,7 +1219,7 @@ def fetch_raw_jobs_for_company_task(
     run.save(update_fields=[
         "status", "jobs_found", "jobs_total_available", "jobs_new", "jobs_updated",
         "jobs_duplicate", "jobs_failed", "completed_at", "error_message", "error_type",
-        "issue_code",
+        "issue_code", "field_presence",
     ])
 
     # ── Update batch counters + auto-complete ────────────────────────────────

@@ -389,6 +389,19 @@ class CompanyFetchRun(models.Model):
     jobs_duplicate = models.PositiveIntegerField(default=0)
     jobs_failed = models.PositiveIntegerField(default=0)
     pages_fetched = models.PositiveIntegerField(default=0)
+    jobs_detail_fetched = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of jobs for which a detail page / second HTTP call was fetched.",
+    )
+    field_presence = models.JSONField(
+        default=dict,
+        blank=True,
+        help_text=(
+            "Per-field counts of jobs that had the field populated at harvest time. "
+            "Keys: jd, requirements, responsibilities, department, geo, salary, "
+            "employment_type, education, experience_level."
+        ),
+    )
     error_message = models.TextField(blank=True)
     error_type = models.CharField(
         max_length=16,

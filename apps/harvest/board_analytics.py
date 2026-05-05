@@ -18,12 +18,17 @@ from django.db import models
 from django.db.models import Avg, Case, Count, F, FloatField, Max, Min, Q, Sum, When
 from django.utils import timezone
 
+from .board_capabilities import get_capabilities, capability_gap
+
 
 # Boards that harvest via Jarvis (manual paste) — excluded from ATS ranking.
 JARVIS_SLUGS = {"jarvis"}
 
 # Boards known to be operationally broken / no active harvester.
 UNSUPPORTED_SLUGS = {"applytojob", "adp", "applicantpro", "dayforce"}
+
+# Minimum runs required before we trust the risk score.
+MIN_RUNS_FOR_RISK = 5
 
 
 def _pct(numerator, denominator, decimals=1):
@@ -146,8 +151,10 @@ def get_board_analytics(window_days: int = 30) -> dict:
         missing_jd = j.get("missing_jd", 0)
 
         # Risk score: weighted combination of failure signals (0–100)
+        # Requires MIN_RUNS_FOR_RISK runs to be trustworthy.
         risk_score = None
-        if runs >= 3:  # need enough runs to be meaningful
+        risk_trusted = False
+        if runs >= MIN_RUNS_FOR_RISK:
             empty_rate = empty_runs / runs if runs else 0
             fail_rate  = failed_runs / runs if runs else 0
             parse_rate = parse_error_runs / runs if runs else 0
@@ -159,11 +166,40 @@ def get_board_analytics(window_days: int = 30) -> dict:
                 (block_rate * 15),
                 1,
             )
+            risk_trusted = True
 
         avg_duration = r.get("avg_duration_secs")
         avg_duration_secs = (
             avg_duration.total_seconds() if hasattr(avg_duration, "total_seconds") else None
         )
+
+        coverage = {
+            "requirements":     _pct(j.get("has_requirements", 0), total),
+            "responsibilities": _pct(j.get("has_responsibilities", 0), total),
+            "salary":           _pct(j.get("has_salary", 0), total),
+            "department":       _pct(j.get("has_department", 0), total),
+            "geo":              _pct(j.get("has_geo", 0), total),
+            "education":        _pct(j.get("has_education", 0), total),
+            "schedule":         _pct(j.get("has_schedule", 0), total),
+        }
+
+        caps = get_capabilities(slug)
+        gaps = capability_gap(slug, coverage)
+
+        # Build human-readable issue reasons for the dashboard badge
+        issue_reasons: list[str] = []
+        if runs >= MIN_RUNS_FOR_RISK:
+            if risk_score and risk_score >= 35:
+                if empty_runs / runs >= 0.4:
+                    issue_reasons.append("high zero-yield")
+                if failed_runs / runs >= 0.2:
+                    issue_reasons.append("high fail rate")
+                if parse_error_runs / runs >= 0.2:
+                    issue_reasons.append("parse errors")
+                if total and pending / total >= 0.3:
+                    issue_reasons.append("blocked sync")
+        if total and missing_jd / total >= 0.2:
+            issue_reasons.append("missing JD")
 
         row = {
             "slug": slug,
@@ -182,15 +218,11 @@ def get_board_analytics(window_days: int = 30) -> dict:
             "missing_jd_pct": _pct(missing_jd, total),
             "pending_pct":   _pct(pending, total),
             # field coverage
-            "coverage": {
-                "requirements":     _pct(j.get("has_requirements", 0), total),
-                "responsibilities": _pct(j.get("has_responsibilities", 0), total),
-                "salary":           _pct(j.get("has_salary", 0), total),
-                "department":       _pct(j.get("has_department", 0), total),
-                "geo":              _pct(j.get("has_geo", 0), total),
-                "education":        _pct(j.get("has_education", 0), total),
-                "schedule":         _pct(j.get("has_schedule", 0), total),
-            },
+            "coverage": coverage,
+            # capability matrix + gap analysis
+            "capabilities": {k: v for k, v in caps.items() if isinstance(v, bool)},
+            "capability_gaps": gaps,
+            "source_reliability": caps.get("source_reliability", "unknown"),
             # run-level (window_days)
             "runs": runs,
             "success_runs": success_runs,
@@ -207,6 +239,8 @@ def get_board_analytics(window_days: int = 30) -> dict:
             "avg_duration_secs": round(avg_duration_secs, 1) if avg_duration_secs else None,
             "last_run": r.get("last_run").isoformat() if r.get("last_run") else None,
             "risk_score": risk_score,
+            "risk_trusted": risk_trusted,   # False when runs < MIN_RUNS_FOR_RISK
+            "issue_reasons": issue_reasons, # list of human-readable issue tags
         }
 
         if slug in UNSUPPORTED_SLUGS or tier == JobBoardPlatform.SupportTier.UNSUPPORTED:
