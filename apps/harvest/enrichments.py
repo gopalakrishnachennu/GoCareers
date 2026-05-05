@@ -701,6 +701,181 @@ _CATEGORY_PATTERNS: list[tuple[str, str]] = [
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 11b. DOMAIN TAXONOMY — maps to MarketingRole slugs
+#      Ordered from MOST SPECIFIC to MOST GENERIC so the first title-match wins.
+#      Each entry: (marketing_role_slug, regex_pattern_string)
+# ─────────────────────────────────────────────────────────────────────────────
+
+CURRENT_DOMAIN_VERSION = "d1"   # bump when patterns change to trigger re-classification
+
+_DOMAIN_PATTERNS: list[tuple[str, str]] = [
+    # ── IT: Named platforms (highest specificity) ─────────────────────────────
+    ("servicenow-developer",
+     r"\bservicenow\b"),
+    ("salesforce-developer",
+     r"\bsalesforce\b|\bsfdc\b|\bapex\s*(developer|admin|architect)\b"),
+    ("sap-consultant",
+     r"\bsap\b\s*(abap|basis|hana|mm|sd|fi|co|wm|pp|ariba|successfactors|bw|s/4|s4hana|consultant|developer|analyst|erp)"),
+    ("workday-consultant",
+     r"\bworkday\s*(hcm|payroll|integ|studio|report|consultant|developer|analyst)\b"),
+    ("oracle-consultant",
+     r"\boracle\s*(dba|ebs|fusion|hcm|cloud|financials|scm|consultant|developer)\b|\bpl/sql\b|\bpl\\sql\b"),
+    ("healthcare-it",
+     r"\b(epic|cerner|meditech|allscripts|mckesson)\b"
+     r"|\bhealthcare\s*it\b|\bclinical\s*informatics\b"
+     r"|\b(ehr|emr)\s*(implementation|consultant|analyst|specialist|developer)\b"),
+    # ── IT: AI / ML ───────────────────────────────────────────────────────────
+    ("ml-ai-engineer",
+     r"\b(machine\s*learning|deep\s*learning|llm|generative\s*ai|mlops|ai\s*engineer"
+     r"|nlp\s*(engineer|scientist)?|data\s*scien(ce|tist)|computer\s*vision|reinforcement\s*learning)\b"),
+    # ── IT: Data ──────────────────────────────────────────────────────────────
+    ("data-engineer",
+     r"\b(data\s*engineer|etl\s*(developer|engineer)|pipeline\s*engineer|databricks"
+     r"|apache\s*(spark|kafka|flink|beam)|dbt\s*(developer|analyst)|data\s*platform)\b"),
+    ("data-analyst",
+     r"\b(data\s*analyst|business\s*(intelligence|analyst)|bi\s*(analyst|developer|engineer)"
+     r"|tableau|power\s*bi|looker|analytics\s*engineer)\b"),
+    # ── IT: Infrastructure / Cloud ────────────────────────────────────────────
+    ("devops-cloud",
+     r"\b(devops\s*engineer|cloud\s*engineer|platform\s*engineer|site\s*reliability"
+     r"|\bsre\b|devsecops|infrastructure\s*engineer"
+     r"|aws\s*(architect|engineer|devops)|azure\s*(devops|engineer)|gcp\s*(engineer|architect))\b"),
+    ("cybersecurity",
+     r"\b(security\s*engineer|cybersecurity|information\s*security|soc\s*analyst"
+     r"|penetration\s*test|red\s*team|blue\s*team|\bciso\b|\bappsec\b"
+     r"|cloud\s*security|network\s*security|identity\s*(access|management))\b"),
+    ("network-systems",
+     r"\b(network\s*(engineer|administrator|architect|\bops\b)"
+     r"|\bcisco\b|\bjuniper\b|routing\s*(and|&)\s*switching"
+     r"|network\s*security|vpn\s*engineer|network\s*operations)\b"),
+    # ── IT: QA ────────────────────────────────────────────────────────────────
+    ("qa-test-engineer",
+     r"\b(qa\s*(engineer|analyst|lead)|quality\s*assurance\s*engineer"
+     r"|test\s*(automation|engineer|lead)|\bsdet\b|automation\s*(test|engineer)"
+     r"|selenium|cypress|playwright\s*test)\b"),
+    # ── IT: Support ───────────────────────────────────────────────────────────
+    ("it-support",
+     r"\b(help\s*desk|\bit\s*support\b|desktop\s*support|end\s*user\s*support"
+     r"|service\s*desk|deskside|l[12]\s*support)\b"),
+    # ── IT: Language-specific dev ─────────────────────────────────────────────
+    ("java-developer",
+     r"\b(java\s*(developer|engineer|backend|architect)|spring\s*(boot|framework)"
+     r"|\bj2ee\b|jakarta\s*ee|java\s*microservices)\b"),
+    ("python-developer",
+     r"\b(python\s*(developer|engineer|backend)|django\s*developer|flask\s*developer"
+     r"|fastapi\s*(developer|engineer))\b"),
+    ("dotnet-developer",
+     r"\b(\.net\s*(developer|engineer)|c#\s*(developer|engineer)|asp\.net|blazor"
+     r"|dotnet\s*(developer|core))\b"),
+    ("mobile-developer",
+     r"\b(ios\s*(developer|engineer)|android\s*(developer|engineer)"
+     r"|react\s*native\s*(developer|engineer)|flutter\s*(developer|engineer)"
+     r"|mobile\s*(developer|engineer|app))\b"),
+    ("frontend-developer",
+     r"\b(frontend\s*(developer|engineer)|react\s*(developer|engineer)"
+     r"|angular\s*(developer|engineer)|vue\s*(developer|engineer)"
+     r"|javascript\s*(developer|engineer)|ui\s*(developer|engineer))\b"),
+    ("embedded-systems",
+     r"\b(embedded\s*(software|engineer|developer)|firmware\s*(engineer|developer)"
+     r"|\brtos\b|\biot\s*(engineer|developer)\b|real.time\s*(systems|os))\b"),
+    # ── IT: Broad software (catch-all before non-IT) ──────────────────────────
+    ("software-developer",
+     r"\b(software\s*(engineer|developer|architect)|full.?stack\s*(developer|engineer)"
+     r"|backend\s*(developer|engineer)|application\s*developer)\b"),
+    ("it-management",
+     r"\b(\bit\s*manager\b|\bit\s*director\b|\bcio\b|\bcto\b|vp\s*(of\s*(\w+\s*)?)?engineering"
+     r"|director\s*(of\s*(\w+\s*)?)?(engineering|technology|\bit\b)"
+     r"|\bit\s*project\s*manager\b|it\s*(architect|strategist))\b"),
+    # ── NON-IT: Business ──────────────────────────────────────────────────────
+    ("product-manager",
+     r"\b(product\s*manager|product\s*owner|technical\s*program\s*manager"
+     r"|director\s*of\s*product)\b"),
+    ("sales",
+     r"\b(sales\s*(representative|executive|manager|engineer|development|director)"
+     r"|account\s*executive|business\s*development\s*(manager|rep)"
+     r"|\bsdr\b|\bbdr\b|inside\s*sales)\b"),
+    ("marketing-specialist",
+     r"\b(marketing\s*(manager|director|specialist|coordinator|analyst)"
+     r"|digital\s*marketing|\bseo\s*(specialist|manager)\b|content\s*market"
+     r"|demand\s*gen|brand\s*(manager|strategist)|growth\s*market)\b"),
+    ("finance-accounting",
+     r"\b(financial\s*analyst|accountant|\bcpa\b|controller|chief\s*financial"
+     r"|\bcfo\b|\bfp&a\b|accounts\s*(payable|receivable)|staff\s*accountant"
+     r"|tax\s*(analyst|manager)|audit(or)?)\b"),
+    ("hr-recruiter",
+     r"\b(human\s*resources|hr\s*(generalist|manager|business\s*partner|director)"
+     r"|recruiter|talent\s*acquisition|sourcer|people\s*ops|\bhrbp\b"
+     r"|compensation\s*(analyst|manager))\b"),
+    ("operations",
+     r"\b(operations\s*(manager|director|analyst)|supply\s*chain"
+     r"|logistics\s*(manager|coordinator)|procurement\s*(manager|analyst)"
+     r"|project\s*manager)\b"),
+    ("customer-success",
+     r"\b(customer\s*success\s*(manager|specialist)|account\s*manager"
+     r"|client\s*(services|success|relations)"
+     r"|customer\s*(support|experience)\s*manager)\b"),
+    ("administrative",
+     r"\b(executive\s*assistant|office\s*manager|administrative\s*(assistant|coordinator)"
+     r"|receptionist|office\s*coordinator)\b"),
+    # ── ENGINEERING (Non-IT) ──────────────────────────────────────────────────
+    ("civil-engineer",
+     r"\b(civil\s*engineer|structural\s*engineer|geotechnical|construction\s*(manager|engineer)"
+     r"|transportation\s*engineer)\b"),
+    ("mechanical-engineer",
+     r"\b(mechanical\s*engineer|manufacturing\s*engineer"
+     r"|product\s*(design|development)\s*engineer|cad\s*engineer|solidworks)\b"),
+    ("electrical-engineer",
+     r"\b(electrical\s*engineer|power\s*(systems|electronics)\s*engineer"
+     r"|pcb\s*design|control\s*systems\s*engineer)\b"),
+    # ── HEALTHCARE ────────────────────────────────────────────────────────────
+    ("clinical-nursing",
+     r"\b(registered\s*nurse|\brn\b|licensed\s*practical\s*nurse|\blpn\b"
+     r"|nurse\s*(practitioner|anesthetist|educator|manager)|clinical\s*nurse)\b"),
+    ("physician",
+     r"\b(physician\b|hospitalist\b|surgeon\b|attending\s*physician)\b"),
+    ("allied-health",
+     r"\b(physical\s*therapist|occupational\s*therapist"
+     r"|speech\s*(language\s*)?pathologist|medical\s*assistant"
+     r"|radiolog|sonographer|respiratory\s*therapist)\b"),
+    ("pharmacy",
+     r"\b(pharmacist\b|pharmacy\s*technician|clinical\s*pharmacist)\b"),
+    ("healthcare-clinical",
+     r"\b(healthcare\s*(administrator|manager|coordinator)"
+     r"|clinical\s*(coordinator|specialist|manager)"
+     r"|medical\s*(director|officer|coordinator))\b"),
+]
+
+# Compiled once at import time for fast repeated calls
+_COMPILED_DOMAIN_PATTERNS: list[tuple[str, re.Pattern]] = [
+    (slug, re.compile(pattern, re.IGNORECASE))
+    for slug, pattern in _DOMAIN_PATTERNS
+]
+
+
+def detect_job_domain(title: str, description: str = "", job_category: str = "") -> str:
+    """
+    Classify a job posting into a MarketingRole slug using keyword patterns.
+
+    Strategy:
+      1. Title-only pass  — most reliable signal; first match wins.
+      2. Description pass — catches jobs with generic/ambiguous titles.
+
+    Returns the matched slug (e.g. "servicenow-developer") or "" if no match.
+    Fast: pure regex, no DB queries, no external calls.
+    """
+    t = (title or "").lower()
+    d = (description or "")[:2000].lower()   # cap for speed
+
+    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+        if compiled.search(t):
+            return slug
+    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+        if compiled.search(d):
+            return slug
+    return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 12. HUMAN LANGUAGES
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1213,6 +1388,9 @@ def extract_enrichments(job: dict) -> dict:
         "company_name": job.get("company_name") or "",
     })
 
+    # ── Domain classification (→ MarketingRole slug) ──────────────────────────
+    job_domain = detect_job_domain(title, description, category)
+
     return {
         # Skills
         "skills":               all_skills,
@@ -1270,4 +1448,7 @@ def extract_enrichments(job: dict) -> dict:
         # Extracted sections (populated even for harvesters that don't parse them)
         "requirements":         requirements,
         "responsibilities":     _existing_resp,
+        # Domain taxonomy
+        "job_domain":           job_domain,
+        "domain_version":       CURRENT_DOMAIN_VERSION if job_domain else "",
     }

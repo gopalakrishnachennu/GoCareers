@@ -582,6 +582,16 @@ class RawJob(models.Model):
     tech_stack = models.JSONField(default=list, blank=True)
     # Job function category (Engineering, Data & Analytics, Product, etc.)
     job_category = models.CharField(max_length=64, blank=True)
+    # Domain slug — maps directly to a MarketingRole.slug (e.g. "servicenow-developer")
+    # Set by detect_job_domain() in enrichments.py; used to auto-assign Job.marketing_roles on sync.
+    job_domain = models.CharField(
+        max_length=120,
+        blank=True,
+        db_index=True,
+        help_text="MarketingRole slug auto-assigned by domain classification engine",
+    )
+    # Version tag so we can re-classify when _DOMAIN_PATTERNS changes
+    domain_version = models.CharField(max_length=16, blank=True, default="")
 
     # ── Enriched: experience requirements ────────────────────────────────────
     # "5+ years" → years_required=5; "3-7 years" → years_required=3, years_required_max=7
@@ -695,6 +705,7 @@ class RawJob(models.Model):
             models.Index(fields=["location_type"]),
             models.Index(fields=["is_active"]),
             models.Index(fields=["job_category"]),
+            models.Index(fields=["job_domain"]),
             models.Index(fields=["normalized_title"]),
             models.Index(fields=["department_normalized"]),
             models.Index(fields=["country"]),

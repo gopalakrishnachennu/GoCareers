@@ -78,12 +78,45 @@ class UserEmailNotificationPreferences(models.Model):
 
 
 class MarketingRole(models.Model):
+    """
+    A domain/specialization that can be assigned to both Jobs and Consultants.
+    Consultants receive marketing emails and job matches filtered to their roles.
+
+    top_category groups roles into broad verticals:
+      IT, NON_IT, ENGINEERING, HEALTHCARE, OTHER
+
+    match_keywords is a list of lowercase keyword phrases. Any phrase found in a
+    normalized job title or description (first 2 000 chars) triggers auto-assignment
+    of this role during domain classification. Ordered from most-specific to most-generic
+    so the first match wins.
+    """
+    class TopCategory(models.TextChoices):
+        IT          = "IT",          "Information Technology"
+        NON_IT      = "NON_IT",      "Non-IT / Business"
+        ENGINEERING = "ENGINEERING", "Engineering (Non-IT)"
+        HEALTHCARE  = "HEALTHCARE",  "Healthcare & Clinical"
+        OTHER       = "OTHER",       "Other"
+
     name = models.CharField(max_length=100, unique=True)
     slug = models.SlugField(max_length=120, unique=True, blank=True)
     description = models.TextField(blank=True)
+    top_category = models.CharField(
+        max_length=20,
+        choices=TopCategory.choices,
+        default=TopCategory.OTHER,
+        blank=True,
+        db_index=True,
+    )
+    match_keywords = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Lowercase keyword phrases matched against normalized title+description for auto-classification",
+    )
+    is_active = models.BooleanField(default=True, db_index=True)
+    display_order = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
-        ordering = ['name']
+        ordering = ['display_order', 'name']
 
     def save(self, *args, **kwargs):
         if not self.slug:

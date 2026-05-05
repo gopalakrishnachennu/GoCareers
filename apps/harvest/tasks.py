@@ -1424,6 +1424,8 @@ def fetch_raw_jobs_for_company_task(
                     "has_html_content", "cleaning_version",
                     # Section extraction — populated by extract_enrichments if not set by harvester
                     "requirements", "responsibilities",
+                    # Domain taxonomy
+                    "job_domain", "domain_version",
                 ]
                 bulk_enrich: list[RawJob] = []
                 for job in new_jobs:
@@ -2278,6 +2280,20 @@ def sync_harvested_to_pool_task(
                             "job_id": job.pk,
                             "checked_at": _tz.now().isoformat(),
                         }
+                        # ── Auto-assign marketing_roles from job_domain ──────
+                        if rj.job_domain:
+                            try:
+                                from users.models import MarketingRole as _MR
+                                _mr = _MR.objects.filter(
+                                    slug=rj.job_domain, is_active=True
+                                ).first()
+                                if _mr:
+                                    job.marketing_roles.add(_mr)
+                            except Exception as _mr_exc:
+                                logger.warning(
+                                    "Could not assign marketing_role %s to job %s: %s",
+                                    rj.job_domain, job.pk, _mr_exc,
+                                )
                         rj.sync_status = "SYNCED"
                         rj.raw_payload = payload
                         rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
@@ -4547,6 +4563,8 @@ def enrich_existing_jobs_task(
         "has_html_content", "cleaning_version",
         # Section extraction
         "requirements", "responsibilities",
+        # Domain taxonomy
+        "job_domain", "domain_version",
     ]
 
     for idx, job in enumerate(jobs, start=1):
