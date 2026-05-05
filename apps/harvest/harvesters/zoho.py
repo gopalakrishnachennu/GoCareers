@@ -275,6 +275,7 @@ class ZohoHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": posted,
                 "closing_date": "",

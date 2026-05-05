@@ -87,6 +87,7 @@ class RecruiteeHarvester(BaseHarvester):
             # Recruitee list API returns full description HTML — use it directly
             "description": o.get("description") or "",
             "requirements": o.get("requirements") or "",
+            "responsibilities": o.get("responsibilities") or "",
             "benefits": "",
             "posted_date_raw": o.get("created_at") or "",
             "closing_date": o.get("ends_at") or "",

@@ -221,6 +221,7 @@ class TeamtailorHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": "",
                 "closing_date": "",

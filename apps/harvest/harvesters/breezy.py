@@ -214,6 +214,7 @@ class BreezyHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": _clean_text(pm.group(1)) if pm else "",
                 "closing_date": "",

@@ -903,15 +903,18 @@ def extract_enrichments(job: dict) -> dict:
     # Harvesters that don't parse these sections get them for free here.
     _existing_req = (job.get("requirements") or "").strip()
     _existing_resp = (job.get("responsibilities") or "").strip()
-    if not _existing_req or not _existing_resp:
+    _existing_benefits = (job.get("benefits") or "").strip()
+    if not _existing_req or not _existing_resp or not _existing_benefits:
         _sections = extract_sections(job.get("description") or "")
         if not _existing_req:
             _existing_req = _sections.get("requirements", "")
         if not _existing_resp:
             _existing_resp = _sections.get("responsibilities", "")
+        if not _existing_benefits:
+            _existing_benefits = _sections.get("benefits", "")
 
     requirements = clean_job_text(_existing_req, max_len=20000)
-    _raw_benefits = (job.get("benefits") or "").strip() or _sections.get("benefits", "")
+    _raw_benefits = _existing_benefits
     benefits = clean_job_text(_raw_benefits, max_len=10000)
     location_raw = clean_job_text(job.get("location_raw") or "", max_len=512)
     detected_country = infer_country_from_location(
