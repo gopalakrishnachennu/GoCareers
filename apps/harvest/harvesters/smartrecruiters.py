@@ -141,6 +141,8 @@ class SmartRecruitersHarvester(BaseHarvester):
         description = requirements = responsibilities = benefits = ""
         salary_min = salary_max = None
         salary_currency, salary_period, salary_raw = "USD", "", ""
+        vendor_degree_level = ""
+        vendor_job_schedule = ""
         detail: Optional[dict] = None
         if api_posting_id and api_slug:
             try:
@@ -164,6 +166,17 @@ class SmartRecruitersHarvester(BaseHarvester):
                                 f"{salary_min:,.0f}–{salary_max:,.0f} {salary_currency}/{salary_period}"
                                 if salary_max else f"{salary_min:,.0f} {salary_currency}/{salary_period}"
                             )
+                    # Education/schedule from custom fields (SmartRecruiters allows employers
+                    # to add structured custom fields to postings — scan for common ones)
+                    for _cf in (detail.get("customField") or []):
+                        _cf_name = (_cf.get("fieldLabel") or _cf.get("name") or "").lower()
+                        _cf_val  = str(_cf.get("valueLabel") or _cf.get("value") or "").strip()
+                        if not _cf_val:
+                            continue
+                        if any(k in _cf_name for k in ("education", "degree", "qualification")):
+                            vendor_degree_level = _cf_val[:128]
+                        elif any(k in _cf_name for k in ("schedule", "shift", "work schedule")):
+                            vendor_job_schedule = _cf_val[:128]
             except Exception:
                 pass  # fall through — description stays empty, no crash
 
@@ -212,6 +225,8 @@ class SmartRecruitersHarvester(BaseHarvester):
             "requirements": requirements,
             "responsibilities": responsibilities,
             "benefits": benefits,
+            "vendor_degree_level": vendor_degree_level,
+            "vendor_job_schedule": vendor_job_schedule,
             "posted_date_raw": p.get("releasedDate") or "",
             "closing_date": "",
             "raw_payload": raw_payload,

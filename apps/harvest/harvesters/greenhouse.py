@@ -186,10 +186,35 @@ class GreenhouseHarvester(BaseHarvester):
             location_type, is_remote = _detect_location_type(location_raw)
             employment_type = _detect_employment_type(job)
 
-            # Description content
+            # Description content — coerce defensively: Greenhouse API returns
+            # bool/list/None on some postings which causes 'bool has no attr lower'.
             content = job.get("content", "")
-            description = content if content else ""
-            experience_level = _detect_experience_level(job.get("title", ""), description[:500])
+            if not isinstance(content, str):
+                if isinstance(content, list):
+                    content = " ".join(str(c) for c in content if isinstance(c, str))
+                elif content and not isinstance(content, bool):
+                    content = str(content)
+                else:
+                    content = ""
+            description = content.strip()
+
+            # Title — also coerce just in case
+            title = job.get("title", "")
+            if not isinstance(title, str):
+                title = str(title) if title and not isinstance(title, bool) else ""
+
+            experience_level = _detect_experience_level(title, description[:500])
+
+            # Education level from metadata fields tagged "education"/"degree"/"qualification"
+            vendor_degree_level = ""
+            for _m in (job.get("metadata") or []):
+                _mname = ((_m.get("name") or "")).lower()
+                _mval  = _m.get("value")
+                if not isinstance(_mval, str) or not _mval.strip():
+                    continue
+                if any(k in _mname for k in ("education", "degree", "qualification", "minimum qual")):
+                    vendor_degree_level = _mval.strip()[:128]
+                    break
 
             # Salary — Greenhouse API returns pay_input_ranges[] on some listings
             salary_raw = ""
@@ -214,7 +239,7 @@ class GreenhouseHarvester(BaseHarvester):
                 "external_id": str(job.get("id", "")),
                 "original_url": job.get("absolute_url", ""),
                 "apply_url": job.get("absolute_url", ""),
-                "title": job.get("title", ""),
+                "title": title,
                 "company_name": company.name,
                 "department": dept,
                 "team": "",
@@ -235,6 +260,7 @@ class GreenhouseHarvester(BaseHarvester):
                 "requirements": "",
                 "responsibilities": "",
                 "benefits": "",
+                "vendor_degree_level": vendor_degree_level,
                 "posted_date_raw": updated_raw,
                 "closing_date": "",
                 "raw_payload": job,

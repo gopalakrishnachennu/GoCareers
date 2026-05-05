@@ -950,6 +950,10 @@ def fetch_raw_jobs_for_company_task(
                 "country": job_dict.get("country") or "",
                 "state": job_dict.get("state") or "",
                 "posted_date": posted_date,
+                # Vendor-provided structured fields — used as extraction hints
+                # (e.g. Workday jobScheduleType, BambooHR educationLevel)
+                "vendor_degree_level": job_dict.get("vendor_degree_level") or "",
+                "vendor_job_schedule": job_dict.get("vendor_job_schedule") or "",
             })
 
             defaults = {

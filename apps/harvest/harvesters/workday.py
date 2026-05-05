@@ -183,6 +183,15 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         else:
             sal_period = "YEAR"
 
+    # Preserve raw schedule/degree API values in vendor fields so they're
+    # stored and available for analytics even before AI enrichment runs.
+    vendor_job_schedule = str(job.get("jobScheduleType") or "")[:128]
+    vendor_degree_level = str(job.get("minimumQualifications") or
+                              job.get("educationLevel") or
+                              job.get("degreeLevel") or "")[:128]
+    if isinstance(job.get("minimumQualifications"), dict):
+        vendor_degree_level = str(job["minimumQualifications"].get("descriptor", ""))[:128]
+
     return {
         "external_id": ext_id,
         "original_url": job_url,
@@ -208,6 +217,8 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "requirements": "",
         "responsibilities": "",
         "benefits": "",
+        "vendor_job_schedule": vendor_job_schedule,
+        "vendor_degree_level": vendor_degree_level,
         "posted_date_raw": job.get("postedOn", ""),
         "closing_date": "",
         "raw_payload": job,

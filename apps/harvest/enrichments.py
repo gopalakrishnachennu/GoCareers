@@ -929,8 +929,14 @@ def extract_enrichments(job: dict) -> dict:
     req_c = requirements.lower()
     ben_c = benefits.lower()
 
+    # Include vendor-provided structured fields as text hints — some platforms
+    # (Workday, BambooHR, SmartRecruiters) return explicit education/schedule
+    # values that may not appear verbatim in the description text.
+    vendor_degree_hint  = (job.get("vendor_degree_level") or "").strip().lower()
+    vendor_sched_hint   = (job.get("vendor_job_schedule") or "").strip().lower()
+
     # Full combined text for most checks
-    full_c   = f"{title_c} {desc_c} {req_c} {ben_c}"
+    full_c   = f"{title_c} {desc_c} {req_c} {ben_c} {vendor_degree_hint} {vendor_sched_hint}"
 
     # ── 1. Tech skills ────────────────────────────────────────────────────────
     found_tech: set[str] = set()

@@ -103,6 +103,15 @@ class BambooHRHarvester(BaseHarvester):
                             record["description"] = jo.get("description") or ""
                             record["requirements"] = jo.get("requirements") or jo.get("qualifications") or ""
                             record["responsibilities"] = jo.get("responsibilities") or jo.get("summary") or ""
+                            # Education / schedule from BambooHR detail fields
+                            edu_raw = (jo.get("educationLevel") or jo.get("minimumEducation")
+                                       or jo.get("educationRequired") or "")
+                            if edu_raw and isinstance(edu_raw, str):
+                                record["vendor_degree_level"] = edu_raw.strip()[:128]
+                            sched_raw = (jo.get("jobSchedule") or jo.get("scheduleType")
+                                         or jo.get("jobShift") or "")
+                            if sched_raw and isinstance(sched_raw, str):
+                                record["vendor_job_schedule"] = sched_raw.strip()[:128]
                             # Salary fields from detail
                             sal_min = jo.get("minSalary") or jo.get("salaryMin")
                             sal_max = jo.get("maxSalary") or jo.get("salaryMax")
@@ -218,6 +227,8 @@ class BambooHRHarvester(BaseHarvester):
             "requirements": "",
             "responsibilities": "",
             "benefits": "",
+            "vendor_degree_level": "",   # populated from detail API if provided
+            "vendor_job_schedule": "",   # populated from detail API if provided
             "posted_date_raw": j.get("datePosted") or j.get("created_at") or "",
             "closing_date": "",
             "raw_payload": j,
