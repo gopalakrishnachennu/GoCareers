@@ -26,6 +26,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from harvest.models import RawJob
         from jobs.models import Job
+        from jobs.marketing_role_routing import assign_marketing_roles_to_job
         from jobs.dedup import find_existing_job_by_url
         from jobs.quality import compute_quality_score
         from django.contrib.auth import get_user_model
@@ -92,9 +93,13 @@ class Command(BaseCommand):
                             url_hash=rj.url_hash or "",
                             job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
                             posted_by=system_user,
+                            source_raw_job=rj,
+                            country=rj.country or "",
+                            department=rj.department_normalized or "",
                         )
                         job.quality_score = compute_quality_score(job)
                         Job.objects.filter(pk=job.pk).update(quality_score=job.quality_score)
+                        assign_marketing_roles_to_job(job, raw_job=rj)
                         RawJob.objects.filter(pk=rj.pk).update(sync_status="SYNCED")
                         synced += 1
                 except Exception as e:

@@ -172,6 +172,8 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             posted_by=posted_by,
             source_raw_job=raw_job,
             queue_entered_at=_tz.now(),
+            country=raw_job.country or "",
+            department=raw_job.department_normalized or "",
         )
         apply_gate_result_to_job(job, gate)
         job.quality_score = compute_quality_score(job)
@@ -217,6 +219,9 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             "job_id": job.pk,
             "checked_at": _tz.now().isoformat(),
         }
+        from jobs.marketing_role_routing import assign_marketing_roles_to_job
+
+        assign_marketing_roles_to_job(job, raw_job=raw_job)
         raw_job.sync_status = "SYNCED"
         raw_job.raw_payload = payload
         raw_job.save(update_fields=["sync_status", "raw_payload", "updated_at"])

@@ -590,6 +590,11 @@ class RawJob(models.Model):
         db_index=True,
         help_text="MarketingRole slug auto-assigned by domain classification engine",
     )
+    job_domain_candidates = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Ordered candidate MarketingRole slugs considered during domain routing.",
+    )
     # Version tag so we can re-classify when _DOMAIN_PATTERNS changes
     domain_version = models.CharField(max_length=16, blank=True, default="")
 

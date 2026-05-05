@@ -11,6 +11,8 @@ from .models import Job
 from resumes.services import LLMService
 from users.models import ConsultantProfile
 from django.db.models import Q
+from submissions.models import ApplicationSubmission
+from harvest.enrichments import infer_country_from_location
 from resumes.prompt_strings import JD_PARSER_SYSTEM_PROMPT, JD_PARSER_USER_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -37,6 +39,66 @@ def _jaccard(a: set[str], b: set[str]) -> float:
     inter = len(a & b)
     union = len(a | b)
     return inter / union if union else 0.0
+
+
+_ACTIVE_SUBMISSION_STATUSES = {
+    ApplicationSubmission.Status.IN_PROGRESS,
+    ApplicationSubmission.Status.APPLIED,
+    ApplicationSubmission.Status.INTERVIEW,
+    ApplicationSubmission.Status.OFFER,
+    ApplicationSubmission.Status.PLACED,
+}
+
+
+def _job_country(job: Job) -> str:
+    direct = (getattr(job, "country", "") or "").strip()
+    if direct:
+        return direct
+    return infer_country_from_location(getattr(job, "location", "") or "") or ""
+
+
+def _job_seniority_bucket(job: Job) -> str:
+    title = (job.title or "").lower()
+    if re.search(r"\b(intern|entry\s*level|junior|jr\.?)\b", title):
+        return "junior"
+    if re.search(r"\b(principal|staff|distinguished|director|vp|head of|chief)\b", title):
+        return "executive"
+    if re.search(r"\b(lead|manager)\b", title):
+        return "lead"
+    if re.search(r"\b(senior|sr\.?)\b", title):
+        return "senior"
+    return "mid"
+
+
+def _job_claimed_by_other(job: Job, consultant: ConsultantProfile) -> bool:
+    return ApplicationSubmission.objects.filter(
+        job=job,
+        status__in=_ACTIVE_SUBMISSION_STATUSES,
+        is_archived=False,
+    ).exclude(consultant=consultant).exists()
+
+
+def _job_matches_consultant_preferences(job: Job, consultant: ConsultantProfile) -> bool:
+    consultant_roles = set(consultant.marketing_roles.values_list("id", flat=True))
+    job_roles = set(job.marketing_roles.values_list("id", flat=True))
+    if consultant_roles and job_roles and not (consultant_roles & job_roles):
+        return False
+
+    work_countries = {str(c).strip().lower() for c in (consultant.work_countries or []) if str(c).strip()}
+    if work_countries:
+        job_country = (_job_country(job) or "").strip().lower()
+        if job_country and job_country not in work_countries:
+            return False
+
+    preferred_seniority = {str(level).strip().lower() for level in (consultant.preferred_seniority_levels or []) if str(level).strip()}
+    if preferred_seniority:
+        if _job_seniority_bucket(job) not in preferred_seniority:
+            return False
+
+    if _job_claimed_by_other(job, consultant):
+        return False
+
+    return True
 
 
 def find_potential_duplicate_jobs(
@@ -244,6 +306,14 @@ def consultant_job_match_detail(job: Job, consultant: ConsultantProfile) -> dict
     """
     Heuristic match for UI: raw score, 0–100% coverage, and skill overlap counts.
     """
+    if not _job_matches_consultant_preferences(job, consultant):
+        return {
+            "raw_score": 0,
+            "match_pct": 0,
+            "matched_required": 0,
+            "total_required": 0,
+            "required_skills": [],
+        }
     raw_score = _score_job_for_consultant(job, consultant)
     skills = set(_normalize_list(consultant.skills))
     parsed = job.parsed_jd or {}
@@ -284,6 +354,8 @@ def ranked_consultants_for_job(job: Job, limit: int = 25) -> List[dict]:
     )
     rows = []
     for consultant in qs:
+        if not _job_matches_consultant_preferences(job, consultant):
+            continue
         detail = consultant_job_match_detail(job, consultant)
         rows.append(
             {
@@ -470,8 +542,13 @@ def match_jobs_for_consultant(
     Return a list of best matching OPEN jobs for a consultant.
     """
     qs = Job.objects.filter(status=Job.Status.OPEN)
+    consultant_role_ids = list(consultant.marketing_roles.values_list("id", flat=True))
+    if consultant_role_ids:
+        qs = qs.filter(marketing_roles__in=consultant_role_ids).distinct()
     scores = []
     for job in qs.prefetch_related("marketing_roles"):
+        if not _job_matches_consultant_preferences(job, consultant):
+            continue
         s = _score_job_for_consultant(job, consultant)
         if s > 0:
             scores.append((s, job))
@@ -497,4 +574,3 @@ def match_consultants_for_job(
     if not out and ranked:
         out = [row["consultant"] for row in ranked[:limit]]
     return out
-

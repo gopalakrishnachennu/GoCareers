@@ -699,6 +699,90 @@ _CATEGORY_PATTERNS: list[tuple[str, str]] = [
     ("Education",           r"\b(teacher|instructor|professor|curriculum|instructional\s*design|e.?learning)\b"),
 ]
 
+_CATEGORY_BY_DOMAIN_SLUG: dict[str, str] = {
+    "servicenow-developer": "Engineering",
+    "salesforce-developer": "Engineering",
+    "sap-consultant": "Engineering",
+    "workday-consultant": "Engineering",
+    "oracle-consultant": "Engineering",
+    "healthcare-it": "Healthcare",
+    "ml-ai-engineer": "AI / ML",
+    "data-engineer": "Data & Analytics",
+    "data-analyst": "Data & Analytics",
+    "devops-cloud": "DevOps / SRE",
+    "cybersecurity": "Security",
+    "network-systems": "DevOps / SRE",
+    "qa-test-engineer": "Engineering",
+    "it-support": "Operations",
+    "java-developer": "Engineering",
+    "python-developer": "Engineering",
+    "dotnet-developer": "Engineering",
+    "mobile-developer": "Engineering",
+    "frontend-developer": "Engineering",
+    "backend-developer": "Engineering",
+    "full-stack-developer": "Engineering",
+    "cloud-engineer": "DevOps / SRE",
+    "platform-engineer": "DevOps / SRE",
+    "systems-engineer": "DevOps / SRE",
+    "systems-administrator": "DevOps / SRE",
+    "infrastructure-engineer": "DevOps / SRE",
+    "database-administrator": "Data & Analytics",
+    "business-analyst-it": "Product",
+    "systems-analyst": "Product",
+    "it-project-manager": "Product",
+    "product-manager": "Product",
+    "scrum-master": "Product",
+    "erp-consultant": "Engineering",
+    "embedded-systems": "Engineering",
+    "software-developer": "Engineering",
+    "it-management": "Operations",
+    "sales": "Sales",
+    "marketing-specialist": "Marketing",
+    "finance-accounting": "Finance",
+    "hr-recruiter": "HR & People",
+    "operations": "Operations",
+    "customer-success": "Customer Success",
+    "administrative": "Operations",
+    "civil-engineer": "Engineering",
+    "mechanical-engineer": "Engineering",
+    "electrical-engineer": "Engineering",
+    "clinical-nursing": "Healthcare",
+    "physician": "Healthcare",
+    "allied-health": "Healthcare",
+    "pharmacy": "Healthcare",
+    "healthcare-clinical": "Healthcare",
+    "general-it": "Engineering",
+    "general-engineering": "Engineering",
+    "general-healthcare": "Healthcare",
+    "general-business": "Operations",
+    "other-generalist": "Operations",
+}
+
+_CATEGORY_BY_DEPARTMENT_NORMALIZED: dict[str, str] = {
+    "software_dev": "Engineering",
+    "data_analytics": "Data & Analytics",
+    "devops_cloud": "DevOps / SRE",
+    "security": "Security",
+    "it_support": "Operations",
+    "qa_testing": "Engineering",
+    "systems_network": "DevOps / SRE",
+    "it_management": "Operations",
+    "healthcare_it": "Healthcare",
+    "management": "Operations",
+    "sales": "Sales",
+    "marketing": "Marketing",
+    "hr": "HR & People",
+    "finance": "Finance",
+    "operations": "Operations",
+    "legal": "Legal",
+    "customer_success": "Customer Success",
+    "design": "Design",
+    "admin": "Operations",
+    "civil_eng": "Engineering",
+    "healthcare": "Healthcare",
+    "other": "Operations",
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 11b. DOMAIN TAXONOMY — maps to MarketingRole slugs
@@ -706,7 +790,7 @@ _CATEGORY_PATTERNS: list[tuple[str, str]] = [
 #      Each entry: (marketing_role_slug, regex_pattern_string)
 # ─────────────────────────────────────────────────────────────────────────────
 
-CURRENT_DOMAIN_VERSION = "d1"   # bump when patterns change to trigger re-classification
+CURRENT_DOMAIN_VERSION = "d2"   # bump when patterns change to trigger re-classification
 
 _DOMAIN_PATTERNS: list[tuple[str, str]] = [
     # ── IT: Named platforms (highest specificity) ─────────────────────────────
@@ -851,28 +935,210 @@ _COMPILED_DOMAIN_PATTERNS: list[tuple[str, re.Pattern]] = [
     for slug, pattern in _DOMAIN_PATTERNS
 ]
 
+_DOMAIN_DEPARTMENT_FALLBACKS: dict[str, list[str]] = {
+    "software_dev": ["software-developer", "general-it"],
+    "data_analytics": ["data-engineer", "data-analyst", "general-it"],
+    "devops_cloud": ["devops-cloud", "general-it"],
+    "security": ["cybersecurity", "general-it"],
+    "it_support": ["it-support", "general-it"],
+    "qa_testing": ["qa-test-engineer", "general-it"],
+    "systems_network": ["network-systems", "general-it"],
+    "it_management": ["it-management", "general-it"],
+    "healthcare_it": ["healthcare-it", "general-it"],
+    "management": ["operations", "general-business"],
+    "sales": ["sales", "general-business"],
+    "marketing": ["marketing-specialist", "general-business"],
+    "hr": ["hr-recruiter", "general-business"],
+    "finance": ["finance-accounting"],
+    "operations": ["operations", "general-business"],
+    "legal": ["general-business", "other-generalist"],
+    "customer_success": ["customer-success", "general-business"],
+    "design": ["general-business", "other-generalist"],
+    "admin": ["administrative", "general-business"],
+    "civil_eng": ["civil-engineer", "general-engineering"],
+    "healthcare": ["clinical-nursing", "general-healthcare"],
+    "other": ["other-generalist"],
+}
+
+_DOMAIN_CATEGORY_FALLBACKS: dict[str, list[str]] = {
+    "AI / ML": ["ml-ai-engineer", "general-it"],
+    "Data & Analytics": ["data-engineer", "data-analyst", "general-it"],
+    "Security": ["cybersecurity", "general-it"],
+    "DevOps / SRE": ["devops-cloud", "general-it"],
+    "Engineering": ["software-developer", "general-it"],
+    "Product": ["product-manager", "general-business"],
+    "Design": ["general-business", "other-generalist"],
+    "Marketing": ["marketing-specialist", "general-business"],
+    "Sales": ["sales", "general-business"],
+    "Customer Success": ["customer-success", "general-business"],
+    "Finance": ["finance-accounting"],
+    "HR & People": ["hr-recruiter", "general-business"],
+    "Legal": ["general-business", "other-generalist"],
+    "Operations": ["operations", "general-business"],
+    "Healthcare": ["general-healthcare"],
+    "Education": ["other-generalist"],
+}
+
+_DOMAIN_TOP_CATEGORY_FALLBACKS: dict[str, list[str]] = {
+    "IT": ["general-it"],
+    "ENGINEERING": ["general-engineering"],
+    "HEALTHCARE": ["general-healthcare"],
+    "NON_IT": ["general-business"],
+    "FINANCE": ["finance-accounting"],
+    "OTHER": ["other-generalist"],
+}
+
+_DOMAIN_TOP_CATEGORY_BY_CATEGORY: dict[str, str] = {
+    "AI / ML": "IT",
+    "Data & Analytics": "IT",
+    "Security": "IT",
+    "DevOps / SRE": "IT",
+    "Engineering": "IT",
+    "Product": "NON_IT",
+    "Design": "NON_IT",
+    "Marketing": "NON_IT",
+    "Sales": "NON_IT",
+    "Customer Success": "NON_IT",
+    "Finance": "FINANCE",
+    "HR & People": "NON_IT",
+    "Legal": "NON_IT",
+    "Operations": "NON_IT",
+    "Healthcare": "HEALTHCARE",
+    "Education": "OTHER",
+}
+
+_DOMAIN_TOP_CATEGORY_BY_DEPARTMENT: dict[str, str] = {
+    "software_dev": "IT",
+    "data_analytics": "IT",
+    "devops_cloud": "IT",
+    "security": "IT",
+    "it_support": "IT",
+    "qa_testing": "IT",
+    "systems_network": "IT",
+    "it_management": "IT",
+    "healthcare_it": "IT",
+    "management": "NON_IT",
+    "sales": "NON_IT",
+    "marketing": "NON_IT",
+    "hr": "NON_IT",
+    "finance": "FINANCE",
+    "operations": "NON_IT",
+    "legal": "NON_IT",
+    "customer_success": "NON_IT",
+    "design": "NON_IT",
+    "admin": "NON_IT",
+    "civil_eng": "ENGINEERING",
+    "healthcare": "HEALTHCARE",
+    "other": "OTHER",
+}
+
+
+def _dedupe_domain_slugs(slugs: list[str]) -> list[str]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for slug in slugs:
+        clean = (slug or "").strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        out.append(clean)
+    return out
+
+
+def _infer_domain_top_category(job_category: str, department_normalized: str) -> str:
+    department_key = (department_normalized or "").strip().lower()
+    if department_key in _DOMAIN_TOP_CATEGORY_BY_DEPARTMENT:
+        return _DOMAIN_TOP_CATEGORY_BY_DEPARTMENT[department_key]
+    return _DOMAIN_TOP_CATEGORY_BY_CATEGORY.get((job_category or "").strip(), "OTHER")
+
+
+def detect_job_category(
+    title: str,
+    description: str = "",
+    *,
+    raw_department: str = "",
+    department_normalized: str = "",
+    domain_slug: str = "",
+) -> tuple[str, bool, bool]:
+    """
+    Detect a job category with regex first, then department/domain fallback.
+
+    Returns: (category, title_match, desc_match)
+    """
+    title_src = f"{title or ''} {raw_department or ''}".lower()
+    desc_src = (description or "").lower()
+    for name, pattern in _CATEGORY_PATTERNS:
+        if re.search(pattern, title_src):
+            desc_match = bool(re.search(pattern, desc_src))
+            return name, True, desc_match
+    for name, pattern in _CATEGORY_PATTERNS:
+        if re.search(pattern, desc_src):
+            return name, False, True
+
+    dept_key = (department_normalized or "").strip().lower()
+    if dept_key and dept_key in _CATEGORY_BY_DEPARTMENT_NORMALIZED:
+        return _CATEGORY_BY_DEPARTMENT_NORMALIZED[dept_key], False, False
+
+    domain_key = (domain_slug or "").strip()
+    if domain_key and domain_key in _CATEGORY_BY_DOMAIN_SLUG:
+        return _CATEGORY_BY_DOMAIN_SLUG[domain_key], False, False
+
+    return "", False, False
+
+
+def detect_job_domains(
+    title: str,
+    description: str = "",
+    job_category: str = "",
+    department_normalized: str = "",
+    *,
+    max_matches: int = 3,
+) -> list[str]:
+    """
+    Return ordered MarketingRole slug candidates for a job.
+
+    Title is the strongest signal and is always checked first. When JD text is
+    weak or missing, we fall back to broad category / department catch-all roles
+    so every harvested job can still be routed.
+    """
+    title_src = (title or "").lower()
+    desc_src = (description or "")[:2000].lower()
+    matches: list[str] = []
+
+    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+        if compiled.search(title_src):
+            matches.append(slug)
+    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+        if compiled.search(desc_src):
+            matches.append(slug)
+
+    matches.extend(_DOMAIN_DEPARTMENT_FALLBACKS.get((department_normalized or "").strip().lower(), []))
+    matches.extend(_DOMAIN_CATEGORY_FALLBACKS.get((job_category or "").strip(), []))
+    matches.extend(
+        _DOMAIN_TOP_CATEGORY_FALLBACKS.get(
+            _infer_domain_top_category(job_category, department_normalized),
+            ["other-generalist"],
+        )
+    )
+
+    return _dedupe_domain_slugs(matches)[:max_matches]
+
 
 def detect_job_domain(title: str, description: str = "", job_category: str = "") -> str:
     """
-    Classify a job posting into a MarketingRole slug using keyword patterns.
+    Classify a job posting into a primary MarketingRole slug.
 
     Strategy:
       1. Title-only pass  — most reliable signal; first match wins.
       2. Description pass — catches jobs with generic/ambiguous titles.
+      3. Category fallback — broad catch-all routing when the JD is weak.
 
-    Returns the matched slug (e.g. "servicenow-developer") or "" if no match.
+    Returns the primary slug (e.g. "servicenow-developer"). When no specific
+    role matches, a catch-all routing slug is returned instead.
     Fast: pure regex, no DB queries, no external calls.
     """
-    t = (title or "").lower()
-    d = (description or "")[:2000].lower()   # cap for speed
-
-    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
-        if compiled.search(t):
-            return slug
-    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
-        if compiled.search(d):
-            return slug
-    return ""
+    matches = detect_job_domains(title, description, job_category, "", max_matches=1)
+    return matches[0] if matches else ""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1251,31 +1517,6 @@ def extract_enrichments(job: dict) -> dict:
         if re.search(pattern, full_c, re.IGNORECASE):
             benefits_found.append(name)
 
-    # ── 14. Job category ──────────────────────────────────────────────────────
-    category = ""
-    _cat_title_match = False
-    _cat_desc_match = False
-    dept = (job.get("department") or "").lower()
-    title_dept = f"{title_c} {dept}"
-    for name, pattern in _CATEGORY_PATTERNS:
-        if re.search(pattern, title_dept):
-            category = name
-            _cat_title_match = True
-            break
-    if not category:
-        for name, pattern in _CATEGORY_PATTERNS:
-            if re.search(pattern, desc_c):
-                category = name
-                _cat_desc_match = True
-                break
-    elif category:
-        # Also check desc to see if they agree (boosts confidence)
-        for name, pattern in _CATEGORY_PATTERNS:
-            if re.search(pattern, desc_c):
-                if name == category:
-                    _cat_desc_match = True
-                break
-
     # ── 15. Human languages ───────────────────────────────────────────────────
     langs: list[str] = []
     # Focus on requirements + description; context signals needed
@@ -1299,8 +1540,30 @@ def extract_enrichments(job: dict) -> dict:
     # ── 15.6 Title keywords ──────────────────────────────────────────────────
     title_keywords = _extract_title_keywords(title, all_skills)
 
-    # ── 15.7 Department normalization ────────────────────────────────────────
+    # ── 15.7 Initial regex category + department normalization ───────────────
+    category, _cat_title_match, _cat_desc_match = detect_job_category(
+        title,
+        description,
+        raw_department=job.get("department") or "",
+    )
     department_normalized = _normalize_department(job.get("department") or "", title, category)
+
+    # ── 15.75 Domain + category fallback ─────────────────────────────────────
+    domain_candidates = detect_job_domains(
+        title,
+        description,
+        category,
+        department_normalized,
+        max_matches=3,
+    )
+    job_domain = domain_candidates[0] if domain_candidates else ""
+    category, _cat_title_match, _cat_desc_match = detect_job_category(
+        title,
+        description,
+        raw_department=job.get("department") or "",
+        department_normalized=department_normalized,
+        domain_slug=job_domain,
+    )
 
     # ── 16. Word count ────────────────────────────────────────────────────────
     word_count = len(description.split())
@@ -1360,6 +1623,7 @@ def extract_enrichments(job: dict) -> dict:
         "engine": "rule_regex_v2",
         "signals_count": len(non_zero),
         "text_basis": "title+description+requirements+benefits",
+        "domain_candidates": domain_candidates[:3],
         "category_match": (
             "title+desc" if (_cat_title_match and _cat_desc_match)
             else "title" if _cat_title_match
@@ -1387,9 +1651,6 @@ def extract_enrichments(job: dict) -> dict:
         "department_normalized": department_normalized,
         "company_name": job.get("company_name") or "",
     })
-
-    # ── Domain classification (→ MarketingRole slug) ──────────────────────────
-    job_domain = detect_job_domain(title, description, category)
 
     return {
         # Skills
@@ -1450,5 +1711,6 @@ def extract_enrichments(job: dict) -> dict:
         "responsibilities":     _existing_resp,
         # Domain taxonomy
         "job_domain":           job_domain,
+        "job_domain_candidates": domain_candidates[:3],
         "domain_version":       CURRENT_DOMAIN_VERSION if job_domain else "",
     }

@@ -238,6 +238,18 @@ class ConsultantProfileEditForm(forms.ModelForm):
         help_text='Comma-separated list, e.g. Python, Django, AWS',
         widget=forms.TextInput(),
     )
+    work_countries_text = forms.CharField(
+        required=False,
+        label='Work countries',
+        help_text='Comma-separated countries for routing, e.g. United States, Canada',
+        widget=forms.TextInput(),
+    )
+    preferred_seniority_text = forms.CharField(
+        required=False,
+        label='Preferred seniority',
+        help_text='Comma-separated bands, e.g. junior, mid, senior, lead',
+        widget=forms.TextInput(),
+    )
 
     class Meta:
         model = ConsultantProfile
@@ -265,6 +277,8 @@ class ConsultantProfileEditForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if self.instance and self.instance.pk:
             self.fields['skills_text'].initial = ', '.join(self.instance.skills or [])
+            self.fields['work_countries_text'].initial = ', '.join(self.instance.work_countries or [])
+            self.fields['preferred_seniority_text'].initial = ', '.join(self.instance.preferred_seniority_levels or [])
         
         # Marketing Roles: Admin only, as checkboxes
         is_admin = self.user and (self.user.is_superuser or self.user.role == User.Role.ADMIN)
@@ -282,6 +296,10 @@ class ConsultantProfileEditForm(forms.ModelForm):
         instance = super().save(commit=False)
         raw = self.cleaned_data.get('skills_text', '')
         instance.skills = [s.strip() for s in raw.split(',') if s.strip()]
+        work_countries = self.cleaned_data.get('work_countries_text', '')
+        instance.work_countries = [s.strip() for s in work_countries.split(',') if s.strip()]
+        seniority = self.cleaned_data.get('preferred_seniority_text', '')
+        instance.preferred_seniority_levels = [s.strip().lower() for s in seniority.split(',') if s.strip()]
         if commit:
             instance.save()
             self.save_m2m()

@@ -1,9 +1,8 @@
 """
 backfill_job_marketing_roles
 ============================
-For every SYNCED RawJob that has a job_domain set, find the corresponding
-Job (via source_raw_job FK or url_hash) and add the matching MarketingRole
-to job.marketing_roles (M2M).
+For every SYNCED RawJob, find the corresponding Job and recompute the
+auto-assigned marketing roles from title/description/domain/category signals.
 
 Run once after classify_job_domains has finished to retroactively wire up
 the 15k already-synced jobs.
@@ -20,7 +19,7 @@ from django.core.management.base import BaseCommand
 
 
 class Command(BaseCommand):
-    help = "Backfill Job.marketing_roles from RawJob.job_domain for already-synced jobs"
+    help = "Backfill Job.marketing_roles from harvested routing signals for already-synced jobs"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -39,7 +38,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         from harvest.models import RawJob
         from jobs.models import Job
-        from users.models import MarketingRole
+        from jobs.marketing_role_routing import assign_marketing_roles_to_job
 
         batch_size = max(50, options["batch_size"])
         dry_run    = options["dry_run"]
@@ -47,26 +46,20 @@ class Command(BaseCommand):
 
         self.stdout.write(f"dry_run={dry_run}  overwrite={overwrite}")
 
-        # Pre-load MarketingRole slug→obj map (tiny table, fits in memory)
-        role_map: dict[str, MarketingRole] = {
-            mr.slug: mr for mr in MarketingRole.objects.filter(is_active=True)
-        }
-        self.stdout.write(f"  Active MarketingRoles loaded: {len(role_map)}")
-
-        # RawJobs that are synced and have a domain
+        # RawJobs that are synced; helper will fall back to title/category even if
+        # job_domain is blank.
         qs = (
             RawJob.objects
             .filter(sync_status=RawJob.SyncStatus.SYNCED)
-            .exclude(job_domain="")
             .select_related("company")
             .order_by("pk")
         )
         total = qs.count()
-        self.stdout.write(f"  SYNCED RawJobs with job_domain: {total:,}")
+        self.stdout.write(f"  SYNCED RawJobs to inspect: {total:,}")
         if dry_run or total == 0:
             return
 
-        assigned = skipped = missing_role = missing_job = 0
+        assigned = skipped = missing_job = 0
         last_pk  = None
 
         while True:
@@ -77,11 +70,6 @@ class Command(BaseCommand):
             last_pk = batch[-1].pk
 
             for rj in batch:
-                mr = role_map.get(rj.job_domain)
-                if not mr:
-                    missing_role += 1
-                    continue
-
                 # Find the Job — prefer source_raw_job FK, fall back to url_hash
                 job: Job | None = (
                     Job.objects.filter(source_raw_job=rj).first()
@@ -95,11 +83,10 @@ class Command(BaseCommand):
                     skipped += 1
                     continue
 
-                job.marketing_roles.add(mr)
-                assigned += 1
+                if assign_marketing_roles_to_job(job, raw_job=rj):
+                    assigned += 1
 
         self.stdout.write("")
         self.stdout.write(f"✅  Assigned:       {assigned:,}")
         self.stdout.write(f"   Skipped (already had roles): {skipped:,}")
-        self.stdout.write(f"   Missing MarketingRole slug:  {missing_role:,}")
         self.stdout.write(f"   Job not found:               {missing_job:,}")

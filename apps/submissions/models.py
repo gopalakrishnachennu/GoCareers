@@ -80,6 +80,26 @@ class ApplicationSubmission(models.Model):
         unique_together = ('job', 'consultant')  # Prevent double applications? Maybe not if re-applying later.
 
 
+ACTIVE_EXCLUSIVE_SUBMISSION_STATUSES = (
+    ApplicationSubmission.Status.IN_PROGRESS,
+    ApplicationSubmission.Status.APPLIED,
+    ApplicationSubmission.Status.INTERVIEW,
+    ApplicationSubmission.Status.OFFER,
+    ApplicationSubmission.Status.PLACED,
+)
+
+
+def active_submission_for_job(job, *, exclude_consultant=None):
+    qs = ApplicationSubmission.objects.filter(
+        job=job,
+        status__in=ACTIVE_EXCLUSIVE_SUBMISSION_STATUSES,
+        is_archived=False,
+    )
+    if exclude_consultant is not None:
+        qs = qs.exclude(consultant=exclude_consultant)
+    return qs.select_related("consultant__user").first()
+
+
 class SubmissionStatusHistory(models.Model):
     """One record per status change for application timeline."""
     submission = models.ForeignKey(

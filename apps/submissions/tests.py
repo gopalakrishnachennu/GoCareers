@@ -6,7 +6,13 @@ from django.urls import reverse
 from users.models import User, ConsultantProfile, EmployeeProfile
 from jobs.models import Job
 from core.models import Notification
-from .models import ApplicationSubmission, Placement, Timesheet, Commission
+from .models import (
+    ApplicationSubmission,
+    Placement,
+    Timesheet,
+    Commission,
+    active_submission_for_job,
+)
 
 
 class SubmissionExportCSVTests(TestCase):
@@ -70,6 +76,39 @@ class SubmissionBulkStatusTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.sub.refresh_from_db()
         self.assertEqual(self.sub.status, ApplicationSubmission.Status.INTERVIEW)
+
+
+class ActiveSubmissionGuardTests(TestCase):
+    def setUp(self):
+        self.employee = User.objects.create_user(
+            username='emp_guard', password='testpass', role=User.Role.EMPLOYEE
+        )
+        self.consultant_user = User.objects.create_user(
+            username='guard_con1', password='testpass', role=User.Role.CONSULTANT
+        )
+        self.other_user = User.objects.create_user(
+            username='guard_con2', password='testpass', role=User.Role.CONSULTANT
+        )
+        self.profile = ConsultantProfile.objects.create(user=self.consultant_user, bio='Test')
+        self.other_profile = ConsultantProfile.objects.create(user=self.other_user, bio='Test')
+        self.job = Job.objects.create(
+            title='DevOps Engineer',
+            company='Co',
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description='Work',
+            original_link='https://example.com/guard-j',
+        )
+
+    def test_active_submission_for_job_excludes_same_consultant_and_blocks_other(self):
+        ApplicationSubmission.objects.create(
+            job=self.job,
+            consultant=self.other_profile,
+            status=ApplicationSubmission.Status.IN_PROGRESS,
+            submitted_by=self.employee,
+        )
+        self.assertIsNotNone(active_submission_for_job(self.job, exclude_consultant=self.profile))
+        self.assertIsNone(active_submission_for_job(self.job, exclude_consultant=self.other_profile))
 
 
 # ─────────────────────────────────────────────────────────────

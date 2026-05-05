@@ -8,7 +8,16 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.utils import timezone
 
 from users.models import User
+from users.models import MarketingRole
+from users.models import ConsultantProfile
+from harvest.enrichments import detect_job_category
 from .models import Job
+from .marketing_role_routing import (
+    assign_marketing_roles_to_job,
+    clear_marketing_role_cache,
+    infer_marketing_role_slugs,
+)
+from .services import match_jobs_for_consultant
 from .tasks import validate_job_urls_task, auto_close_jobs_task
 
 
@@ -64,6 +73,122 @@ class JobListUrlHealthFilterTests(TestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertContains(resp, 'Dead posting')
         self.assertNotContains(resp, 'Live role')
+
+
+class MarketingRoleRoutingTests(TestCase):
+    def setUp(self):
+        clear_marketing_role_cache()
+        self.employee = User.objects.create_user(
+            username="routing_emp", password="testpass", role=User.Role.EMPLOYEE
+        )
+
+    def test_title_only_routing_returns_specific_role(self):
+        slugs = infer_marketing_role_slugs(
+            title="ServiceNow Developer",
+            description="",
+            job_category="",
+            department_normalized="",
+        )
+        self.assertTrue(slugs)
+        self.assertEqual(slugs[0], "servicenow-developer")
+
+    def test_generic_job_still_gets_catch_all_role(self):
+        slugs = infer_marketing_role_slugs(
+            title="Program Associate",
+            description="",
+            job_category="",
+            department_normalized="",
+        )
+        self.assertTrue(slugs)
+        self.assertIn("other-generalist", slugs)
+
+    def test_category_fallback_uses_domain_when_regex_is_weak(self):
+        category, _title_match, _desc_match = detect_job_category(
+            "ServiceNow Developer",
+            "",
+            domain_slug="servicenow-developer",
+        )
+        self.assertEqual(category, "Engineering")
+
+    def test_category_fallback_uses_department_when_domain_missing(self):
+        category, _, _ = detect_job_category(
+            "Implementation Specialist",
+            "",
+            department_normalized="finance",
+            domain_slug="",
+        )
+        self.assertEqual(category, "Finance")
+
+    def test_assign_preserves_manual_roles_while_refreshing_auto_roles(self):
+        manual_role = MarketingRole.objects.get(slug="salesforce-developer")
+        stale_auto = MarketingRole.objects.get(slug="software-developer")
+        refreshed_auto = MarketingRole.objects.get(slug="devops-cloud")
+        job = Job.objects.create(
+            title="Platform Engineer",
+            company="Acme",
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description="Maintain cloud infrastructure and CI/CD systems.",
+        )
+        job.marketing_roles.add(manual_role, stale_auto)
+        job.auto_marketing_role_slugs = ["software-developer"]
+        job.save(update_fields=["auto_marketing_role_slugs"])
+
+        assigned = assign_marketing_roles_to_job(job, role_slugs=["devops-cloud"])
+        job.refresh_from_db()
+
+        self.assertEqual(assigned, ["devops-cloud"])
+        self.assertCountEqual(
+            list(job.marketing_roles.values_list("slug", flat=True)),
+            ["salesforce-developer", "devops-cloud"],
+        )
+        self.assertEqual(job.auto_marketing_role_slugs, ["devops-cloud"])
+
+    def test_match_jobs_respects_country_and_seniority_preferences(self):
+        role = MarketingRole.objects.get(slug="devops-cloud")
+        consultant_user = User.objects.create_user(
+            username="consultant_match", password="testpass", role=User.Role.CONSULTANT
+        )
+        consultant = ConsultantProfile.objects.create(
+            user=consultant_user,
+            bio="DevOps consultant",
+            work_countries=["United States"],
+            preferred_seniority_levels=["senior"],
+        )
+        consultant.marketing_roles.add(role)
+
+        eligible = Job.objects.create(
+            title="Senior DevOps Engineer",
+            company="Acme",
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description="AWS Terraform Kubernetes CI/CD incident response",
+            country="United States",
+        )
+        eligible.marketing_roles.add(role)
+
+        wrong_country = Job.objects.create(
+            title="Senior DevOps Engineer",
+            company="Globex",
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description="AWS Terraform Kubernetes CI/CD incident response",
+            country="India",
+        )
+        wrong_country.marketing_roles.add(role)
+
+        wrong_seniority = Job.objects.create(
+            title="Junior DevOps Engineer",
+            company="Initrode",
+            posted_by=self.employee,
+            status=Job.Status.OPEN,
+            description="AWS Terraform Kubernetes CI/CD incident response",
+            country="United States",
+        )
+        wrong_seniority.marketing_roles.add(role)
+
+        matches = match_jobs_for_consultant(consultant, limit=10)
+        self.assertEqual([job.pk for job in matches], [eligible.pk])
 
 
 @patch("jobs.tasks.run_job_validation.delay")

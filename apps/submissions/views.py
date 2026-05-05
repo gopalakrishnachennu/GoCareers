@@ -13,7 +13,7 @@ from django.http import HttpResponse, HttpResponseRedirect, JsonResponse
 from django.core.exceptions import PermissionDenied
 from django.utils.http import url_has_allowed_host_and_scheme
 from .models import (
-    ApplicationSubmission, Offer, OfferRound, record_submission_status_change, EmailEvent,
+    ApplicationSubmission, Offer, OfferRound, active_submission_for_job, record_submission_status_change, EmailEvent,
     Placement, Timesheet, Commission,
 )
 from .forms import (
@@ -750,6 +750,14 @@ class SubmissionClaimView(LoginRequiredMixin, UserPassesTestMixin, View):
                     "This consultant has a Do-Not-Submit restriction for this company.",
                 )
                 return redirect('consultant-detail', pk=consultant.user.pk)
+
+        existing_active = active_submission_for_job(draft.job, exclude_consultant=consultant)
+        if existing_active:
+            messages.error(
+                request,
+                f"{draft.job.title} is already claimed for {existing_active.consultant.user.get_full_name() or existing_active.consultant.user.username}.",
+            )
+            return redirect('consultant-detail', pk=consultant.user.pk)
 
         submission, created = ApplicationSubmission.objects.get_or_create(
             job=draft.job,
@@ -2016,6 +2024,14 @@ class MarkExternalApplicationView(LoginRequiredMixin, UserPassesTestMixin, View)
         is_manager = request.user.is_superuser or getattr(request.user, 'role', '') == 'ADMIN'
         if not lock or (lock.locked_by_id != request.user.pk and not is_manager):
             messages.error(request, "You must hold the lock on this consultant to mark external applications.")
+            return redirect(f"{reverse('workflow-dashboard')}?consultant={consultant_pk}")
+
+        existing_active = active_submission_for_job(job, exclude_consultant=consultant)
+        if existing_active:
+            messages.error(
+                request,
+                f"{job.title} already has an active submission for {existing_active.consultant.user.get_full_name() or existing_active.consultant.user.username}.",
+            )
             return redirect(f"{reverse('workflow-dashboard')}?consultant={consultant_pk}")
 
         note = request.POST.get('note', '').strip() or 'Applied externally by consultant'

@@ -23,6 +23,8 @@ from harvest.platform_engine import ImplementationKind, dedicated_slugs, kind_fo
 
 
 class HarvestUrlAndRegistryTests(SimpleTestCase):
+    databases = {"default"}
+
     def test_build_career_url_zoho(self):
         self.assertEqual(
             build_career_url("zoho", "acme"),
@@ -58,6 +60,11 @@ class HarvestUrlAndRegistryTests(SimpleTestCase):
         self.assertEqual(kind_for_slug("teamtailor"), ImplementationKind.DEDICATED)
         self.assertIn("zoho", dedicated_slugs())
         self.assertIn("teamtailor", dedicated_slugs())
+
+    def test_validate_job_domain_taxonomy_command(self):
+        out = StringIO()
+        call_command("validate_job_domain_taxonomy", stdout=out)
+        self.assertIn("Marketing role taxonomy OK", out.getvalue())
 
 
 class HarvestUrlHashDedupeTests(SimpleTestCase):
@@ -814,6 +821,214 @@ class SyncRawJobsToPoolTests(TestCase):
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
         raw.refresh_from_db()
         self.assertEqual(raw.sync_status, "SKIPPED")
+
+    @patch("jobs.gating.apply_gate_result_to_job")
+    @patch("jobs.gating.evaluate_raw_job_gate")
+    def test_pool_sync_assigns_marketing_role_from_title_when_domain_blank(self, mock_gate, _mock_apply):
+        import hashlib
+        from harvest.models import RawJob
+        from harvest.tasks import sync_harvested_to_pool_task
+        from jobs.models import Job
+        from jobs.marketing_role_routing import clear_marketing_role_cache
+
+        clear_marketing_role_cache()
+        mock_gate.return_value = type(
+            "GateResult",
+            (),
+            {
+                "passed": True,
+                "lane": "READY",
+                "status": "eligible",
+                "reason_code": "",
+                "reasons": [],
+                "checks": {},
+                "data_quality_score": 0.9,
+                "trust_score": 0.9,
+                "candidate_fit_score": 0.9,
+                "vet_priority_score": 0.9,
+            },
+        )()
+        url = "https://example.com/careers/sync-mirror-servicenow-77"
+        h = hashlib.sha256(url.strip().encode()).hexdigest()
+        raw = RawJob.objects.create(
+            company=self.company,
+            title="ServiceNow Developer",
+            url_hash=h,
+            original_url=url,
+            description=(
+                "You will own platform integrations, release workflows, environment "
+                "support, stakeholder communication, testing coordination, incident "
+                "follow-up, delivery reporting, documentation upkeep, and continuous "
+                "process improvements across a busy enterprise team with strong written "
+                "communication, backlog ownership, and operational discipline."
+            ),
+            job_domain="",
+            sync_status="PENDING",
+        )
+
+        sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
+        raw.refresh_from_db()
+        self.assertEqual(raw.sync_status, "SYNCED")
+        job = Job.objects.get(url_hash=h)
+        self.assertIn(
+            "servicenow-developer",
+            list(job.marketing_roles.values_list("slug", flat=True)),
+        )
+
+
+class ManualRawJobSyncRoleTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="manual_sync_admin",
+            email="manual_sync@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.company = Company.objects.create(name="Manual Sync Co")
+
+    @patch("jobs.gating.apply_gate_result_to_job")
+    @patch("jobs.gating.evaluate_raw_job_gate")
+    @patch("harvest.url_health.is_definitive_inactive", return_value=False)
+    @patch("harvest.url_health.check_job_posting_live")
+    def test_manual_sync_assigns_marketing_role_from_title(
+        self,
+        mock_live,
+        _mock_definitive,
+        mock_gate,
+        _mock_apply,
+    ):
+        import hashlib
+        from harvest.models import RawJob
+        from harvest.views import _sync_rawjob_to_pool
+        from jobs.marketing_role_routing import clear_marketing_role_cache
+
+        clear_marketing_role_cache()
+        mock_gate.return_value = type(
+            "GateResult",
+            (),
+            {
+                "passed": True,
+                "lane": "READY",
+                "status": "eligible",
+                "reason_code": "",
+                "reasons": [],
+                "checks": {},
+                "data_quality_score": 0.9,
+                "trust_score": 0.9,
+                "candidate_fit_score": 0.9,
+                "vet_priority_score": 0.9,
+            },
+        )()
+        mock_live.return_value = type(
+            "LiveResult",
+            (),
+            {
+                "is_live": True,
+                "reason": "",
+                "status_code": 200,
+                "final_url": "https://example.com/jobs/manual-servicenow",
+            },
+        )()
+
+        url = "https://example.com/jobs/manual-servicenow"
+        raw = RawJob.objects.create(
+            company=self.company,
+            title="ServiceNow Developer",
+            url_hash=hashlib.sha256(url.encode()).hexdigest(),
+            original_url=url,
+            description=(
+                "Coordinate releases, support platform changes, document workflows, "
+                "handle incidents, and partner with business teams across a large "
+                "enterprise environment with strong delivery and process ownership."
+            ),
+            sync_status="PENDING",
+        )
+
+        job, created = _sync_rawjob_to_pool(raw, posted_by=self.user)
+        self.assertTrue(created)
+        self.assertIn(
+            "servicenow-developer",
+            list(job.marketing_roles.values_list("slug", flat=True)),
+        )
+
+
+class BackfillJobMarketingRolesCommandTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from users.models import User
+
+        self.user = User.objects.create_user(
+            username="role_backfill_admin",
+            email="role_backfill@example.com",
+            password="testpass123",
+            is_superuser=True,
+        )
+        self.company = Company.objects.create(name="Role Backfill Co")
+
+    def test_backfill_command_assigns_title_only_roles_to_synced_jobs(self):
+        import hashlib
+        from harvest.models import RawJob
+        from jobs.models import Job
+        from jobs.marketing_role_routing import clear_marketing_role_cache
+
+        clear_marketing_role_cache()
+        url = "https://example.com/jobs/backfill-servicenow"
+        raw = RawJob.objects.create(
+            company=self.company,
+            title="ServiceNow Developer",
+            url_hash=hashlib.sha256(url.encode()).hexdigest(),
+            original_url=url,
+            description="",
+            sync_status="SYNCED",
+            job_domain="",
+        )
+        job = Job.objects.create(
+            title=raw.title,
+            company=self.company.name,
+            company_obj=self.company,
+            description=raw.title,
+            original_link=url,
+            url_hash=raw.url_hash,
+            posted_by=self.user,
+            source_raw_job=raw,
+        )
+
+        call_command("backfill_job_marketing_roles")
+        job.refresh_from_db()
+
+        self.assertIn(
+            "servicenow-developer",
+            list(job.marketing_roles.values_list("slug", flat=True)),
+        )
+
+
+class ClassifyJobTaxonomyCommandTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        self.company = Company.objects.create(name="Taxonomy Co")
+
+    def test_classify_job_taxonomy_backfills_category_and_domain(self):
+        from harvest.models import RawJob
+
+        raw = RawJob.objects.create(
+            company=self.company,
+            title="ServiceNow Developer",
+            description="",
+            is_active=True,
+            job_category="",
+            job_domain="",
+            department_normalized="",
+        )
+
+        call_command("classify_job_taxonomy", reclassify_all=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.job_domain, "servicenow-developer")
+        self.assertEqual(raw.job_category, "Engineering")
+        self.assertTrue(raw.job_domain_candidates)
 
 
 class JarvisCompanyFallbackTests(SimpleTestCase):

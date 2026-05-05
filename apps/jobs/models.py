@@ -161,6 +161,11 @@ class Job(models.Model):
         blank=True,
         related_name='jobs'
     )
+    auto_marketing_role_slugs = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Auto-assigned MarketingRole slugs from harvested domain routing. Manual role edits stay in the M2M."),
+    )
     
     posted_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

@@ -146,6 +146,16 @@ class ConsultantProfile(models.Model):
         default='',
         help_text=_("City, State used in resume header. e.g. 'Jersey City, NJ' or 'Remote'"),
     )
+    work_countries = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Preferred work countries for job routing, e.g. ['United States', 'Canada']."),
+    )
+    preferred_seniority_levels = models.JSONField(
+        default=list,
+        blank=True,
+        help_text=_("Preferred seniority bands for job routing, e.g. ['mid', 'senior']."),
+    )
     marketing_roles = models.ManyToManyField(MarketingRole, blank=True, related_name='consultants')
 
     class Status(models.TextChoices):

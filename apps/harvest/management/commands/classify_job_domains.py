@@ -1,8 +1,8 @@
 """
 classify_job_domains
 ====================
-Batch-classify all RawJobs with a job_domain slug using the
-detect_job_domain() engine in enrichments.py.
+Batch-classify all RawJobs with taxonomy fields using the
+detect_job_category()/detect_job_domains() engines in enrichments.py.
 
 Run this once after the domain taxonomy migration, and again any time
 CURRENT_DOMAIN_VERSION bumps (i.e. patterns change).
@@ -20,7 +20,7 @@ from django.db import transaction
 
 
 class Command(BaseCommand):
-    help = "Classify RawJobs into domain slugs using keyword patterns"
+    help = "Classify RawJobs into taxonomy fields (job_category + job_domain) using keyword patterns"
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -46,7 +46,11 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         from harvest.models import RawJob
-        from harvest.enrichments import detect_job_domain, CURRENT_DOMAIN_VERSION
+        from harvest.enrichments import (
+            CURRENT_DOMAIN_VERSION,
+            detect_job_category,
+            detect_job_domains,
+        )
 
         batch_size  = max(100, options["batch_size"])
         limit       = options["limit"]
@@ -77,14 +81,32 @@ class Command(BaseCommand):
         offset = 0
 
         while offset < total:
-            batch = list(qs.only("pk", "title", "description").order_by("pk")[offset:offset + batch_size])
+            batch = list(
+                qs.only("pk", "title", "description", "job_category", "department_normalized")
+                .order_by("pk")[offset:offset + batch_size]
+            )
             if not batch:
                 break
 
             updates: list[RawJob] = []
             for rj in batch:
-                domain = detect_job_domain(rj.title or "", rj.description or "")
+                domains = detect_job_domains(
+                    rj.title or "",
+                    rj.description or "",
+                    rj.job_category or "",
+                    rj.department_normalized or "",
+                    max_matches=3,
+                )
+                domain = domains[0] if domains else ""
+                category, _title_match, _desc_match = detect_job_category(
+                    rj.title or "",
+                    rj.description or "",
+                    department_normalized=rj.department_normalized or "",
+                    domain_slug=domain,
+                )
                 rj.job_domain    = domain
+                rj.job_domain_candidates = domains[:3]
+                rj.job_category = category or rj.job_category or ""
                 rj.domain_version = CURRENT_DOMAIN_VERSION if domain else ""
                 updates.append(rj)
                 if domain:
@@ -94,7 +116,10 @@ class Command(BaseCommand):
                     unclassified += 1
 
             with transaction.atomic():
-                RawJob.objects.bulk_update(updates, ["job_domain", "domain_version"])
+                RawJob.objects.bulk_update(
+                    updates,
+                    ["job_category", "job_domain", "job_domain_candidates", "domain_version"],
+                )
 
             offset += len(batch)
             if offset % 10000 == 0 or offset >= total:
