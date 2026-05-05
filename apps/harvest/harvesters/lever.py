@@ -14,6 +14,7 @@ Compliance:
   - fetch_all=True fetches all pages via offset pagination
   - date filtering — only returns jobs created within since_hours window when fetch_all=False
 """
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
