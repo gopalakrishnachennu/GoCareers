@@ -222,6 +222,15 @@
         <section class="card-padded">
           <h3 class="mb-3 text-xs font-bold uppercase tracking-wide text-slate-500">Job Profile</h3>
           <dl class="space-y-2 text-sm">
+            {% if rawjob.job_domain %}
+            <div>
+              <dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Domain</dt>
+              <dd>
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-violet-100 text-violet-700 border border-violet-200">{{ rawjob.job_domain }}</span>
+                {% if rawjob.domain_version %}<span class="text-[10px] text-slate-400 ml-1">{{ rawjob.domain_version }}</span>{% endif %}
+              </dd>
+            </div>
+            {% endif %}
             {% if rawjob.job_category %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Category</dt><dd class="font-semibold text-slate-800">{{ rawjob.job_category }}</dd></div>{% endif %}
             {% if rawjob.years_required %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Experience</dt><dd class="text-slate-700">{{ rawjob.years_required }}{% if rawjob.years_required_max %}–{{ rawjob.years_required_max }}{% else %}+{% endif %} years</dd></div>{% endif %}
             {% if rawjob.education_required %}<div><dt class="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Education</dt><dd class="text-slate-700">{{ rawjob.get_education_required_display }}</dd></div>{% endif %}

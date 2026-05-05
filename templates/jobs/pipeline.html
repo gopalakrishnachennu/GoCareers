@@ -624,6 +624,7 @@
       <tr>
         <th class="tbl-th">Job</th>
         <th class="tbl-th hidden md:table-cell">Platform</th>
+        <th class="tbl-th hidden md:table-cell">Domain</th>
         <th class="tbl-th hidden md:table-cell">Stage</th>
         <th class="tbl-th hidden md:table-cell">Active</th>
         <th class="tbl-th hidden lg:table-cell">Location</th>
@@ -638,11 +639,19 @@
         <td class="tbl-td">
           <div class="font-semibold text-gray-900">{{ raw.title }}</div>
           <div class="text-xs text-gray-500 mt-0.5">{{ raw.company_name|default:"—" }}</div>
+          {% if raw.job_category %}<div class="text-xs text-indigo-400 mt-0.5">{{ raw.job_category }}</div>{% endif %}
         </td>
         <td class="tbl-td hidden md:table-cell">
           {% if raw.platform_slug %}<span class="badge-blue">{{ raw.platform_slug }}</span>
           {% elif raw.job_platform %}<span class="badge-blue">{{ raw.job_platform.name }}</span>
           {% else %}<span class="text-gray-300 text-xs">—</span>{% endif %}
+        </td>
+        <td class="tbl-td hidden md:table-cell">
+          {% if raw.job_domain %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 border border-violet-200">{{ raw.job_domain }}</span>
+          {% else %}
+            <span class="text-gray-300 text-xs">—</span>
+          {% endif %}
         </td>
         <td class="tbl-td hidden md:table-cell">
           <span class="badge-gray">{{ raw.pipeline_stage_label }}</span>
