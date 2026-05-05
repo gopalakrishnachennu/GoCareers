@@ -1,0 +1,38 @@
+name: Run — Backfill Job Marketing Roles
+
+on:
+  workflow_dispatch:
+    inputs:
+      overwrite:
+        description: "Re-assign even Jobs that already have marketing_roles? (true/false)"
+        required: true
+        default: "false"
+      dry_run:
+        description: "Dry-run only — count matches, no writes (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Backfill Job.marketing_roles from RawJob.job_domain
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            ARGS=""
+            if [ "${{ github.event.inputs.overwrite }}" = "true" ]; then
+              ARGS="${ARGS} --overwrite"
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="${ARGS} --dry-run"
+            fi
+            echo "Running backfill_job_marketing_roles ${ARGS}"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py backfill_job_marketing_roles ${ARGS}

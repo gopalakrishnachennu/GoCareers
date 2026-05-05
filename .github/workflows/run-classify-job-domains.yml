@@ -1,0 +1,41 @@
+name: Run — Classify Job Domains
+
+on:
+  workflow_dispatch:
+    inputs:
+      reclassify_all:
+        description: "Re-classify even jobs already on current version? (true/false)"
+        required: true
+        default: "false"
+      batch_size:
+        description: "DB update batch size"
+        default: "1000"
+      dry_run:
+        description: "Dry-run only — show stats, no writes (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Classify job domains on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            ARGS="--batch-size ${{ github.event.inputs.batch_size }}"
+            if [ "${{ github.event.inputs.reclassify_all }}" = "true" ]; then
+              ARGS="${ARGS} --reclassify-all"
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="${ARGS} --dry-run"
+            fi
+            echo "Running classify_job_domains ${ARGS}"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py classify_job_domains ${ARGS}
