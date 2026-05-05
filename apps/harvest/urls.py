@@ -34,6 +34,7 @@ from .views import (
     RawJobStatsView,
     BoardAnalyticsDashboardView,
     BoardAnalyticsView,
+    BoardDrillDownView,
     RawJobWorkflowInsightsView,
     RunBackfillDescriptionsView,
     RunBackfillResumeContractView,
@@ -111,6 +112,7 @@ urlpatterns = [
     # API helpers
     path("api/cooldown/", FetchCooldownStatusView.as_view(), name="harvest-api-cooldown"),
     path("board-analytics/", BoardAnalyticsDashboardView.as_view(), name="harvest-board-analytics-dashboard"),
+    path("board-analytics/<slug:slug>/", BoardDrillDownView.as_view(), name="harvest-board-drilldown"),
     path("api/board-analytics/", BoardAnalyticsView.as_view(), name="harvest-board-analytics-api"),
     # Local Harvesting Agent — push API (token-authenticated, csrf_exempt)
     path("api/push/labels/", ExportLabelsView.as_view(), name="harvest-push-labels"),

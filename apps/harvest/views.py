@@ -1810,6 +1810,115 @@ class BoardAnalyticsView(SuperuserRequiredMixin, View):
         return JsonResponse({"ok": True, **data})
 
 
+class BoardDrillDownView(SuperuserRequiredMixin, View):
+    """
+    GET /harvest/board-analytics/<slug>/
+    Per-platform drill-down: run history, field coverage trend, recent error messages.
+    """
+
+    def get(self, request, slug: str):
+        from .models import CompanyFetchRun, RawJob, JobBoardPlatform
+        from .board_capabilities import get_capabilities
+        from datetime import timedelta
+        from django.utils import timezone
+        from django.db.models import Count, Avg, Max, Q
+
+        try:
+            window = int(request.GET.get("window_days", 30))
+            window = max(1, min(90, window))
+        except (ValueError, TypeError):
+            window = 30
+
+        now = timezone.now()
+        run_window = now - timedelta(days=window)
+
+        # Platform meta
+        platform = JobBoardPlatform.objects.filter(slug=slug).first()
+
+        # Recent runs for this platform
+        recent_runs = (
+            CompanyFetchRun.objects
+            .filter(started_at__gte=run_window, label__platform__slug=slug)
+            .order_by("-started_at")
+            .values(
+                "id", "status", "error_type", "issue_code", "error_message",
+                "jobs_found", "jobs_new", "jobs_updated", "jobs_duplicate",
+                "started_at", "completed_at", "field_presence",
+                "label__company__name",
+            )[:100]
+        )
+
+        # Aggregate stats from runs
+        run_agg = (
+            CompanyFetchRun.objects
+            .filter(started_at__gte=run_window, label__platform__slug=slug)
+            .aggregate(
+                total=Count("id"),
+                success=Count("id", filter=Q(status="SUCCESS")),
+                empty=Count("id", filter=Q(status="EMPTY")),
+                failed=Count("id", filter=Q(status="FAILED")),
+                partial=Count("id", filter=Q(status="PARTIAL")),
+                avg_jobs=Avg("jobs_found"),
+            )
+        )
+
+        # RawJob totals for this platform
+        job_qs = RawJob.objects.filter(platform_slug=slug)
+        job_totals = job_qs.aggregate(
+            total=Count("id"),
+            synced=Count("id", filter=Q(sync_status="SYNCED")),
+            pending=Count("id", filter=Q(sync_status="PENDING")),
+            failed=Count("id", filter=Q(sync_status="FAILED")),
+            inactive=Count("id", filter=Q(is_active=False)),
+            missing_jd=Count("id", filter=Q(has_description=False)),
+            has_salary=Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
+        )
+
+        # Blocker breakdown
+        _rj_fields = {f.name for f in RawJob._meta.get_fields()}
+        blockers = {}
+        if "sync_skip_reason" in _rj_fields:
+            from django.db.models import Count as C
+            blockers = (
+                job_qs
+                .exclude(sync_skip_reason="")
+                .values("sync_skip_reason")
+                .annotate(count=Count("id"))
+                .order_by("-count")
+            )
+            blockers = {b["sync_skip_reason"]: b["count"] for b in blockers}
+
+        # Most recent errors
+        recent_errors = list(
+            CompanyFetchRun.objects
+            .filter(
+                started_at__gte=run_window,
+                label__platform__slug=slug,
+                status__in=["FAILED", "PARTIAL"],
+            )
+            .exclude(error_message="")
+            .order_by("-started_at")
+            .values("label__company__name", "error_message", "error_type", "issue_code", "started_at")
+            [:20]
+        )
+
+        caps = get_capabilities(slug)
+
+        context = {
+            "slug": slug,
+            "platform": platform,
+            "window_days": window,
+            "window_choices": [7, 14, 30, 60, 90],
+            "run_agg": run_agg,
+            "recent_runs": list(recent_runs),
+            "job_totals": job_totals,
+            "blockers": blockers,
+            "recent_errors": recent_errors,
+            "capabilities": caps,
+        }
+        return render(request, "harvest/board_drilldown.html", context)
+
+
 # ── Job Jarvis ─────────────────────────────────────────────────────────────────
 
 @method_decorator(never_cache, name="dispatch")
