@@ -729,9 +729,10 @@ def fetch_raw_jobs_for_company_task(
     if not label.platform or not label.tenant_id:
         run.status = CompanyFetchRun.Status.SKIPPED
         run.error_type = CompanyFetchRun.ErrorType.NO_TENANT
+        run.issue_code = CompanyFetchRun.IssueCode.NO_ACTIVE_TENANT
         run.error_message = "No platform or tenant_id configured."
         run.completed_at = timezone.now()
-        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        run.save(update_fields=["status", "error_type", "issue_code", "error_message", "completed_at"])
         if batch:
             FetchBatch.objects.filter(pk=batch.pk).update(
                 failed_companies=models.F("failed_companies") + 1
@@ -807,6 +808,7 @@ def fetch_raw_jobs_for_company_task(
             )
         # Capture API-reported total (even when we only fetched a subset)
         run.jobs_total_available = getattr(harvester, "last_total_available", 0) or len(raw_jobs)
+        run.jobs_detail_fetched = getattr(harvester, "last_detail_fetched", 0)
         run.jobs_found = len(raw_jobs)
         # If harvester hit a terminal HTTP error (e.g. Greenhouse 404 = invalid board),
         # mark as FAILED/TENANT_INVALID now rather than waiting for zero-job check below.
@@ -826,7 +828,7 @@ def fetch_raw_jobs_for_company_task(
                     failed_companies=models.F("failed_companies") + 1
                 )
             return
-        run.save(update_fields=["jobs_total_available", "jobs_found"])
+        run.save(update_fields=["jobs_total_available", "jobs_detail_fetched", "jobs_found"])
         try:
             self.update_state(
                 state="PROGRESS",
@@ -841,9 +843,10 @@ def fetch_raw_jobs_for_company_task(
     except requests.exceptions.Timeout as exc:
         run.status = CompanyFetchRun.Status.FAILED
         run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
+        run.issue_code = CompanyFetchRun.IssueCode.FETCH_TIMEOUT
         run.error_message = str(exc)[:500]
         run.completed_at = timezone.now()
-        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        run.save(update_fields=["status", "error_type", "issue_code", "error_message", "completed_at"])
         if batch:
             FetchBatch.objects.filter(pk=batch.pk).update(
                 failed_companies=models.F("failed_companies") + 1
@@ -851,10 +854,17 @@ def fetch_raw_jobs_for_company_task(
         return
     except requests.exceptions.HTTPError as exc:
         run.status = CompanyFetchRun.Status.FAILED
-        run.error_type = CompanyFetchRun.ErrorType.HTTP_ERROR
+        # 429 = rate limited — distinguish from generic HTTP errors
+        _resp = getattr(exc, "response", None)
+        _status_code = getattr(_resp, "status_code", 0)
+        if _status_code == 429:
+            run.error_type = CompanyFetchRun.ErrorType.RATE_LIMITED
+            run.issue_code = CompanyFetchRun.IssueCode.RATE_LIMITED
+        else:
+            run.error_type = CompanyFetchRun.ErrorType.HTTP_ERROR
         run.error_message = str(exc)[:500]
         run.completed_at = timezone.now()
-        run.save(update_fields=["status", "error_type", "error_message", "completed_at"])
+        run.save(update_fields=["status", "error_type", "issue_code", "error_message", "completed_at"])
         if batch:
             FetchBatch.objects.filter(pk=batch.pk).update(
                 failed_companies=models.F("failed_companies") + 1
@@ -864,9 +874,11 @@ def fetch_raw_jobs_for_company_task(
         # Task hit the 8-minute soft limit — mark as PARTIAL so the run is visible
         # in the monitor and doesn't retry (it was already too slow once).
         run.status = CompanyFetchRun.Status.PARTIAL
+        run.error_type = CompanyFetchRun.ErrorType.TIMEOUT
+        run.issue_code = CompanyFetchRun.IssueCode.PARTIAL_RESULTS
         run.error_message = "Soft time limit exceeded (8 min) — task killed gracefully."
         run.completed_at = timezone.now()
-        run.save(update_fields=["status", "error_message", "completed_at"])
+        run.save(update_fields=["status", "error_type", "issue_code", "error_message", "completed_at"])
         if batch:
             FetchBatch.objects.filter(pk=batch.pk).update(
                 failed_companies=models.F("failed_companies") + 1
@@ -1190,6 +1202,7 @@ def fetch_raw_jobs_for_company_task(
         "jd": 0, "requirements": 0, "responsibilities": 0,
         "department": 0, "geo": 0, "salary": 0,
         "employment_type": 0, "education": 0, "experience_level": 0,
+        "category": 0, "schedule": 0,
     }
     for jd in raw_jobs:
         if jd.get("description") or jd.get("has_description"):
@@ -1210,6 +1223,10 @@ def fetch_raw_jobs_for_company_task(
             _fp["education"] += 1
         if jd.get("experience_level") and jd.get("experience_level") not in ("UNKNOWN", ""):
             _fp["experience_level"] += 1
+        if jd.get("job_category") and jd.get("job_category") not in ("", "UNKNOWN"):
+            _fp["category"] += 1
+        if (jd.get("schedule_type") and jd.get("schedule_type") not in ("", "UNKNOWN")) or jd.get("vendor_job_schedule"):
+            _fp["schedule"] += 1
 
     # ── Update run record ─────────────────────────────────────────────────────
     _total_found = len(raw_jobs)
@@ -1239,7 +1256,7 @@ def fetch_raw_jobs_for_company_task(
         run.error_message = "Upsert errors: " + " | ".join(upsert_errors)
         run.error_type = CompanyFetchRun.ErrorType.PARSE_ERROR
     run.save(update_fields=[
-        "status", "jobs_found", "jobs_total_available", "jobs_new", "jobs_updated",
+        "status", "jobs_found", "jobs_total_available", "jobs_detail_fetched", "jobs_new", "jobs_updated",
         "jobs_duplicate", "jobs_failed", "completed_at", "error_message", "error_type",
         "issue_code", "field_presence",
     ])

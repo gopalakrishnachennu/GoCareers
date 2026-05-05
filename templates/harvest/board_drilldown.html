@@ -224,8 +224,13 @@
               {% if run.field_presence %}
                 jd:{{ run.field_presence.jd|default:0 }}
                 req:{{ run.field_presence.requirements|default:0 }}
-                dep:{{ run.field_presence.department|default:0 }}
+                resp:{{ run.field_presence.responsibilities|default:0 }}
+                dept:{{ run.field_presence.department|default:0 }}
+                geo:{{ run.field_presence.geo|default:0 }}
                 sal:{{ run.field_presence.salary|default:0 }}
+                edu:{{ run.field_presence.education|default:0 }}
+                sched:{{ run.field_presence.schedule|default:0 }}
+                cat:{{ run.field_presence.category|default:0 }}
               {% else %}—{% endif %}
             </td>
             <td class="px-4 py-2 text-right text-gray-400">

@@ -361,6 +361,7 @@ class WorkdayHarvester(BaseHarvester):
                     job_dict["description"] = desc
                     detail_fetched += 1
 
+            self.last_detail_fetched = detail_fetched
             return results
 
         return []

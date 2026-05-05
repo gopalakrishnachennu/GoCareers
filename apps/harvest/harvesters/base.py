@@ -114,6 +114,9 @@ class BaseHarvester(ABC):
         # Set when fetch_jobs encounters a terminal HTTP error (e.g. 404 = invalid tenant).
         # tasks.py reads this to distinguish TENANT_INVALID from genuine zero-yield.
         self.last_fetch_http_status: int | None = None
+        # Set by harvesters that do per-job detail fetches (e.g. Workday).
+        # tasks.py reads this to populate CompanyFetchRun.jobs_detail_fetched.
+        self.last_detail_fetched: int = 0
 
     # ── Public interface ──────────────────────────────────────────────────────
 

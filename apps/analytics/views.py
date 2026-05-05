@@ -86,11 +86,11 @@ def _platform_health_rows(since):
         Q(category_confidence__isnull=True) & Q(classification_confidence__lt=BLOCKED_CONFIDENCE_THRESHOLD)
     )
     blocked_q = Q(sync_status=RawJob.SyncStatus.PENDING) & (
-        Q(is_active=False)
-        | Q(has_description=False)
-        | low_conf_q
-        | Q(resume_ready_score__lt=RESUME_READY_THRESHOLD)
-        | Q(sync_status=RawJob.SyncStatus.FAILED)
+        ~Q(sync_skip_reason="")       # recorded blocker reason (source-of-truth for new jobs)
+        | Q(is_active=False)          # inactive posting
+        | Q(has_description=False)    # missing job description
+        | low_conf_q                  # low classification confidence
+        | Q(resume_ready_score__lt=RESUME_READY_THRESHOLD)  # below quality threshold
     )
 
     raw_qs = RawJob.objects.all()
@@ -163,13 +163,10 @@ def _platform_health_rows(since):
             no_tenant_runs=Count("id", filter=Q(error_type=CompanyFetchRun.ErrorType.NO_TENANT)),
             platform_error_runs=Count("id", filter=Q(error_type=CompanyFetchRun.ErrorType.PLATFORM_ERROR)),
             rate_limited_runs=Count("id", filter=Q(error_type=CompanyFetchRun.ErrorType.RATE_LIMITED)),
+            empty_runs=Count("id", filter=Q(status=CompanyFetchRun.Status.EMPTY)),
             zero_yield_success_runs=Count(
                 "id",
-                filter=(
-                    Q(status__in=[CompanyFetchRun.Status.SUCCESS, CompanyFetchRun.Status.PARTIAL])
-                    & Q(jobs_found=0)
-                    & (Q(error_message="") | Q(error_message__isnull=True))
-                ),
+                filter=Q(status=CompanyFetchRun.Status.EMPTY),
             ),
             total_jobs_found=Coalesce(Sum("jobs_found"), 0),
             total_jobs_available=Coalesce(Sum("jobs_total_available"), 0),
@@ -240,7 +237,7 @@ def _platform_health_rows(since):
         fetch_fail_rate = _pct(row.get("failed_runs") or 0, total_runs)
         fetch_partial_rate = _pct(row.get("partial_runs") or 0, total_runs)
         portal_down_rate = _pct(row.get("portal_down") or 0, companies_tracked)
-        zero_yield_rate = _pct(row.get("zero_yield_success_runs") or 0, success_like_runs)
+        zero_yield_rate = _pct(row.get("zero_yield_success_runs") or 0, total_runs)
         risk_score = round(
             (missing_jd_rate * 0.22)
             + (inactive_rate * 0.15)
@@ -500,6 +497,7 @@ class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, Template
             "partial_runs": total_partial_runs,
             "partial_run_rate": _pct(total_partial_runs, total_fetch_runs),
             "zero_yield_success_runs": total_zero_yield,
+            "empty_runs": total_zero_yield,
             "low_confidence_jobs": total_low_conf,
             "low_confidence_rate": _pct(total_low_conf, total_raw_jobs),
             "avg_risk_score": avg_risk_score,
@@ -548,7 +546,7 @@ class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, Template
             ],
         }
         context["blocker_breakdown_chart_json"] = {
-            "labels": ["Missing JD", "Inactive links", "Low confidence", "Blocked jobs", "Zero-yield success"],
+            "labels": ["Missing JD", "Inactive links", "Low confidence", "Sync blocked", "Zero-yield (EMPTY runs)"],
             "values": [
                 total_missing_jd,
                 total_inactive_jobs,
