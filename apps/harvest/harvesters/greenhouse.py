@@ -137,6 +137,12 @@ class GreenhouseHarvester(BaseHarvester):
         data = self._get(url, params={"content": "true"})
 
         if isinstance(data, dict) and "error" in data:
+            err = str(data.get("error", ""))
+            # HTTP 404 = board token not found (tenant is invalid), not an empty company.
+            # Signal this so tasks.py can mark the run as FAILED/TENANT_INVALID rather
+            # than EMPTY/NO_JOBS_RETURNED — keeps zero-yield metric accurate.
+            if "404" in err:
+                self.last_fetch_http_status = 404
             return []
 
         all_jobs = data.get("jobs") or []
@@ -227,6 +233,7 @@ class GreenhouseHarvester(BaseHarvester):
                 "salary_raw": salary_raw,
                 "description": description,
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": updated_raw,
                 "closing_date": "",

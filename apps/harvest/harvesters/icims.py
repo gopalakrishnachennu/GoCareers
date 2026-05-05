@@ -279,6 +279,7 @@ class IcimsHarvester(BaseHarvester):
                 "salary_raw": "",
                 "description": "",
                 "requirements": "",
+                "responsibilities": "",
                 "benefits": "",
                 "posted_date_raw": posted_date_raw,
                 "closing_date": "",

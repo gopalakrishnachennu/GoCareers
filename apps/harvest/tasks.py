@@ -808,6 +808,24 @@ def fetch_raw_jobs_for_company_task(
         # Capture API-reported total (even when we only fetched a subset)
         run.jobs_total_available = getattr(harvester, "last_total_available", 0) or len(raw_jobs)
         run.jobs_found = len(raw_jobs)
+        # If harvester hit a terminal HTTP error (e.g. Greenhouse 404 = invalid board),
+        # mark as FAILED/TENANT_INVALID now rather than waiting for zero-job check below.
+        _fetch_http_status = getattr(harvester, "last_fetch_http_status", None)
+        if _fetch_http_status == 404 and not raw_jobs:
+            run.status = CompanyFetchRun.Status.FAILED
+            run.error_type = CompanyFetchRun.ErrorType.HTTP_ERROR
+            run.issue_code = CompanyFetchRun.IssueCode.TENANT_INVALID
+            run.error_message = f"HTTP 404 — board/tenant not found: {label.tenant_id}"
+            run.completed_at = timezone.now()
+            run.save(update_fields=[
+                "status", "error_type", "issue_code", "error_message",
+                "jobs_total_available", "jobs_found", "completed_at",
+            ])
+            if batch:
+                FetchBatch.objects.filter(pk=batch.pk).update(
+                    failed_companies=models.F("failed_companies") + 1
+                )
+            return
         run.save(update_fields=["jobs_total_available", "jobs_found"])
         try:
             self.update_state(

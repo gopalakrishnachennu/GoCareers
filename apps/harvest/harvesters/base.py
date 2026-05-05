@@ -111,6 +111,9 @@ class BaseHarvester(ABC):
         # Set by fetch_jobs() implementations when the platform API returns a
         # total count. Lets callers compare "available" vs "fetched".
         self.last_total_available: int = 0
+        # Set when fetch_jobs encounters a terminal HTTP error (e.g. 404 = invalid tenant).
+        # tasks.py reads this to distinguish TENANT_INVALID from genuine zero-yield.
+        self.last_fetch_http_status: int | None = None
 
     # ── Public interface ──────────────────────────────────────────────────────
 

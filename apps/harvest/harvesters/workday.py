@@ -206,6 +206,7 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "salary_raw": salary_raw,
         "description": description,
         "requirements": "",
+        "responsibilities": "",
         "benefits": "",
         "posted_date_raw": job.get("postedOn", ""),
         "closing_date": "",
