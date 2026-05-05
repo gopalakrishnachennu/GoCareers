@@ -4483,17 +4483,18 @@ def enrich_existing_jobs_task(
 
     for idx, job in enumerate(jobs, start=1):
         enriched = extract_enrichments({
-            "title":           job.title,
-            "description":     job.description,
-            "requirements":    job.requirements,
-            "benefits":        job.benefits,
-            "department":      job.department,
-            "location_raw":    job.location_raw,
-            "employment_type": job.employment_type,
-            "experience_level":job.experience_level,
-            "salary_raw":      job.salary_raw,
-            "company_name":    job.company_name,
-            "posted_date":     str(job.posted_date) if job.posted_date else "",
+            "title":            job.title,
+            "description":      job.description,
+            "requirements":     job.requirements or "",
+            "responsibilities": job.responsibilities or "",
+            "benefits":         job.benefits or "",
+            "department":       job.department,
+            "location_raw":     job.location_raw,
+            "employment_type":  job.employment_type,
+            "experience_level": job.experience_level,
+            "salary_raw":       job.salary_raw,
+            "company_name":     job.company_name,
+            "posted_date":      str(job.posted_date) if job.posted_date else "",
         })
 
         has_change = False
