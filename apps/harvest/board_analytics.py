@@ -65,6 +65,13 @@ def get_board_analytics(window_days: int = 30) -> dict:
         "missing_jd":  Count("id", filter=Q(has_description=False)),
         "has_salary":  Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
     }
+    # Blocker reason counts (only if sync_skip_reason field exists)
+    if "sync_skip_reason" in _raw_fields:
+        _field_annotations["blocked_inactive"]    = Count("id", filter=Q(sync_skip_reason="INACTIVE_POSTING"))
+        _field_annotations["blocked_jd_weak"]     = Count("id", filter=Q(sync_skip_reason="JD_TOO_WEAK"))
+        _field_annotations["blocked_mismatch"]    = Count("id", filter=Q(sync_skip_reason="PLATFORM_MISMATCH"))
+        _field_annotations["blocked_duplicate"]   = Count("id", filter=Q(sync_skip_reason__in=["DUPLICATE_RISK", "DUPLICATE_EXISTING"]))
+        _field_annotations["blocked_no_company"]  = Count("id", filter=Q(sync_skip_reason="COMPANY_UNRESOLVED"))
     if "requirements" in _raw_fields:
         _field_annotations["has_requirements"] = Count("id", filter=~Q(requirements=""))
     if "responsibilities" in _raw_fields:
@@ -241,6 +248,14 @@ def get_board_analytics(window_days: int = 30) -> dict:
             "risk_score": risk_score,
             "risk_trusted": risk_trusted,   # False when runs < MIN_RUNS_FOR_RISK
             "issue_reasons": issue_reasons, # list of human-readable issue tags
+            # Blocker breakdown — why jobs are failing sync (zero = not set / pre-migration)
+            "blockers": {
+                "inactive":   j.get("blocked_inactive", 0),
+                "jd_weak":    j.get("blocked_jd_weak", 0),
+                "mismatch":   j.get("blocked_mismatch", 0),
+                "duplicate":  j.get("blocked_duplicate", 0),
+                "no_company": j.get("blocked_no_company", 0),
+            },
         }
 
         if slug in UNSUPPORTED_SLUGS or tier == JobBoardPlatform.SupportTier.UNSUPPORTED:

@@ -2115,8 +2115,9 @@ def sync_harvested_to_pool_task(
                         "checked_at": _tz.now().isoformat(),
                     }
                     rj.sync_status = "SKIPPED"
+                    rj.sync_skip_reason = "DUPLICATE_EXISTING"
                     rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
                     PipelineEvent.record(
                         job=existing,
                         url_hash=rj.url_hash or "",
@@ -2175,8 +2176,9 @@ def sync_harvested_to_pool_task(
                         "checked_at": _tz.now().isoformat(),
                     }
                     rj.sync_status = "FAILED"
+                    rj.sync_skip_reason = (gate.reason_code or "")[:32]
                     rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
                     failed += 1
                     if total_target:
                         update_task_progress(

@@ -658,6 +658,17 @@ class RawJob(models.Model):
     sync_status = models.CharField(
         max_length=16, choices=SyncStatus.choices, default=SyncStatus.PENDING
     )
+    sync_skip_reason = models.CharField(
+        max_length=32,
+        blank=True,
+        default="",
+        db_index=True,
+        help_text=(
+            "Gate reason code when sync_status=SKIPPED. "
+            "Mirrors jobs.gating reason codes: INACTIVE_POSTING, JD_TOO_WEAK, "
+            "PLATFORM_MISMATCH, DUPLICATE_RISK, COMPANY_UNRESOLVED, etc."
+        ),
+    )
     is_active = models.BooleanField(default=True)
     # Denormalized flag — set on every save so JD filter hits an index instead of
     # running Length(Trim(Coalesce(description))) over 100k+ rows.
