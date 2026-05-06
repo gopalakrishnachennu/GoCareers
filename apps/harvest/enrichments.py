@@ -1557,6 +1557,22 @@ def extract_enrichments(job: dict) -> dict:
         max_matches=3,
     )
     job_domain = domain_candidates[0] if domain_candidates else ""
+    if not domain_candidates:
+        try:
+            from jobs.marketing_role_routing import infer_marketing_role_slugs
+
+            domain_candidates = infer_marketing_role_slugs(
+                title=title,
+                description=description,
+                job_category=category,
+                department_normalized=department_normalized,
+                primary_domain="",
+                max_roles=3,
+            )
+            job_domain = domain_candidates[0] if domain_candidates else ""
+        except Exception:
+            domain_candidates = []
+            job_domain = ""
     category, _cat_title_match, _cat_desc_match = detect_job_category(
         title,
         description,
@@ -1712,5 +1728,5 @@ def extract_enrichments(job: dict) -> dict:
         # Domain taxonomy
         "job_domain":           job_domain,
         "job_domain_candidates": domain_candidates[:3],
-        "domain_version":       CURRENT_DOMAIN_VERSION if job_domain else "",
+        "domain_version":       CURRENT_DOMAIN_VERSION,
     }

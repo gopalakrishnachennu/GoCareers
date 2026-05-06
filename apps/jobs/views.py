@@ -1092,6 +1092,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             "location_raw", "is_remote", "employment_type", "experience_level",
             "salary_min", "salary_max", "salary_raw", "posted_date", "fetched_at",
             "sync_status", "has_description", "is_active",
+            "job_category", "job_domain",
             "department", "department_normalized", "state", "country",
             "education_required", "languages_required", "certifications",
             "licenses_required", "clearance_required", "clearance_level",
@@ -1121,6 +1122,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "company_name": (job.company_name or "")[:30],
                 "platform_slug": job.platform_slug or "",
                 "title": (job.title or "")[:60],
+                "job_category": job.job_category or "",
+                "job_domain": job.job_domain or "",
                 "location_raw": (job.location_raw or "")[:30],
                 "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
                 "is_active": bool(job.is_active),
@@ -1535,7 +1538,7 @@ class PipelineHealthView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 # ── Job Classification Trigger ────────────────────────────────────────────────
 
 class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
-    """One-button trigger for the country + department classification engine."""
+    """One-button trigger for the full raw-job taxonomy backfill."""
 
     def test_func(self):
         u = self.request.user
@@ -1543,29 +1546,41 @@ class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
 
     def post(self, request, *args, **kwargs):
         from django.core.cache import cache
-        from .tasks import classify_jobs_task, CLASSIFY_LOCK_KEY
+        from .tasks import classify_jobs_task, CLASSIFY_ACTIVE_TASK_KEY, CLASSIFY_LOCK_KEY
 
         force = request.POST.get("force") == "1"
 
-        if cache.get(CLASSIFY_LOCK_KEY):
-            return JsonResponse({"status": "already_running", "message": "Classification is already in progress."})
+        active_task_id = cache.get(CLASSIFY_ACTIVE_TASK_KEY) or cache.get(CLASSIFY_LOCK_KEY)
+        if active_task_id:
+            return JsonResponse({
+                "status": "already_running",
+                "task_id": active_task_id,
+                "message": "Taxonomy backfill is already in progress.",
+            })
 
-        # classify_jobs_task now targets all 135k RawJob records
         result = classify_jobs_task.apply_async(kwargs={"force_reclassify": force})
+        cache.set(CLASSIFY_ACTIVE_TASK_KEY, result.id, 60 * 180)
         return JsonResponse({"status": "started", "task_id": result.id})
 
     def get(self, request, *args, **kwargs):
         """Poll task progress."""
         from celery.result import AsyncResult
+        from django.core.cache import cache
+        from .tasks import CLASSIFY_ACTIVE_TASK_KEY, CLASSIFY_LOCK_KEY
+
         task_id = request.GET.get("task_id")
+        if not task_id and request.GET.get("current") == "1":
+            task_id = cache.get(CLASSIFY_ACTIVE_TASK_KEY) or cache.get(CLASSIFY_LOCK_KEY)
+            if not task_id:
+                return JsonResponse({"state": "IDLE", "info": {}})
         if not task_id:
             return JsonResponse({"error": "missing task_id"}, status=400)
 
         res = AsyncResult(task_id)
         if res.state == "PROGRESS":
-            return JsonResponse({"state": "PROGRESS", "info": res.info or {}})
+            return JsonResponse({"state": "PROGRESS", "task_id": task_id, "info": res.info or {}})
         if res.state == "SUCCESS":
-            return JsonResponse({"state": "SUCCESS", "info": res.result or {}})
+            return JsonResponse({"state": "SUCCESS", "task_id": task_id, "info": res.result or {}})
         if res.state == "FAILURE":
-            return JsonResponse({"state": "FAILURE", "info": str(res.result)})
-        return JsonResponse({"state": res.state, "info": {}})
+            return JsonResponse({"state": "FAILURE", "task_id": task_id, "info": str(res.result)})
+        return JsonResponse({"state": res.state, "task_id": task_id, "info": {}})

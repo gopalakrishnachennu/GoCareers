@@ -35,8 +35,8 @@
             </div>
             <h3 class="text-base font-bold text-gray-900">Force re-classify all jobs?</h3>
         </div>
-        <p class="text-sm text-gray-600 mb-1">This will overwrite <strong>all existing classifications</strong> (except manually-set ones) and re-run country + department detection on every job.</p>
-        <p class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-5">Takes 5–15 min for 135k jobs. Runs in background — you can close this page.</p>
+        <p class="text-sm text-gray-600 mb-1">This will overwrite <strong>all existing taxonomy fields</strong> and re-run category + domain + marketing-role routing on every harvested job.</p>
+        <p class="text-xs text-amber-600 bg-amber-50 rounded-lg px-3 py-2 mb-5">Runs in background. Progress survives page refresh and will backfill synced jobs too.</p>
         <div class="flex gap-3 justify-end">
             <button onclick="document.getElementById('classify-confirm-modal').classList.add('hidden')"
                 class="px-4 py-2 text-sm text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition">Cancel</button>
@@ -49,6 +49,7 @@
 <script>
 const CLASSIFY_URL = "{% url 'job-classify' %}";
 let _classifyPollTimer = null;
+const CLASSIFY_TASK_STORAGE_KEY = "jobs_pipeline_classify_task_id";
 
 function confirmForceClassify() {
     document.getElementById('classify-confirm-modal').classList.remove('hidden');
@@ -87,8 +88,16 @@ function triggerClassify(force) {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'already_running') { msg.textContent = data.message; return; }
+        if (data.status === 'already_running') {
+            msg.textContent = data.message;
+            if (data.task_id) {
+                sessionStorage.setItem(CLASSIFY_TASK_STORAGE_KEY, data.task_id);
+                _pollClassify(data.task_id);
+            }
+            return;
+        }
         msg.textContent = 'Classification started…';
+        sessionStorage.setItem(CLASSIFY_TASK_STORAGE_KEY, data.task_id);
         _pollClassify(data.task_id);
     })
     .catch(err => { msg.textContent = 'Error: ' + err; });
@@ -113,15 +122,16 @@ function _pollClassify(taskId) {
             _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 1800);
         } else if (state === 'SUCCESS') {
             bar.style.width = '100%'; pct.textContent = '100%';
-            msg.textContent = 'Done — ' + (info.classified || 0).toLocaleString() + ' jobs classified.';
+            msg.textContent = 'Done — ' + (info.classified || 0).toLocaleString() + ' raw jobs classified.';
             document.getElementById('classify-spinner').classList.add('hidden');
             document.getElementById('classify-check').classList.remove('hidden');
             document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = false; b.classList.remove('opacity-50'); });
-            const skip = new Set(['status','total','classified','country_found']);
-            const entries = Object.entries(info).filter(([k]) => !skip.has(k) && info[k] > 0);
-            if (entries.length || info.country_found) {
+            sessionStorage.removeItem(CLASSIFY_TASK_STORAGE_KEY);
+            const skip = new Set(['status','total','classified']);
+            const entries = Object.entries(info).filter(([k]) => !skip.has(k) && typeof info[k] === 'number' && info[k] > 0);
+            if (entries.length) {
                 stats.classList.remove('hidden');
-                let html = info.country_found ? `<span class="col-span-2">🌍 Countries: <strong>${info.country_found.toLocaleString()}</strong></span>` : '';
+                let html = '';
                 entries.forEach(([k,v]) => { html += `<span>${k}: <strong>${v}</strong></span>`; });
                 stats.innerHTML = html;
             }
@@ -129,10 +139,47 @@ function _pollClassify(taskId) {
             msg.textContent = 'Failed: ' + (info || 'Unknown error');
             document.getElementById('classify-spinner').classList.add('hidden');
             document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = false; b.classList.remove('opacity-50'); });
+            sessionStorage.removeItem(CLASSIFY_TASK_STORAGE_KEY);
+        } else if (state === 'IDLE') {
+            document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = false; b.classList.remove('opacity-50'); });
+            sessionStorage.removeItem(CLASSIFY_TASK_STORAGE_KEY);
         } else {
             _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 1800);
         }
     })
     .catch(() => { _classifyPollTimer = setTimeout(() => _pollClassify(taskId), 3000); });
+}
+
+document.addEventListener("DOMContentLoaded", function() {
+    const existingTaskId = sessionStorage.getItem(CLASSIFY_TASK_STORAGE_KEY);
+    if (existingTaskId) {
+        triggerResume(existingTaskId);
+        return;
+    }
+    fetch(CLASSIFY_URL + '?current=1')
+        .then(r => r.json())
+        .then(data => {
+            if (data.state && data.state !== 'IDLE') {
+                const taskId = data.task_id || null;
+                if (taskId) {
+                    sessionStorage.setItem(CLASSIFY_TASK_STORAGE_KEY, taskId);
+                    triggerResume(taskId);
+                }
+            }
+        })
+        .catch(() => {});
+});
+
+function triggerResume(taskId) {
+    const toast = document.getElementById('classify-toast');
+    const spinner = document.getElementById('classify-spinner');
+    const check = document.getElementById('classify-check');
+    const msg = document.getElementById('classify-msg');
+    toast.classList.remove('hidden');
+    spinner.classList.remove('hidden');
+    check.classList.add('hidden');
+    msg.textContent = 'Resuming taxonomy progress…';
+    document.querySelectorAll('.classify-trigger-btn').forEach(b => { b.disabled = true; b.classList.add('opacity-50'); });
+    _pollClassify(taskId);
 }
 </script>

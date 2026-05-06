@@ -618,18 +618,18 @@
 
 {% if tab_raw %}
 <div id="raw-jobs-table"></div>
-<div class="card-table">
-  <table class="w-full text-sm">
+<div class="card-table overflow-x-auto">
+  <table class="w-full min-w-[1240px] text-sm">
     <thead class="tbl-head">
       <tr>
         <th class="tbl-th">Job</th>
-        <th class="tbl-th hidden md:table-cell">Platform</th>
-        <th class="tbl-th hidden md:table-cell">Domain</th>
-        <th class="tbl-th hidden md:table-cell">Stage</th>
-        <th class="tbl-th hidden md:table-cell">Active</th>
-        <th class="tbl-th hidden lg:table-cell">Location</th>
-        <th class="tbl-th hidden lg:table-cell">Gate</th>
-        <th class="tbl-th hidden lg:table-cell">Harvested</th>
+        <th class="tbl-th">Platform</th>
+        <th class="tbl-th">Domain</th>
+        <th class="tbl-th">Stage</th>
+        <th class="tbl-th">Active</th>
+        <th class="tbl-th">Location</th>
+        <th class="tbl-th">Gate</th>
+        <th class="tbl-th">Harvested</th>
         <th class="tbl-th-right">Actions</th>
       </tr>
     </thead>
@@ -641,30 +641,30 @@
           <div class="text-xs text-gray-500 mt-0.5">{{ raw.company_name|default:"—" }}</div>
           {% if raw.job_category %}<div class="text-xs text-indigo-400 mt-0.5">{{ raw.job_category }}</div>{% endif %}
         </td>
-        <td class="tbl-td hidden md:table-cell">
+        <td class="tbl-td">
           {% if raw.platform_slug %}<span class="badge-blue">{{ raw.platform_slug }}</span>
           {% elif raw.job_platform %}<span class="badge-blue">{{ raw.job_platform.name }}</span>
           {% else %}<span class="text-gray-300 text-xs">—</span>{% endif %}
         </td>
-        <td class="tbl-td hidden md:table-cell">
+        <td class="tbl-td">
           {% if raw.job_domain %}
             <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 border border-violet-200">{{ raw.job_domain }}</span>
           {% else %}
             <span class="text-gray-300 text-xs">—</span>
           {% endif %}
         </td>
-        <td class="tbl-td hidden md:table-cell">
+        <td class="tbl-td">
           <span class="badge-gray">{{ raw.pipeline_stage_label }}</span>
         </td>
-        <td class="tbl-td hidden md:table-cell">
+        <td class="tbl-td">
           {% if raw.is_active %}
           <span class="badge-green">✓ Active</span>
           {% else %}
           <span class="badge-red">✗ Inactive</span>
           {% endif %}
         </td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">{{ raw.location_raw|default:"—" }}</td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">
+        <td class="tbl-td text-xs text-gray-500">{{ raw.location_raw|default:"—" }}</td>
+        <td class="tbl-td text-xs text-gray-500">
           {% with vg=raw.raw_payload.vet_gate %}
             {% if vg.reason_code %}
               <span class="{% if vg.status == 'blocked' %}badge-red{% elif vg.status == 'eligible' %}badge-green{% elif vg.status == 'duplicate' %}badge-yellow{% else %}badge-gray{% endif %}">
@@ -675,7 +675,7 @@
             {% endif %}
           {% endwith %}
         </td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-400">{{ raw.fetched_at|timesince }} ago</td>
+        <td class="tbl-td text-xs text-gray-400 whitespace-nowrap">{{ raw.fetched_at|timesince }} ago</td>
         <td class="tbl-td-right">
           <a href="{% url 'harvest-rawjob-detail' raw.pk %}" class="btn-ghost btn-xs">View</a>
         </td>
@@ -867,6 +867,7 @@
 
   const rowHtml = (job) => {
     const platform = job.platform_slug ? `<span class="badge-blue">${esc(job.platform_slug)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
+    const domain = job.job_domain ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 border border-violet-200">${esc(job.job_domain)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
     const active = job.is_active ? `<span class="badge-green">✓ Active</span>` : `<span class="badge-red">✗ Inactive</span>`;
     const gatePass = job.resume_jd_usable === true || String(job.resume_jd_reason_code || "").toUpperCase() === "PASS";
     const gateBadgeClass = gatePass ? "badge-green" : "badge-red";
@@ -876,13 +877,15 @@
         <td class="tbl-td">
           <div class="font-semibold text-gray-900">${esc(job.title || "—")}</div>
           <div class="text-xs text-gray-500 mt-0.5">${esc(job.company_name || "—")}</div>
+          ${job.job_category ? `<div class="text-xs text-indigo-400 mt-0.5">${esc(job.job_category)}</div>` : ""}
         </td>
-        <td class="tbl-td hidden md:table-cell">${platform}</td>
-        <td class="tbl-td hidden md:table-cell"><span class="${toBadgeClass(job.stage)}">${esc(job.stage || "—")}</span></td>
-        <td class="tbl-td hidden md:table-cell">${active}</td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">${esc(job.location_raw || "—")}</td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-500">${gate}</td>
-        <td class="tbl-td hidden lg:table-cell text-xs text-gray-400">${esc(job.fetched_at || "—")}</td>
+        <td class="tbl-td">${platform}</td>
+        <td class="tbl-td">${domain}</td>
+        <td class="tbl-td"><span class="${toBadgeClass(job.stage)}">${esc(job.stage || "—")}</span></td>
+        <td class="tbl-td">${active}</td>
+        <td class="tbl-td text-xs text-gray-500">${esc(job.location_raw || "—")}</td>
+        <td class="tbl-td text-xs text-gray-500">${gate}</td>
+        <td class="tbl-td text-xs text-gray-400 whitespace-nowrap">${esc(job.fetched_at || "—")}</td>
         <td class="tbl-td-right">
           <a href="${esc(job.detail_url)}" class="btn-ghost btn-xs">View</a>
         </td>

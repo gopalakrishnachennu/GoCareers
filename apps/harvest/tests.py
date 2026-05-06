@@ -1566,6 +1566,25 @@ class RawJobPipelineUnificationTests(TestCase):
         self.assertIn("?tab=raw&amp;stage=CLASSIFIED#raw-jobs-table", html)
         self.assertIn("?tab=raw&amp;sync_status=PENDING&amp;has_jd=0#raw-jobs-table", html)
 
+    def test_jobs_pipeline_raw_json_includes_domain_and_category(self):
+        from harvest.models import RawJob
+
+        raw = RawJob.objects.order_by("-fetched_at").first()
+        raw.job_category = "Engineering"
+        raw.job_domain = "software-developer"
+        raw.save(update_fields=["job_category", "job_domain"])
+
+        response = self.client.get(
+            reverse("jobs-pipeline"),
+            {"tab": "raw", "raw_json": "1"},
+            HTTP_X_REQUESTED_WITH="XMLHttpRequest",
+        )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        matching = next(item for item in payload["jobs"] if item["id"] == raw.id)
+        self.assertEqual(matching["job_category"], "Engineering")
+        self.assertEqual(matching["job_domain"], "software-developer")
+
     def test_jobs_pipeline_raw_stage_links_preserve_current_raw_filters(self):
         response = self.client.get(
             reverse("jobs-pipeline"),

@@ -1,4 +1,5 @@
 import csv
+import hashlib
 import io
 from unittest.mock import patch
 
@@ -10,6 +11,8 @@ from django.utils import timezone
 from users.models import User
 from users.models import MarketingRole
 from users.models import ConsultantProfile
+from companies.models import Company
+from harvest.models import RawJob
 from harvest.enrichments import detect_job_category
 from .models import Job
 from .marketing_role_routing import (
@@ -18,6 +21,7 @@ from .marketing_role_routing import (
     infer_marketing_role_slugs,
 )
 from .services import match_jobs_for_consultant
+from .tasks import classify_jobs_task
 from .tasks import validate_job_urls_task, auto_close_jobs_task
 
 
@@ -189,6 +193,39 @@ class MarketingRoleRoutingTests(TestCase):
 
         matches = match_jobs_for_consultant(consultant, limit=10)
         self.assertEqual([job.pk for job in matches], [eligible.pk])
+
+    def test_classify_task_backfills_taxonomy_and_synced_job_roles(self):
+        company = Company.objects.create(name="RouteCo")
+        raw = RawJob.objects.create(
+            company=company,
+            company_name="RouteCo",
+            title="Senior DevOps Engineer",
+            description="AWS Terraform Kubernetes CI/CD observability platform engineering",
+            original_url="https://example.com/jobs/devops-1",
+            url_hash=hashlib.sha256(b"https://example.com/jobs/devops-1").hexdigest(),
+            sync_status=RawJob.SyncStatus.SYNCED,
+            is_active=True,
+        )
+        job = Job.objects.create(
+            title=raw.title,
+            company=raw.company_name,
+            posted_by=self.employee,
+            status=Job.Status.POOL,
+            description=raw.description,
+            source_raw_job=raw,
+            url_hash=raw.url_hash,
+        )
+
+        result = classify_jobs_task.apply(kwargs={"force_reclassify": True}).get()
+        raw.refresh_from_db()
+        job.refresh_from_db()
+
+        self.assertEqual(result["status"], "done")
+        self.assertTrue(raw.job_category)
+        self.assertTrue(raw.job_domain)
+        self.assertEqual(raw.domain_version, "d2")
+        self.assertTrue(raw.job_domain_candidates)
+        self.assertTrue(job.marketing_roles.exists())
 
 
 @patch("jobs.tasks.run_job_validation.delay")

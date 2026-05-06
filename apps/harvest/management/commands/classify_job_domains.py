@@ -51,6 +51,7 @@ class Command(BaseCommand):
             detect_job_category,
             detect_job_domains,
         )
+        from jobs.marketing_role_routing import infer_marketing_role_slugs
 
         batch_size  = max(100, options["batch_size"])
         limit       = options["limit"]
@@ -104,10 +105,20 @@ class Command(BaseCommand):
                     department_normalized=rj.department_normalized or "",
                     domain_slug=domain,
                 )
+                if not domains:
+                    domains = infer_marketing_role_slugs(
+                        title=rj.title or "",
+                        description=rj.description or "",
+                        job_category=category or rj.job_category or "",
+                        department_normalized=rj.department_normalized or "",
+                        primary_domain="",
+                        max_roles=3,
+                    )
+                    domain = domains[0] if domains else ""
                 rj.job_domain    = domain
                 rj.job_domain_candidates = domains[:3]
                 rj.job_category = category or rj.job_category or ""
-                rj.domain_version = CURRENT_DOMAIN_VERSION if domain else ""
+                rj.domain_version = CURRENT_DOMAIN_VERSION
                 updates.append(rj)
                 if domain:
                     classified += 1
