@@ -713,6 +713,70 @@ def _build_board_analytics(window_days: int = 30) -> dict:
             "total_synced":  sum(r["synced"]     for r in ats_rows),
             "total_pending": sum(r["pending"]     for r in ats_rows),
         },
+        "scope_summary": _build_scope_summary(target_countries),
+    }
+
+
+def _build_scope_summary(target_countries: list[str]) -> dict:
+    """Top-level Scoped Harvest Routing card. Single aggregate query, fast.
+
+    Returns counts + percentages for the 4 scope statuses, plus the top 8
+    countries ranked by row count so the user sees both the routing split
+    and where their unresolved/non-target volume is concentrated.
+    """
+    from .models import RawJob
+
+    total = RawJob.objects.count()
+    if total == 0:
+        return {
+            "total": 0,
+            "rows": [],
+            "top_countries": [],
+            "target_countries": list(target_countries or []),
+        }
+
+    by_status = dict(
+        RawJob.objects.values("scope_status")
+        .annotate(c=Count("id"))
+        .values_list("scope_status", "c")
+    )
+
+    def _row(label: str, key: str, count: int, tone: str) -> dict:
+        return {
+            "label": label,
+            "key": key,
+            "count": count,
+            "pct": round(100.0 * count / total, 1) if total else 0.0,
+            "tone": tone,
+        }
+
+    rows = [
+        _row("Priority Target",   "PRIORITY_TARGET",
+             by_status.get("PRIORITY_TARGET", 0), "good"),
+        _row("Review (Unknown)",  "REVIEW_UNKNOWN_COUNTRY",
+             by_status.get("REVIEW_UNKNOWN_COUNTRY", 0), "warn"),
+        _row("Cold Non-Target",   "COLD_NON_TARGET_COUNTRY",
+             by_status.get("COLD_NON_TARGET_COUNTRY", 0), "muted"),
+        _row("No Location",       "COLD_NO_LOCATION",
+             by_status.get("COLD_NO_LOCATION", 0), "muted"),
+    ]
+
+    top_countries = list(
+        RawJob.objects.exclude(country_code="")
+        .values("country_code")
+        .annotate(c=Count("id"))
+        .order_by("-c")[:8]
+    )
+    for tc in top_countries:
+        tc["count"] = tc.pop("c")
+        tc["pct"] = round(100.0 * tc["count"] / total, 1) if total else 0.0
+        tc["is_target"] = tc["country_code"] in (target_countries or [])
+
+    return {
+        "total": total,
+        "rows": rows,
+        "top_countries": top_countries,
+        "target_countries": list(target_countries or []),
     }
 
 

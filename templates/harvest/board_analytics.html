@@ -76,6 +76,65 @@
     </div>
   </div>
 
+  {# ── Scoped Harvest Routing — top-level summary card ────────────────────── #}
+  {% if data.scope_summary.total %}
+  <div class="mb-5 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 to-white p-4">
+    <div class="flex items-start justify-between mb-3 gap-3">
+      <div>
+        <h3 class="text-sm font-bold text-indigo-900">🌍 Scoped Harvest Routing</h3>
+        <p class="text-xs text-indigo-700/70 mt-0.5">
+          Where the {{ data.scope_summary.total|floatformat:"0" }} discovered RawJobs are routed.
+          Targets:
+          {% for code in data.scope_summary.target_countries %}
+            <span class="inline-block bg-indigo-600 text-white px-1.5 py-0.5 rounded text-[10px] font-semibold mx-0.5">{{ code }}</span>
+          {% endfor %}
+        </p>
+      </div>
+      <a href="{% url 'harvest-engine-config' %}" class="text-xs text-indigo-600 hover:underline whitespace-nowrap">⚙ Edit countries</a>
+    </div>
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+      {% for row in data.scope_summary.rows %}
+      <div class="rounded-lg p-3 text-center
+                  {% if row.tone == 'good' %}bg-green-50 border border-green-200
+                  {% elif row.tone == 'warn' %}bg-amber-50 border border-amber-200
+                  {% else %}bg-slate-50 border border-slate-200{% endif %}">
+        <div class="text-[10px] font-semibold uppercase tracking-wide
+                    {% if row.tone == 'good' %}text-green-700
+                    {% elif row.tone == 'warn' %}text-amber-700
+                    {% else %}text-slate-500{% endif %}">{{ row.label }}</div>
+        <div class="text-xl font-bold
+                    {% if row.tone == 'good' %}text-green-800
+                    {% elif row.tone == 'warn' %}text-amber-800
+                    {% else %}text-slate-700{% endif %} mt-0.5">{{ row.count|floatformat:"0" }}</div>
+        <div class="text-[10px]
+                    {% if row.tone == 'good' %}text-green-600
+                    {% elif row.tone == 'warn' %}text-amber-600
+                    {% else %}text-slate-400{% endif %}">{{ row.pct }}%</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if data.scope_summary.top_countries %}
+    <div class="border-t border-indigo-100 pt-2 mt-1">
+      <div class="text-[10px] font-semibold uppercase tracking-wide text-indigo-700/70 mb-1.5">
+        Top Resolved Countries
+      </div>
+      <div class="flex flex-wrap gap-1.5">
+        {% for tc in data.scope_summary.top_countries %}
+        <span class="inline-flex items-center gap-1 px-2 py-1 rounded text-[11px] font-medium
+                     {% if tc.is_target %}bg-green-100 text-green-800 border border-green-300
+                     {% else %}bg-slate-100 text-slate-600 border border-slate-200{% endif %}">
+          <strong>{{ tc.country_code }}</strong>
+          <span class="font-mono">{{ tc.count|floatformat:"0" }}</span>
+          <span class="opacity-60">({{ tc.pct }}%)</span>
+          {% if tc.is_target %}<span class="text-[9px]">✓</span>{% endif %}
+        </span>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <div class="mb-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
       <span><strong class="text-slate-800">Interpretation:</strong> low field coverage is not always a parser failure.</span>
