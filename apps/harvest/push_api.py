@@ -77,6 +77,16 @@ def _safe_int(val) -> "int | None":
         return None
 
 
+def _safe_list(val) -> list:
+    if isinstance(val, list):
+        return val
+    if isinstance(val, tuple):
+        return list(val)
+    if val in (None, ""):
+        return []
+    return [str(val)]
+
+
 def _resolve_company(company_name: str):
     """Find or create a Company stub by name. Returns Company or None."""
     if not company_name:
@@ -266,6 +276,7 @@ class PushJobsView(View):
 
         from harvest.models import RawJob
         from .enrichments import clean_job_content, clean_job_text, extract_enrichments
+        from .location_resolver import evaluate_rawjob_scope
 
         for job_data in jobs:
             try:
@@ -378,6 +389,9 @@ class PushJobsView(View):
                     skills=job_data.get("skills") or enriched.get("skills") or [],
                     tech_stack=job_data.get("tech_stack") or enriched.get("tech_stack") or [],
                     job_category=str(job_data.get("job_category", "") or enriched.get("job_category", ""))[:64],
+                    job_domain=str(job_data.get("job_domain", "") or enriched.get("job_domain", ""))[:120],
+                    job_domain_candidates=_safe_list(job_data.get("job_domain_candidates") or enriched.get("job_domain_candidates")),
+                    domain_version=str(job_data.get("domain_version", "") or enriched.get("domain_version", ""))[:16],
                     normalized_title=str(job_data.get("normalized_title", "") or enriched.get("normalized_title", ""))[:255],
                     years_required=job_data.get("years_required", enriched.get("years_required")),
                     years_required_max=job_data.get("years_required_max", enriched.get("years_required_max")),
@@ -409,6 +423,8 @@ class PushJobsView(View):
                     quality_score=_safe_float(job_data.get("quality_score", enriched.get("quality_score"))),
                     jd_quality_score=_safe_float(job_data.get("jd_quality_score", enriched.get("jd_quality_score"))),
                     classification_confidence=_safe_float(job_data.get("classification_confidence", enriched.get("classification_confidence"))),
+                    category_confidence=_safe_float(job_data.get("category_confidence", enriched.get("category_confidence"))),
+                    classification_source=str(job_data.get("classification_source", "") or enriched.get("classification_source", ""))[:16],
                     classification_provenance=job_data.get("classification_provenance") or enriched.get("classification_provenance") or {},
                     field_confidence=job_data.get("field_confidence") or enriched.get("field_confidence") or {},
                     field_provenance=job_data.get("field_provenance") or enriched.get("field_provenance") or {},
@@ -422,6 +438,9 @@ class PushJobsView(View):
                     sync_status=RawJob.SyncStatus.PENDING,
                     is_active=True,
                 )
+                scope_updates = evaluate_rawjob_scope(rj, use_provider=False, save=False)
+                for field, value in scope_updates.items():
+                    setattr(rj, field, value)
                 rj.save()
                 created += 1
 

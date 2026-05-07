@@ -8,7 +8,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-from django.db.models import Count
+from django.db.models import Count, Sum
 from django.utils import timezone
 
 from jobs.classifier import country as country_classifier
@@ -73,6 +73,31 @@ COUNTRY_CODE_TO_NAME = {
     "CH": "Switzerland",
     "AE": "United Arab Emirates",
 }
+
+_PLACEHOLDER_LOCATION_VALUES = {
+    "remote",
+    "hybrid",
+    "hybrid remote",
+    "remote hybrid",
+    "onsite",
+    "on site",
+    "on-site",
+    "multiple locations",
+    "various locations",
+    "various",
+    "global",
+    "worldwide",
+    "anywhere",
+    "not specified",
+    "unspecified",
+    "n a",
+    "na",
+    "n/a",
+    "emea",
+    "apac",
+    "europe",
+}
+_LOCATION_COUNT_RE = re.compile(r"^\d+\s+locations?$", re.I)
 
 TARGET_DOMAIN_SLUGS = {
     # IT
@@ -143,6 +168,32 @@ def normalize_location_text(*parts: str) -> str:
     text = re.sub(r"\s*,\s*", ", ", text)
     text = re.sub(r"\s+", " ", text).strip(" ,").lower()
     return text[:512]
+
+
+def _location_token(value: str) -> str:
+    token = re.sub(r"<[^>]+>", " ", str(value or ""))
+    token = token.replace("&nbsp;", " ")
+    token = re.sub(r"[^a-z0-9]+", " ", token.lower())
+    return re.sub(r"\s+", " ", token).strip()
+
+
+def is_placeholder_location_value(value: str) -> bool:
+    """True for location placeholders that are not geocodable places."""
+    token = _location_token(value)
+    if not token:
+        return False
+    if token in _PLACEHOLDER_LOCATION_VALUES:
+        return True
+    if _LOCATION_COUNT_RE.match(token):
+        return True
+    if "locations" in token and any(word in token for word in ("remote", "hybrid", "multiple", "various")):
+        return True
+    return False
+
+
+def _is_ambiguous_location_only(*parts: str) -> bool:
+    values = [str(part or "").strip() for part in parts if str(part or "").strip()]
+    return bool(values) and all(is_placeholder_location_value(value) for value in values)
 
 
 def _code_for_country(value: str) -> str:
@@ -302,10 +353,13 @@ def _month_start():
 def provider_requests_this_month(provider: str) -> int:
     if not provider or provider == "none":
         return 0
-    return LocationCache.objects.filter(
+    qs = LocationCache.objects.filter(
         provider=provider,
-        created_at__gte=_month_start(),
-    ).exclude(provider_place_id="").count()
+        looked_up_at__gte=_month_start(),
+    )
+    attempts = qs.aggregate(total=Sum("request_count"))["total"] or 0
+    legacy_successes = qs.filter(request_count=0).exclude(provider_place_id="").count()
+    return int(attempts) + int(legacy_successes)
 
 
 def _provider_quota_available(cfg: HarvestEngineConfig) -> bool:
@@ -333,12 +387,42 @@ def _resolve_provider_token(provider: str, cfg: HarvestEngineConfig) -> str:
     return ""
 
 
+def _record_provider_attempt(provider: str, raw_text: str, normalized: str) -> None:
+    if not normalized:
+        return
+    cache, _ = LocationCache.objects.get_or_create(
+        normalized_text=normalized[:512],
+        defaults={
+            "raw_text": raw_text[:512],
+            "source": "provider",
+            "provider": provider,
+            "status": LocationCache.Status.UNKNOWN,
+        },
+    )
+    cache.raw_text = raw_text[:512]
+    cache.source = "provider"
+    cache.provider = provider
+    cache.request_count = int(cache.request_count or 0) + 1
+    if not cache.status:
+        cache.status = LocationCache.Status.UNKNOWN
+    cache.looked_up_at = timezone.now()
+    cache.save(update_fields=[
+        "raw_text",
+        "source",
+        "provider",
+        "request_count",
+        "status",
+        "looked_up_at",
+    ])
+
+
 def _mapbox_geocode(raw_text: str, normalized: str, cfg: HarvestEngineConfig) -> LocationResolution | None:
     if not _provider_quota_available(cfg):
         return None
     token = _resolve_provider_token("mapbox", cfg)
     if not token:
         return None
+    _record_provider_attempt("mapbox", raw_text, normalized)
 
     params = urllib.parse.urlencode({
         "q": raw_text,
@@ -363,7 +447,14 @@ def _mapbox_geocode(raw_text: str, normalized: str, cfg: HarvestEngineConfig) ->
 
     features = payload.get("features") or []
     if not features:
-        return None
+        return LocationResolution(
+            raw_text=raw_text,
+            normalized_text=normalized,
+            confidence=0.0,
+            source="provider",
+            provider="mapbox",
+            status=LocationCache.Status.UNKNOWN,
+        )
 
     feature = features[0]
     props = feature.get("properties") or {}
@@ -376,7 +467,15 @@ def _mapbox_geocode(raw_text: str, normalized: str, cfg: HarvestEngineConfig) ->
     if not country_code:
         country_code = _code_for_country(country.get("name", ""))
     if not country_code:
-        return None
+        return LocationResolution(
+            raw_text=raw_text,
+            normalized_text=normalized,
+            confidence=0.0,
+            source="provider",
+            provider="mapbox",
+            provider_place_id=str(props.get("mapbox_id") or feature.get("id") or ""),
+            status=LocationCache.Status.UNKNOWN,
+        )
 
     return LocationResolution(
         raw_text=raw_text,
@@ -432,7 +531,18 @@ def resolve_location(
     raw_text = raw_text or location_raw or city or state or country
     normalized = normalize_location_text(raw_text)
     if not normalized:
+        if _is_ambiguous_location_only(location_raw, city, state, country):
+            return LocationResolution(
+                raw_text=raw_text,
+                normalized_text=_location_token(raw_text)[:512],
+                confidence=0.0,
+                source="ambiguous_multi_location",
+                status=LocationCache.Status.UNKNOWN,
+            )
         return LocationResolution(raw_text="", normalized_text="", source="empty")
+    placeholder_only = _is_ambiguous_location_only(location_raw, city, state, country)
+    country_for_rules = "" if is_placeholder_location_value(country) else country
+    raw_text_for_rules = "" if placeholder_only else raw_text
 
     if cfg.geocoding_cache_enabled:
         cached = LocationCache.objects.filter(normalized_text=normalized).first()
@@ -464,12 +574,12 @@ def resolve_location(
             )
 
     resolution = (
-        _resolve_from_explicit_country(country, raw_text, normalized)
-        or _resolve_from_state_city(raw_text, normalized)
-        or _resolve_from_classifier(raw_text, normalized, title=title, description=description)
+        _resolve_from_explicit_country(country_for_rules, raw_text, normalized)
+        or _resolve_from_state_city(raw_text_for_rules, normalized)
+        or _resolve_from_classifier(raw_text_for_rules, normalized, title=title, description=description)
     )
 
-    if not resolution and use_provider and cfg.geocoding_provider == "mapbox":
+    if not resolution and use_provider and cfg.geocoding_provider == "mapbox" and not placeholder_only:
         resolution = _mapbox_geocode(raw_text, normalized, cfg)
 
     if not resolution:
@@ -477,7 +587,7 @@ def resolve_location(
             raw_text=raw_text,
             normalized_text=normalized,
             confidence=0.0,
-            source="unknown",
+            source="ambiguous_multi_location" if placeholder_only else "unknown",
             status=LocationCache.Status.UNKNOWN,
         )
 
@@ -534,11 +644,22 @@ def evaluate_rawjob_scope(
         "last_scope_evaluated_at": timezone.now(),
     }
 
-    if resolution.country_name and not raw_job.country:
+    country_is_placeholder = is_placeholder_location_value(raw_job.country or "")
+    state_is_placeholder = is_placeholder_location_value(raw_job.state or "")
+    city_is_placeholder = is_placeholder_location_value(raw_job.city or "")
+
+    if country_is_placeholder:
+        updates["country"] = ""
+    if state_is_placeholder:
+        updates["state"] = ""
+    if city_is_placeholder:
+        updates["city"] = ""
+
+    if resolution.country_name and (not raw_job.country or country_is_placeholder):
         updates["country"] = resolution.country_name
-    if resolution.region_code and not raw_job.state:
+    if resolution.region_code and (not raw_job.state or state_is_placeholder):
         updates["state"] = resolution.region_code
-    if resolution.city and not raw_job.city:
+    if resolution.city and (not raw_job.city or city_is_placeholder):
         updates["city"] = resolution.city
 
     if resolution.country_code in target_countries:
@@ -551,13 +672,21 @@ def evaluate_rawjob_scope(
         if cfg.process_unknown_country_with_target_domain and has_target_domain_signal(raw_job):
             updates.update({
                 "scope_status": RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY,
-                "scope_reason": "unknown_country_target_domain",
+                "scope_reason": (
+                    "ambiguous_multi_location_target_domain"
+                    if resolution.source == "ambiguous_multi_location"
+                    else "unknown_country_target_domain"
+                ),
                 "is_priority": True,
             })
         else:
             updates.update({
                 "scope_status": RawJob.ScopeStatus.COLD_NO_LOCATION if not resolution.normalized_text else RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY,
-                "scope_reason": "country_unknown",
+                "scope_reason": (
+                    "ambiguous_multi_location"
+                    if resolution.source == "ambiguous_multi_location"
+                    else "country_unknown"
+                ),
                 "is_priority": False,
             })
     else:

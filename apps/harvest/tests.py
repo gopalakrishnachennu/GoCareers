@@ -1875,6 +1875,82 @@ class LocationResolverScopeTests(TestCase):
         self.assertEqual(unknown_job.scope_status, RawJob.ScopeStatus.COLD_NO_LOCATION)
         self.assertFalse(unknown_job.is_priority)
 
+    def test_ambiguous_multi_location_is_review_and_cleans_fake_geo(self):
+        from harvest.location_resolver import evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.process_unknown_country_with_target_domain = False
+        cfg.save()
+
+        raw = self._raw(
+            url_hash="scope-hybrid-4-locations",
+            title="Contracts Manager",
+            location_raw="Hybrid Remote, 4 Locations",
+            city="Hybrid Remote",
+            state="4 Locations",
+            country="Hybrid",
+        )
+
+        evaluate_rawjob_scope(raw, cfg=cfg, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.country_code, "")
+        self.assertEqual(raw.country_source, "ambiguous_multi_location")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY)
+        self.assertEqual(raw.scope_reason, "ambiguous_multi_location")
+        self.assertFalse(raw.is_priority)
+        self.assertEqual(raw.city, "")
+        self.assertEqual(raw.state, "")
+        self.assertEqual(raw.country, "")
+
+    def test_unknown_remote_target_domain_stays_priority_review(self):
+        from harvest.location_resolver import evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.process_unknown_country_with_target_domain = True
+        cfg.save()
+
+        raw = self._raw(
+            url_hash="scope-remote-target-domain",
+            title="Software Engineer",
+            location_raw="Remote",
+            city="Remote",
+            country="Remote",
+        )
+
+        evaluate_rawjob_scope(raw, cfg=cfg, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.country_code, "")
+        self.assertEqual(raw.country_source, "ambiguous_multi_location")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY)
+        self.assertEqual(raw.scope_reason, "ambiguous_multi_location_target_domain")
+        self.assertTrue(raw.is_priority)
+
+    def test_provider_quota_counts_failed_attempts(self):
+        from harvest.location_resolver import provider_requests_this_month, resolve_location
+        from harvest.models import HarvestEngineConfig, LocationCache
+
+        cfg = HarvestEngineConfig.get()
+        cfg.geocoding_cache_enabled = True
+        cfg.geocoding_provider_enabled = True
+        cfg.geocoding_provider = "mapbox"
+        cfg.geocoding_provider_token = "pk.test-token"
+        cfg.geocoding_monthly_limit = 80000
+        cfg.save()
+
+        with patch("harvest.location_resolver.urllib.request.urlopen", side_effect=Exception("boom")):
+            result = resolve_location(
+                location_raw="zzzz-no-place-12345",
+                cfg=cfg,
+                use_provider=True,
+            )
+
+        self.assertEqual(result.status, LocationCache.Status.FAILED)
+        self.assertEqual(provider_requests_this_month("mapbox"), 1)
+
     def test_backfill_eligible_excludes_non_priority(self):
         """Slice 2 gate: JD backfill must skip non-priority jobs."""
         import hashlib

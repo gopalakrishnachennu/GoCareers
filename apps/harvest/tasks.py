@@ -1410,6 +1410,29 @@ def fetch_raw_jobs_for_company_task(
                 RawJob.objects.filter(pk__in=new_raw_job_pks).select_related("company")
             )
 
+            # ── Scope every new RawJob before any gated work ────────────────
+            # This must run even when auto-enrichment is disabled; otherwise
+            # new jobs remain UNSCOPED/is_priority=False and downstream gated
+            # tasks will skip them.
+            SCOPE_FIELDS = [
+                "country_code", "country_confidence", "country_source",
+                "scope_status", "scope_reason", "is_priority",
+                "last_scope_evaluated_at",
+                "country", "state", "city",
+            ]
+            from .location_resolver import evaluate_rawjob_scope
+
+            bulk_scope: list[RawJob] = []
+            for job in new_jobs:
+                scope_updates = evaluate_rawjob_scope(
+                    job, cfg=_pipe_cfg, use_provider=False, save=False,
+                )
+                for field, value in scope_updates.items():
+                    setattr(job, field, value)
+                bulk_scope.append(job)
+            if bulk_scope:
+                RawJob.objects.bulk_update(bulk_scope, SCOPE_FIELDS)
+
             # ── Inline enrich (pure Python, ~1 ms/job, no HTTP) ─────────────
             enriched = 0
             if _pipe_cfg.auto_enrich and new_jobs:
@@ -1434,29 +1457,9 @@ def fetch_raw_jobs_for_company_task(
                     # Domain taxonomy
                     "job_domain", "domain_version",
                 ]
-                # Scope fields — set BEFORE enrichment so we can gate it.
-                SCOPE_FIELDS = [
-                    "country_code", "country_confidence", "country_source",
-                    "scope_status", "scope_reason", "is_priority",
-                    "last_scope_evaluated_at",
-                    "country", "state", "city",
-                ]
-                from .location_resolver import evaluate_rawjob_scope
-                from .models import HarvestEngineConfig as _HEC
-                _scope_cfg = _HEC.get()
-
                 bulk_enrich: list[RawJob] = []
-                bulk_scope: list[RawJob] = []
                 for job in new_jobs:
-                    # 1) Always scope every new RawJob (cheap, ~5ms).
-                    scope_updates = evaluate_rawjob_scope(
-                        job, cfg=_scope_cfg, use_provider=False, save=False,
-                    )
-                    for field, value in scope_updates.items():
-                        setattr(job, field, value)
-                    bulk_scope.append(job)
-
-                    # 2) Enrich only PRIORITY jobs. Cold/unknown stay as cheap discovery rows.
+                    # Enrich only PRIORITY jobs. Cold/unknown stay as cheap discovery rows.
                     if not job.is_priority:
                         continue
                     if job.skills or job.job_category:
@@ -1471,8 +1474,6 @@ def fetch_raw_jobs_for_company_task(
                             setattr(job, f, enriched_data[f])
                     bulk_enrich.append(job)
                     enriched += 1
-                if bulk_scope:
-                    RawJob.objects.bulk_update(bulk_scope, SCOPE_FIELDS)
                 if bulk_enrich:
                     RawJob.objects.bulk_update(bulk_enrich, ENRICH_FIELDS)
 
@@ -1487,7 +1488,7 @@ def fetch_raw_jobs_for_company_task(
             # never spikes CPU.  Only queued if there are new jobs without descriptions.
             platform_s = (label.platform.slug if label and label.platform else "") or ""
             if _pipe_cfg.auto_backfill_jd:
-                needs_jd_count = sum(1 for j in new_jobs if not (j.description or "").strip())
+                needs_jd_count = sum(1 for j in new_jobs if j.is_priority and not (j.description or "").strip())
                 if needs_jd_count > 0:
                     backfill_descriptions_task.apply_async(
                         kwargs={
