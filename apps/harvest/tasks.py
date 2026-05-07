@@ -104,10 +104,17 @@ def _supports_select_for_update_skip_locked() -> bool:
 
 
 def _backfill_eligible_queryset(platform_slug: str | None):
-    """Rows that still need a JD and are not actively claimed (unless lock is stale)."""
+    """Rows that still need a JD and are not actively claimed (unless lock is stale).
+
+    Scoped harvest gate: only PRIORITY (target-country) jobs get JD backfill.
+    Cold + unknown-country jobs stay as cheap discovery rows. They become
+    eligible later if/when the country resolver upgrades them.
+    """
     from .models import RawJob
 
-    q = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
+    q = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES).filter(
+        is_priority=True,
+    )
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
     return q
@@ -1427,8 +1434,31 @@ def fetch_raw_jobs_for_company_task(
                     # Domain taxonomy
                     "job_domain", "domain_version",
                 ]
+                # Scope fields — set BEFORE enrichment so we can gate it.
+                SCOPE_FIELDS = [
+                    "country_code", "country_confidence", "country_source",
+                    "scope_status", "scope_reason", "is_priority",
+                    "last_scope_evaluated_at",
+                    "country", "state", "city",
+                ]
+                from .location_resolver import evaluate_rawjob_scope
+                from .models import HarvestEngineConfig as _HEC
+                _scope_cfg = _HEC.get()
+
                 bulk_enrich: list[RawJob] = []
+                bulk_scope: list[RawJob] = []
                 for job in new_jobs:
+                    # 1) Always scope every new RawJob (cheap, ~5ms).
+                    scope_updates = evaluate_rawjob_scope(
+                        job, cfg=_scope_cfg, use_provider=False, save=False,
+                    )
+                    for field, value in scope_updates.items():
+                        setattr(job, field, value)
+                    bulk_scope.append(job)
+
+                    # 2) Enrich only PRIORITY jobs. Cold/unknown stay as cheap discovery rows.
+                    if not job.is_priority:
+                        continue
                     if job.skills or job.job_category:
                         continue  # already enriched
                     enriched_data = extract_enrichments({
@@ -1441,6 +1471,8 @@ def fetch_raw_jobs_for_company_task(
                             setattr(job, f, enriched_data[f])
                     bulk_enrich.append(job)
                     enriched += 1
+                if bulk_scope:
+                    RawJob.objects.bulk_update(bulk_scope, SCOPE_FIELDS)
                 if bulk_enrich:
                     RawJob.objects.bulk_update(bulk_enrich, ENRICH_FIELDS)
 
@@ -2042,8 +2074,16 @@ def sync_harvested_to_pool_task(
         max_jobs = 0
     chunk_size = max(50, min(int(chunk_size or 500), 2000))
 
+    # Scoped harvest gate: only PRIORITY (target-country) jobs sync to the Vet Queue.
+    # Cold + unknown jobs stay in RawJob until the country resolver upgrades them
+    # (or until target_countries config expands).
     base_qs = (
-        RawJob.objects.filter(sync_status="PENDING", is_active=True, company__isnull=False)
+        RawJob.objects.filter(
+            sync_status="PENDING",
+            is_active=True,
+            company__isnull=False,
+            is_priority=True,
+        )
         .exclude(original_url="")
     )
 
@@ -4513,7 +4553,9 @@ def enrich_existing_jobs_task(
     from .enrichments import extract_enrichments
     from .models import RawJob
 
-    qs = RawJob.objects.all()
+    # Scoped harvest gate: enrich only PRIORITY (target-country) jobs.
+    # Cold + unknown country jobs remain as cheap inventory.
+    qs = RawJob.objects.filter(is_priority=True)
     if platform_slug:
         qs = qs.filter(platform_slug=platform_slug)
     if only_unenriched:

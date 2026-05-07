@@ -737,6 +737,7 @@ class BackfillJdEligibilityTests(TestCase):
             url_hash=h,
             original_url=url,
             description=" ",
+            is_priority=True,
         )
         self.assertTrue(_backfill_eligible_queryset(None).filter(pk=j.pk).exists())
 
@@ -789,6 +790,7 @@ class SyncRawJobsToPoolTests(TestCase):
                 "production reliability initiatives across multiple environments."
             ),
             sync_status="PENDING",
+            is_priority=True,
         )
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
         raw.refresh_from_db()
@@ -809,6 +811,7 @@ class SyncRawJobsToPoolTests(TestCase):
             url_hash=h,
             original_url=url,
             sync_status="PENDING",
+            is_priority=True,
         )
         Job.objects.create(
             title="Already here",
@@ -864,6 +867,7 @@ class SyncRawJobsToPoolTests(TestCase):
             ),
             job_domain="",
             sync_status="PENDING",
+            is_priority=True,
         )
 
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
@@ -1870,3 +1874,47 @@ class LocationResolverScopeTests(TestCase):
         self.assertFalse(de_job.is_priority)
         self.assertEqual(unknown_job.scope_status, RawJob.ScopeStatus.COLD_NO_LOCATION)
         self.assertFalse(unknown_job.is_priority)
+
+    def test_backfill_eligible_excludes_non_priority(self):
+        """Slice 2 gate: JD backfill must skip non-priority jobs."""
+        import hashlib
+        from harvest.models import RawJob
+        from harvest.tasks import _backfill_eligible_queryset
+
+        url_p = "https://example.com/job/priority-1"
+        url_c = "https://example.com/job/cold-1"
+        priority = RawJob.objects.create(
+            company=self.company, title="Eng", platform_slug=self.platform.slug,
+            url_hash=hashlib.sha256(url_p.encode()).hexdigest(), original_url=url_p,
+            description="", is_priority=True,
+        )
+        cold = RawJob.objects.create(
+            company=self.company, title="Eng", platform_slug=self.platform.slug,
+            url_hash=hashlib.sha256(url_c.encode()).hexdigest(), original_url=url_c,
+            description="", is_priority=False,
+        )
+        eligible = _backfill_eligible_queryset(None)
+        self.assertTrue(eligible.filter(pk=priority.pk).exists())
+        self.assertFalse(eligible.filter(pk=cold.pk).exists())
+
+    def test_pool_sync_excludes_non_priority(self):
+        """Slice 2 gate: sync_harvested_to_pool_task must skip non-priority RawJobs."""
+        import hashlib
+        from harvest.models import RawJob
+        from harvest.tasks import sync_harvested_to_pool_task
+        from jobs.models import Job
+
+        url = "https://example.com/job/cold-no-sync"
+        h = hashlib.sha256(url.encode()).hexdigest()
+        cold = RawJob.objects.create(
+            company=self.company, title="Engineer", platform_slug=self.platform.slug,
+            url_hash=h, original_url=url,
+            description="A long description that would otherwise pass JD gates "
+                        "for a cold non-priority job that should not sync.",
+            sync_status="PENDING", is_priority=False, is_active=True,
+        )
+        sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
+        cold.refresh_from_db()
+        # Non-priority must remain PENDING — sync_harvested_to_pool never picks it up.
+        self.assertEqual(cold.sync_status, "PENDING")
+        self.assertFalse(Job.objects.filter(url_hash=h).exists())
