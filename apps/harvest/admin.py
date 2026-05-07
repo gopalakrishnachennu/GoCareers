@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.db.models import Count
 
-from .models import CompanyPlatformLabel, JobBoardPlatform, RawJob, PlatformEngineConfig
+from .models import CompanyPlatformLabel, JobBoardPlatform, LocationCache, RawJob, PlatformEngineConfig
 
 
 @admin.register(JobBoardPlatform)
@@ -32,16 +32,28 @@ class CompanyPlatformLabelAdmin(admin.ModelAdmin):
 class RawJobAdmin(admin.ModelAdmin):
     list_display = [
         "title", "company_name", "platform_slug",
+        "country_code", "scope_status", "is_priority",
         "job_domain", "job_category",
         "sync_status", "employment_type", "fetched_at", "is_active",
     ]
     list_filter = [
         "platform_slug", "sync_status", "employment_type",
-        "job_domain", "is_active",
+        "job_domain", "country_code", "scope_status", "is_priority", "is_active",
     ]
-    search_fields = ["title", "company_name", "url_hash", "job_domain"]
+    search_fields = ["title", "company_name", "url_hash", "job_domain", "location_raw"]
     raw_id_fields = ["company"]
-    readonly_fields = ["url_hash", "fetched_at", "updated_at", "job_domain", "domain_version"]
+    readonly_fields = ["url_hash", "fetched_at", "updated_at", "job_domain", "domain_version", "last_scope_evaluated_at"]
+
+
+@admin.register(LocationCache)
+class LocationCacheAdmin(admin.ModelAdmin):
+    list_display = [
+        "normalized_text", "country_code", "region_code", "city",
+        "confidence", "source", "provider", "status", "looked_up_at",
+    ]
+    list_filter = ["country_code", "source", "provider", "status"]
+    search_fields = ["raw_text", "normalized_text", "city", "region_name", "country_name"]
+    readonly_fields = ["created_at", "looked_up_at"]
 
 
 @admin.register(PlatformEngineConfig)

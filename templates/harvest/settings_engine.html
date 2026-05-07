@@ -149,6 +149,82 @@
         </div>
       </div>
 
+      <!-- Scoped harvest countries -->
+      <div class="card-padded">
+        <div class="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Scoped Harvest Countries</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Full processing runs only for selected ISO countries; everything else stays stored cold.</p>
+          </div>
+          <span class="badge-blue text-xs">Backfill required</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {% for code, label in country_options %}
+          <label class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
+            <input type="checkbox" name="target_countries" value="{{ code }}"
+                   {% if code in selected_countries %}checked{% endif %}
+                   class="w-4 h-4 rounded text-indigo-600 border-gray-300">
+            <span class="font-semibold">{{ label }}</span>
+            <span class="ml-auto text-xs text-gray-400">{{ code }}</span>
+          </label>
+          {% endfor %}
+        </div>
+        <label class="mt-3 flex items-start gap-2 text-xs text-gray-600">
+          <input type="checkbox" name="process_unknown_country_with_target_domain" value="1"
+                 {% if cfg.process_unknown_country_with_target_domain %}checked{% endif %}
+                 class="mt-0.5 w-4 h-4 rounded text-indigo-600 border-gray-300">
+          <span>
+            Treat unknown-country jobs as priority only when title/domain strongly matches target IT or engineering.
+            Unknowns still remain visible in analytics/review.
+          </span>
+        </label>
+      </div>
+
+      <!-- Location resolver cache -->
+      <div class="card-padded">
+        <div class="flex items-start justify-between gap-3 mb-3">
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Location Resolver & Cache</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Free rules + normalized cache first; provider fallback is quota-guarded.</p>
+          </div>
+          <span class="badge-green text-xs font-semibold">✓ Safe default</span>
+        </div>
+        <div class="space-y-3 text-xs text-gray-600">
+          <label class="flex items-center gap-2">
+            <input type="checkbox" name="geocoding_cache_enabled" value="1"
+                   {% if cfg.geocoding_cache_enabled %}checked{% endif %}
+                   class="w-4 h-4 rounded text-green-600 border-gray-300">
+            Enable aggressive normalized LocationCache
+          </label>
+          <label class="flex items-center gap-2">
+            <input type="checkbox" name="geocoding_provider_enabled" value="1"
+                   {% if cfg.geocoding_provider_enabled %}checked{% endif %}
+                   class="w-4 h-4 rounded text-orange-600 border-gray-300">
+            Allow external provider fallback for unresolved unique locations
+          </label>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="form-label">Provider</label>
+              <select name="geocoding_provider" class="form-select w-full">
+                <option value="none" {% if cfg.geocoding_provider == 'none' %}selected{% endif %}>None</option>
+                <option value="mapbox" {% if cfg.geocoding_provider == 'mapbox' %}selected{% endif %}>Mapbox</option>
+                <option value="google" {% if cfg.geocoding_provider == 'google' %}selected{% endif %}>Google</option>
+              </select>
+            </div>
+            <div>
+              <label class="form-label">Monthly provider hard limit</label>
+              <input type="number" name="geocoding_monthly_limit" value="{{ cfg.geocoding_monthly_limit }}"
+                     min="0" max="100000" step="1000"
+                     class="form-input w-full text-center font-mono">
+            </div>
+          </div>
+          <p class="rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-orange-800">
+            Provider usage this month: <strong>{{ provider_monthly_used }}</strong> / {{ cfg.geocoding_monthly_limit }}.
+            Tokens must stay in environment variables such as <code>MAPBOX_ACCESS_TOKEN</code>, never in code or DB.
+          </p>
+        </div>
+      </div>
+
     </div>
 
     <!-- RIGHT col: auto-pipeline, stagger, freshness, timeout -->

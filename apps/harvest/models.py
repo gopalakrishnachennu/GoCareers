@@ -450,6 +450,50 @@ class RawJobManager(models.Manager):
         )
 
 
+class LocationCache(models.Model):
+    """Normalized location resolution cache used before any paid provider call."""
+
+    class Status(models.TextChoices):
+        RESOLVED = "RESOLVED", "Resolved"
+        UNKNOWN = "UNKNOWN", "Unknown"
+        FAILED = "FAILED", "Failed"
+        RATE_LIMITED = "RATE_LIMITED", "Rate limited"
+        DISABLED = "DISABLED", "Provider disabled"
+
+    raw_text = models.CharField(max_length=512, blank=True)
+    normalized_text = models.CharField(max_length=512, unique=True, db_index=True)
+    country_code = models.CharField(max_length=2, blank=True, db_index=True)
+    country_name = models.CharField(max_length=128, blank=True)
+    region_code = models.CharField(max_length=16, blank=True)
+    region_name = models.CharField(max_length=128, blank=True)
+    city = models.CharField(max_length=128, blank=True)
+    confidence = models.FloatField(default=0.0)
+    source = models.CharField(max_length=32, blank=True, db_index=True)
+    provider = models.CharField(max_length=32, blank=True)
+    provider_place_id = models.CharField(max_length=255, blank=True)
+    status = models.CharField(
+        max_length=16,
+        choices=Status.choices,
+        default=Status.UNKNOWN,
+        db_index=True,
+    )
+    request_count = models.PositiveIntegerField(default=0)
+    looked_up_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["normalized_text"]
+        indexes = [
+            models.Index(fields=["country_code", "status"], name="loc_cache_country_status_idx"),
+            models.Index(fields=["source", "status"], name="loc_cache_source_status_idx"),
+            models.Index(fields=["provider", "created_at"], name="loc_cache_provider_created_idx"),
+        ]
+
+    def __str__(self):
+        label = self.country_code or self.status
+        return f"{self.normalized_text} -> {label}"
+
+
 class RawJob(models.Model):
     """Comprehensive job record harvested from an external ATS platform."""
 
@@ -486,6 +530,13 @@ class RawJob(models.Model):
         FAILED    = "FAILED",     "Failed"
         SKIPPED   = "SKIPPED",    "Skipped"
         DUPLICATE = "DUPLICATE",  "Duplicate"
+
+    class ScopeStatus(models.TextChoices):
+        UNSCOPED = "UNSCOPED", "Unscoped"
+        PRIORITY_TARGET = "PRIORITY_TARGET", "Priority target"
+        REVIEW_UNKNOWN_COUNTRY = "REVIEW_UNKNOWN_COUNTRY", "Review unknown country"
+        COLD_NON_TARGET_COUNTRY = "COLD_NON_TARGET_COUNTRY", "Cold non-target country"
+        COLD_NO_LOCATION = "COLD_NO_LOCATION", "Cold no location"
 
     # ── Relations ─────────────────────────────────────────────────────────────
     company = models.ForeignKey(
@@ -535,6 +586,20 @@ class RawJob(models.Model):
         max_length=8, choices=LocationType.choices, default=LocationType.UNKNOWN
     )
     is_remote = models.BooleanField(default=False)
+
+    # ── Scoped harvest routing ────────────────────────────────────────────────
+    country_code = models.CharField(max_length=2, blank=True, db_index=True)
+    country_confidence = models.FloatField(null=True, blank=True)
+    country_source = models.CharField(max_length=32, blank=True, db_index=True)
+    scope_status = models.CharField(
+        max_length=32,
+        choices=ScopeStatus.choices,
+        default=ScopeStatus.UNSCOPED,
+        db_index=True,
+    )
+    scope_reason = models.CharField(max_length=128, blank=True)
+    is_priority = models.BooleanField(default=False, db_index=True)
+    last_scope_evaluated_at = models.DateTimeField(null=True, blank=True)
 
     # ── Employment ────────────────────────────────────────────────────────────
     employment_type = models.CharField(
@@ -711,6 +776,9 @@ class RawJob(models.Model):
             models.Index(fields=["is_active"]),
             models.Index(fields=["job_category"]),
             models.Index(fields=["job_domain"]),
+            models.Index(fields=["country_code"]),
+            models.Index(fields=["scope_status"]),
+            models.Index(fields=["is_priority"]),
             models.Index(fields=["normalized_title"]),
             models.Index(fields=["department_normalized"]),
             models.Index(fields=["country"]),
@@ -737,6 +805,8 @@ class RawJob(models.Model):
             # Composite — filter + default ORDER BY fetched_at DESC
             models.Index(fields=["sync_status",    "-fetched_at"], name="harvest_raw_sync_fetched_idx"),
             models.Index(fields=["is_active",      "-fetched_at"], name="harvest_raw_active_fetched_idx"),
+            models.Index(fields=["is_priority",    "-fetched_at"], name="raw_priority_fetched_idx"),
+            models.Index(fields=["scope_status",   "-fetched_at"], name="raw_scope_fetched_idx"),
             models.Index(fields=["is_remote",      "-fetched_at"], name="harvest_raw_remote_fetched_idx"),
             models.Index(fields=["has_description","-fetched_at"], name="harvest_raw_hd_fetched_idx"),
             models.Index(fields=["platform_slug",  "-fetched_at"], name="harvest_raw_plat_fetched_idx"),
@@ -1097,6 +1167,44 @@ class HarvestEngineConfig(models.Model):
         ),
     )
 
+    # ── Scoped harvest controls ──────────────────────────────────────────────
+    target_countries = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Target countries",
+        help_text="ISO country codes that should receive full processing. Empty uses US, IN, CA, GB, AU.",
+    )
+    process_unknown_country_with_target_domain = models.BooleanField(
+        default=True,
+        verbose_name="Process unknown country if domain is target",
+        help_text=(
+            "Keep unknown-location jobs in review unless the title/domain strongly matches "
+            "a target IT/engineering route."
+        ),
+    )
+    geocoding_cache_enabled = models.BooleanField(
+        default=True,
+        verbose_name="Location cache enabled",
+        help_text="Read/write normalized location resolutions before any provider lookup.",
+    )
+    geocoding_provider_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Provider fallback enabled",
+        help_text="Allow external geocoding only for unresolved unique locations.",
+    )
+    geocoding_provider = models.CharField(
+        max_length=16,
+        default="none",
+        choices=[("none", "None"), ("mapbox", "Mapbox"), ("google", "Google")],
+        verbose_name="Geocoding provider",
+        help_text="External fallback provider. Token must come from environment, never the database.",
+    )
+    geocoding_monthly_limit = models.PositiveIntegerField(
+        default=80000,
+        verbose_name="Provider monthly hard limit",
+        help_text="Hard stop for provider requests per calendar month. Default 80k to stay below 100k free-tier claims.",
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
@@ -1114,6 +1222,15 @@ class HarvestEngineConfig(models.Model):
         """Return the singleton, creating it with defaults if it doesn't exist."""
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+    def get_target_countries(self) -> list[str]:
+        configured = self.target_countries if isinstance(self.target_countries, list) else []
+        cleaned = [
+            str(code).strip().upper()
+            for code in configured
+            if str(code).strip()
+        ]
+        return cleaned or ["US", "IN", "CA", "GB", "AU"]
 
     def save(self, *args, **kwargs):
         self.pk = 1  # enforce singleton

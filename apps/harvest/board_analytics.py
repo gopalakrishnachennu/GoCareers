@@ -48,6 +48,19 @@ RAWJOB_FIELD_GROUP_SPECS = [
         ],
     },
     {
+        "key": "scoped_harvest",
+        "title": "Scoped Harvest Routing",
+        "description": "Shows which discovered jobs deserve expensive processing versus cold storage.",
+        "columns": [
+            {"key": "country_code", "label": "Country Resolved", "tip": "Rows with ISO country_code populated.", "warn": 70, "good": 95},
+            {"key": "target_country", "label": "Target Country", "tip": "Rows whose country_code is currently selected in Engine Config.", "warn": 20, "good": 50},
+            {"key": "priority_target", "label": "Priority", "tip": "Rows marked is_priority=True for full processing.", "warn": 20, "good": 50},
+            {"key": "review_unknown_country", "label": "Unknown Review", "tip": "Rows with unresolved country that need review or provider fallback.", "warn": 10, "good": 0, "inverse": True},
+            {"key": "cold_non_target_country", "label": "Cold Non-Target", "tip": "Rows stored only because they are outside target countries.", "warn": 70, "good": 85, "inverse": True},
+            {"key": "cold_no_location", "label": "No Location", "tip": "Rows without enough location signal to resolve country.", "warn": 10, "good": 0, "inverse": True},
+        ],
+    },
+    {
         "key": "pipeline_stages",
         "title": "RawJob Pipeline Stages",
         "description": "Where each board's raw jobs are getting through the harvest pipeline.",
@@ -206,11 +219,12 @@ def _build_board_analytics(window_days: int = 30) -> dict:
       - generated_at: ISO timestamp
       - window_days: the run-history window used
     """
-    from harvest.models import CompanyFetchRun, JobBoardPlatform, RawJob
+    from harvest.models import CompanyFetchRun, HarvestEngineConfig, JobBoardPlatform, RawJob
 
     now = timezone.now()
     run_window = now - timedelta(days=window_days)
     fresh_30d_cutoff = now - timedelta(days=30)
+    target_countries = HarvestEngineConfig.get().get_target_countries()
 
     # ── 1. Per-platform RawJob metrics (job-level, all-time) ──────────────────
     # Detect which optional fields exist in this DB (handles schema drift gracefully).
@@ -233,6 +247,12 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         "recent_30d_count": Count("id", filter=Q(fetched_at__gte=fresh_30d_cutoff)),
         "current_enrichment_version_count": Count("id", filter=Q(enrichment_version=CURRENT_ENRICHMENT_VERSION)),
         "current_domain_version_count": Count("id", filter=Q(domain_version=CURRENT_DOMAIN_VERSION)),
+        "country_code_count": Count("id", filter=~Q(country_code="")),
+        "target_country_count": Count("id", filter=Q(country_code__in=target_countries)),
+        "priority_target_count": Count("id", filter=Q(is_priority=True)),
+        "review_unknown_country_count": Count("id", filter=Q(scope_status="REVIEW_UNKNOWN_COUNTRY")),
+        "cold_non_target_country_count": Count("id", filter=Q(scope_status="COLD_NON_TARGET_COUNTRY")),
+        "cold_no_location_count": Count("id", filter=Q(scope_status="COLD_NO_LOCATION")),
         "has_salary":  Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
         "salary_any_count": Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False) | ~Q(salary_raw="")),
         "salary_structured_count": Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
@@ -492,6 +512,12 @@ def _build_board_analytics(window_days: int = 30) -> dict:
             "recent_30d": _coverage_metric(j.get("recent_30d_count", 0), total),
             "current_enrichment_version": _coverage_metric(j.get("current_enrichment_version_count", 0), total),
             "current_domain_version": _coverage_metric(j.get("current_domain_version_count", 0), total),
+            "country_code": _coverage_metric(j.get("country_code_count", 0), total),
+            "target_country": _coverage_metric(j.get("target_country_count", 0), total),
+            "priority_target": _coverage_metric(j.get("priority_target_count", 0), total),
+            "review_unknown_country": _coverage_metric(j.get("review_unknown_country_count", 0), total),
+            "cold_non_target_country": _coverage_metric(j.get("cold_non_target_country_count", 0), total),
+            "cold_no_location": _coverage_metric(j.get("cold_no_location_count", 0), total),
             "fetched": _coverage_metric(total, total),
             "parsed": _coverage_metric(j.get("parsed_count", 0), total),
             "enriched": _coverage_metric(j.get("enriched_count", 0), total),
@@ -691,7 +717,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
 
 
 def get_board_analytics(window_days: int = 30, *, force_refresh: bool = False) -> dict:
-    cache_key = f"harvest:board-analytics:v3:{window_days}"
+    cache_key = f"harvest:board-analytics:v4:{window_days}"
     if not force_refresh:
         cached = cache.get(cache_key)
         if cached is not None:

@@ -1802,3 +1802,71 @@ class BoardAnalyticsServiceTests(TestCase):
         self.assertEqual(row["rawjob_metrics"]["ready"]["count"], 1)
         self.assertEqual(row["rawjob_metrics"]["synced"]["count"], 1)
         self.assertEqual(row["score_metrics"]["quality_score"]["count"], 1)
+
+
+class LocationResolverScopeTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from harvest.models import JobBoardPlatform
+
+        self.company = Company.objects.create(name="Scope Co")
+        self.platform = JobBoardPlatform.objects.create(name="Scope Platform", slug="scope-platform")
+
+    def _raw(self, **kwargs):
+        from harvest.models import RawJob
+
+        defaults = {
+            "company": self.company,
+            "job_platform": self.platform,
+            "platform_slug": self.platform.slug,
+            "url_hash": kwargs.pop("url_hash", f"scope-{RawJob.objects.count()}"),
+            "title": "Software Engineer",
+            "company_name": "Scope Co",
+            "sync_status": RawJob.SyncStatus.PENDING,
+        }
+        defaults.update(kwargs)
+        return RawJob.objects.create(**defaults)
+
+    def test_location_resolver_handles_ca_ambiguity(self):
+        from harvest.location_resolver import resolve_location
+
+        sf = resolve_location(location_raw="San Francisco, CA")
+        toronto = resolve_location(location_raw="Toronto, CA")
+        vancouver = resolve_location(location_raw="Vancouver, BC, CA")
+        bangalore = resolve_location(location_raw="Bangalore, India")
+
+        self.assertEqual(sf.country_code, "US")
+        self.assertEqual(sf.region_code, "CA")
+        self.assertEqual(toronto.country_code, "CA")
+        self.assertEqual(vancouver.country_code, "CA")
+        self.assertEqual(bangalore.country_code, "IN")
+
+    def test_scope_evaluator_marks_target_cold_and_unknown(self):
+        from harvest.location_resolver import evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.target_countries = ["US", "IN", "GB", "AU"]
+        cfg.process_unknown_country_with_target_domain = False
+        cfg.save()
+
+        us_job = self._raw(url_hash="scope-us", location_raw="Austin, TX")
+        de_job = self._raw(url_hash="scope-de", location_raw="Berlin, Germany")
+        unknown_job = self._raw(url_hash="scope-unknown", location_raw="")
+
+        evaluate_rawjob_scope(us_job, cfg=cfg, save=True)
+        evaluate_rawjob_scope(de_job, cfg=cfg, save=True)
+        evaluate_rawjob_scope(unknown_job, cfg=cfg, save=True)
+
+        us_job.refresh_from_db()
+        de_job.refresh_from_db()
+        unknown_job.refresh_from_db()
+
+        self.assertEqual(us_job.country_code, "US")
+        self.assertEqual(us_job.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+        self.assertTrue(us_job.is_priority)
+        self.assertEqual(de_job.country_code, "DE")
+        self.assertEqual(de_job.scope_status, RawJob.ScopeStatus.COLD_NON_TARGET_COUNTRY)
+        self.assertFalse(de_job.is_priority)
+        self.assertEqual(unknown_job.scope_status, RawJob.ScopeStatus.COLD_NO_LOCATION)
+        self.assertFalse(unknown_job.is_priority)

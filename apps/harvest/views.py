@@ -2675,6 +2675,21 @@ class EngineConfigView(SuperuserRequiredMixin, View):
         except Exception:
             pass
 
+        country_options = [
+            ("US", "United States"),
+            ("IN", "India"),
+            ("GB", "United Kingdom"),
+            ("AU", "Australia"),
+            ("CA", "Canada"),
+        ]
+        selected_countries = cfg.get_target_countries()
+        provider_monthly_used = 0
+        try:
+            from .location_resolver import provider_requests_this_month
+            provider_monthly_used = provider_requests_this_month(cfg.geocoding_provider)
+        except Exception:
+            provider_monthly_used = 0
+
         ctx = {
             "cfg": cfg,
             "cpu_count": cpu_count,
@@ -2682,6 +2697,9 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "worker_stats": worker_stats,
             "active_tab": "engine",
             "concurrency_presets": [1, 2, 3, 4, 6, 8],
+            "country_options": country_options,
+            "selected_countries": selected_countries,
+            "provider_monthly_used": provider_monthly_used,
             **_full_crawl_cooldown_ctx(),
         }
         return TemplateResponse(request, self.template_name, ctx)
@@ -2695,6 +2713,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "api_stagger_ms", "scraper_stagger_ms",
             "min_hours_since_fetch", "task_soft_time_limit_secs",
             "resume_jd_min_words", "resume_jd_min_chars",
+            "geocoding_monthly_limit",
         ]
         errors = []
         for field in int_fields:
@@ -2720,9 +2739,26 @@ class EngineConfigView(SuperuserRequiredMixin, View):
 
         # Boolean (checkbox) fields — unchecked checkboxes send no value, so
         # we must explicitly set False when the key is absent from POST.
-        bool_fields = ["auto_backfill_jd", "auto_enrich", "auto_sync_to_pool"]
+        bool_fields = [
+            "auto_backfill_jd", "auto_enrich", "auto_sync_to_pool",
+            "process_unknown_country_with_target_domain",
+            "geocoding_cache_enabled", "geocoding_provider_enabled",
+        ]
         for field in bool_fields:
             setattr(cfg, field, field in request.POST)
+
+        target_countries = [
+            code.strip().upper()
+            for code in request.POST.getlist("target_countries")
+            if code.strip()
+        ]
+        cfg.target_countries = target_countries
+
+        provider = (request.POST.get("geocoding_provider") or "none").strip().lower()
+        if provider in {"none", "mapbox", "google"}:
+            cfg.geocoding_provider = provider
+        else:
+            errors.append("geocoding_provider: unsupported provider")
 
         if errors:
             messages.error(request, " | ".join(errors))
