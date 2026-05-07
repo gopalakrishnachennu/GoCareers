@@ -73,6 +73,7 @@ COUNTRY_CODE_TO_NAME = {
     "CH": "Switzerland",
     "AE": "United Arab Emirates",
 }
+_KNOWN_COUNTRY_CODES = set(COUNTRY_CODE_TO_NAME)
 
 _PLACEHOLDER_LOCATION_VALUES = {
     "remote",
@@ -196,13 +197,238 @@ def _is_ambiguous_location_only(*parts: str) -> bool:
     return bool(values) and all(is_placeholder_location_value(value) for value in values)
 
 
+def _safe_text(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float)):
+        return str(value).strip()
+    return ""
+
+
+def _dedupe_append(values: list[str], value: str) -> None:
+    value = re.sub(r"\s+", " ", _safe_text(value)).strip(" ,;|")
+    if not value or is_placeholder_location_value(value):
+        return
+    key = _location_token(value)
+    if not key or key in {_location_token(v) for v in values}:
+        return
+    values.append(value[:255])
+
+
+def _candidate_has_geo_signal(value: str) -> bool:
+    text = _safe_text(value)
+    if not text or is_placeholder_location_value(text):
+        return False
+    low = text.lower()
+    if any(name in low for name in COUNTRY_NAME_TO_CODE):
+        return True
+    parts = _split_location_parts(text)
+    if len(parts) >= 2:
+        return True
+    first = parts[0] if parts else text
+    if _city_country_code(first):
+        return True
+    return False
+
+
+def split_multi_location_text(text: str) -> list[str]:
+    """Split vendor/detail multi-location strings into geocodable candidates."""
+    text = re.sub(r"<[^>]+>", " ", _safe_text(text))
+    text = text.replace("&nbsp;", " ")
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return []
+
+    candidates: list[str] = []
+    # Most ATS detail pages separate locations with bullets/pipes/semicolons.
+    chunks = [p.strip(" ,") for p in re.split(r"\s*(?:\||\u2022|·|;|\n)\s*", text) if p.strip(" ,")]
+    if len(chunks) > 1:
+        for chunk in chunks:
+            subparts = [p.strip() for p in chunk.split(",") if p.strip()]
+            while subparts and is_placeholder_location_value(subparts[0]):
+                subparts.pop(0)
+            cleaned = ", ".join(subparts)
+            if _candidate_has_geo_signal(cleaned):
+                _dedupe_append(candidates, cleaned)
+        if candidates:
+            return candidates
+
+    # Handle strings like "Hybrid Remote, Seattle, Washington, Los Angeles, California".
+    comma_parts = [p.strip() for p in text.split(",") if p.strip()]
+    while comma_parts and is_placeholder_location_value(comma_parts[0]):
+        comma_parts.pop(0)
+    if len(comma_parts) >= 4:
+        idx = 0
+        while idx < len(comma_parts):
+            group = comma_parts[idx:idx + 3]
+            if len(group) >= 3 and _code_for_country(group[2]):
+                candidate = ", ".join(group)
+                idx += 3
+            else:
+                group = comma_parts[idx:idx + 2]
+                candidate = ", ".join(group)
+                idx += 2
+            if _candidate_has_geo_signal(candidate):
+                _dedupe_append(candidates, candidate)
+        if candidates:
+            return candidates
+
+    if _candidate_has_geo_signal(text):
+        _dedupe_append(candidates, text)
+    return candidates
+
+
+def _location_from_mapping(loc: dict) -> str:
+    if not isinstance(loc, dict):
+        return _safe_text(loc)
+    nested = loc.get("address") or loc.get("Address") or loc.get("location") or loc.get("Location")
+    if isinstance(nested, dict):
+        nested_text = _location_from_mapping(nested)
+        if nested_text:
+            return nested_text
+
+    name = (
+        loc.get("locationName")
+        or loc.get("name")
+        or loc.get("LocalizedName")
+        or loc.get("LocalizedLocation")
+        or loc.get("descriptor")
+        or loc.get("Description")
+        or ""
+    )
+    if _candidate_has_geo_signal(_safe_text(name)):
+        return _safe_text(name)
+
+    city = (
+        loc.get("city")
+        or loc.get("City")
+        or loc.get("cityName")
+        or loc.get("addressLocality")
+        or loc.get("TownOrCity")
+        or loc.get("AddressCity")
+        or ""
+    )
+    state = (
+        loc.get("state")
+        or loc.get("State")
+        or loc.get("region")
+        or loc.get("Region2")
+        or loc.get("stateCode")
+        or loc.get("addressRegion")
+        or loc.get("AddressState")
+        or ""
+    )
+    country = (
+        loc.get("country")
+        or loc.get("Country")
+        or loc.get("countryCode")
+        or loc.get("isoCountryCode")
+        or loc.get("addressCountry")
+        or loc.get("AddressCountry")
+        or ""
+    )
+    return ", ".join(_safe_text(part) for part in (city, state, country) if _safe_text(part))
+
+
+_LOCATION_PAYLOAD_KEYS = {
+    "postinglocations",
+    "locations",
+    "secondarylocations",
+    "offices",
+    "worklocation",
+    "joblocation",
+    "location",
+    "address",
+    "primarylocation",
+    "primaryworklocation",
+    "locationaddress",
+    "locationname",
+    "locationtext",
+    "locationstext",
+}
+
+
+def _looks_like_location_payload_key(key: str) -> bool:
+    token = re.sub(r"[^a-z]", "", (key or "").lower())
+    if not token or "relocation" in token:
+        return False
+    if token in _LOCATION_PAYLOAD_KEYS:
+        return True
+    return any(marker in token for marker in ("location", "address", "office"))
+
+
+def _payload_location_values(payload, *, _depth: int = 0) -> list[str]:
+    values: list[str] = []
+    if _depth > 5:
+        return values
+    if isinstance(payload, list):
+        for item in payload:
+            values.extend(_payload_location_values(item, _depth=_depth + 1))
+        return values
+    if not isinstance(payload, dict):
+        text = _safe_text(payload)
+        if text:
+            values.extend(split_multi_location_text(text))
+        return values
+
+    for key, raw in payload.items():
+        is_location_key = _looks_like_location_payload_key(str(key))
+        if is_location_key:
+            items = raw if isinstance(raw, list) else ([raw] if raw else [])
+            for item in items:
+                text = _location_from_mapping(item)
+                if text:
+                    values.extend(split_multi_location_text(text))
+                if isinstance(item, (dict, list)):
+                    values.extend(_payload_location_values(item, _depth=_depth + 1))
+        elif isinstance(raw, (dict, list)):
+            values.extend(_payload_location_values(raw, _depth=_depth + 1))
+    return values
+
+
+def extract_location_candidates(
+    *,
+    location_raw: str = "",
+    city: str = "",
+    state: str = "",
+    country: str = "",
+    vendor_location_block: str = "",
+    raw_payload=None,
+) -> list[str]:
+    candidates: list[str] = []
+    structured = ", ".join(_safe_text(part) for part in (city, state, country) if _safe_text(part))
+    for source in (
+        *_payload_location_values(raw_payload),
+        structured,
+        vendor_location_block,
+        location_raw,
+    ):
+        for candidate in split_multi_location_text(source):
+            _dedupe_append(candidates, candidate)
+    return candidates
+
+
 def _code_for_country(value: str) -> str:
     value = (value or "").strip()
     if not value:
         return ""
     upper = value.upper()
     if len(upper) == 2 and upper.isalpha():
-        return upper
+        if upper in _KNOWN_COUNTRY_CODES:
+            return upper
+        # Do not blindly accept every two-letter token as a country code.
+        # State/province abbreviations like WA/ON otherwise become fake
+        # countries before the city/state resolver can disambiguate them.
+        try:
+            import country_converter as coco  # type: ignore
+            result = coco.convert(names=[upper], to="ISO2", not_found=None)
+            if isinstance(result, list):
+                result = result[0] if result else None
+            if result and result != "not found" and str(result).upper() == upper:
+                return upper
+        except Exception:
+            pass
+        return ""
     known = COUNTRY_NAME_TO_CODE.get(value.lower(), "")
     if known:
         return known
@@ -554,17 +780,19 @@ def resolve_location(
         # Otherwise UNKNOWN cache entries from earlier no-provider runs would
         # permanently shadow the provider call.
         cache_is_unknown = cached and cached.status == LocationCache.Status.UNKNOWN
+        cache_country_code = _code_for_country(cached.country_code) if cached else ""
+        cache_has_invalid_country = bool(cached and cached.country_code and not cache_country_code)
         provider_now_available = (
             use_provider
             and cfg.geocoding_provider_enabled
             and cfg.geocoding_provider in {"mapbox", "google"}
             and bool(_resolve_provider_token(cfg.geocoding_provider, cfg))
         )
-        if cached and not (cache_is_unknown and provider_now_available):
+        if cached and not cache_has_invalid_country and not (cache_is_unknown and provider_now_available):
             return LocationResolution(
                 raw_text=cached.raw_text or raw_text,
                 normalized_text=cached.normalized_text,
-                country_code=cached.country_code,
+                country_code=cache_country_code,
                 country_name=cached.country_name,
                 region_code=cached.region_code,
                 region_name=cached.region_name,
@@ -628,6 +856,18 @@ def evaluate_rawjob_scope(
     save: bool = False,
 ) -> dict:
     cfg = cfg or HarvestEngineConfig.get()
+    location_candidates = extract_location_candidates(
+        location_raw=raw_job.location_raw or "",
+        city=raw_job.city or "",
+        state=raw_job.state or "",
+        country=raw_job.country or "",
+        vendor_location_block=raw_job.vendor_location_block or "",
+        raw_payload=raw_job.raw_payload or {},
+    )
+    for existing in raw_job.location_candidates or []:
+        for candidate in split_multi_location_text(existing):
+            _dedupe_append(location_candidates, candidate)
+
     resolution = resolve_location(
         location_raw=raw_job.location_raw or "",
         city=raw_job.city or "",
@@ -640,13 +880,39 @@ def evaluate_rawjob_scope(
     )
 
     target_countries = set(cfg.get_target_countries() or DEFAULT_TARGET_COUNTRIES)
+    candidate_resolutions: list[LocationResolution] = []
+    country_codes: list[str] = []
+    for candidate in location_candidates:
+        candidate_resolution = resolve_location(
+            location_raw=candidate,
+            title=raw_job.title or "",
+            description=raw_job.description or raw_job.description_clean or "",
+            cfg=cfg,
+            use_provider=use_provider,
+        )
+        if candidate_resolution.country_code:
+            candidate_resolutions.append(candidate_resolution)
+            if candidate_resolution.country_code not in country_codes:
+                country_codes.append(candidate_resolution.country_code)
+
+    target_resolution = next(
+        (item for item in candidate_resolutions if item.country_code in target_countries),
+        None,
+    )
+    if target_resolution:
+        resolution = target_resolution
+    elif candidate_resolutions and not resolution.country_code:
+        resolution = candidate_resolutions[0]
+
     # Truncate to RawJob field limits — Mapbox returns can be unexpectedly long
     # for some places, and the model fields are: country_code(2),
     # country_source(32), country(128), state(128), city(128).
     updates = {
         "country_code": (resolution.country_code or "")[:2],
         "country_confidence": resolution.confidence,
-        "country_source": (resolution.source or "")[:32],
+        "country_source": ("multi_location" if candidate_resolutions else (resolution.source or ""))[:32],
+        "country_codes": country_codes,
+        "location_candidates": location_candidates,
         "last_scope_evaluated_at": timezone.now(),
     }
 
@@ -660,6 +926,8 @@ def evaluate_rawjob_scope(
         updates["state"] = ""
     if city_is_placeholder:
         updates["city"] = ""
+    if location_candidates and is_placeholder_location_value(raw_job.location_raw or ""):
+        updates["location_raw"] = " | ".join(location_candidates)[:512]
 
     if resolution.country_name and (not raw_job.country or country_is_placeholder):
         updates["country"] = resolution.country_name[:128]
@@ -671,7 +939,11 @@ def evaluate_rawjob_scope(
     if resolution.country_code in target_countries:
         updates.update({
             "scope_status": RawJob.ScopeStatus.PRIORITY_TARGET,
-            "scope_reason": f"target_country:{resolution.country_code}"[:128],
+            "scope_reason": (
+                f"target_country_multi:{resolution.country_code}"
+                if len(country_codes) > 1 or len(location_candidates) > 1
+                else f"target_country:{resolution.country_code}"
+            )[:128],
             "is_priority": True,
         })
     elif not resolution.country_code:

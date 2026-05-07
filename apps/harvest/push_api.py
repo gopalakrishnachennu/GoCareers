@@ -276,7 +276,7 @@ class PushJobsView(View):
 
         from harvest.models import RawJob
         from .enrichments import clean_job_content, clean_job_text, extract_enrichments
-        from .location_resolver import evaluate_rawjob_scope
+        from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
 
         for job_data in jobs:
             try:
@@ -332,6 +332,17 @@ class PushJobsView(View):
                     "state": job_data.get("state") or "",
                     "posted_date": _parse_date(job_data.get("posted_date")),
                 })
+                location_candidates = (
+                    _safe_list(job_data.get("location_candidates"))
+                    or extract_location_candidates(
+                        location_raw=job_data.get("location_raw") or "",
+                        city=job_data.get("city") or "",
+                        state=job_data.get("state") or "",
+                        country=job_data.get("country") or "",
+                        vendor_location_block=job_data.get("vendor_location_block") or "",
+                        raw_payload=job_data.get("raw_payload") or {},
+                    )
+                )
 
                 # Secondary dedupe guard: same company+platform+external_id.
                 if external_id and RawJob.objects.filter(
@@ -357,6 +368,8 @@ class PushJobsView(View):
                     city=str(job_data.get("city", ""))[:128],
                     state=str(job_data.get("state", ""))[:128],
                     country=str(job_data.get("country", ""))[:128],
+                    location_candidates=location_candidates,
+                    country_codes=_safe_list(job_data.get("country_codes")),
                     postal_code=str(job_data.get("postal_code", ""))[:32],
                     location_type=job_data.get("location_type") or RawJob.LocationType.UNKNOWN,
                     is_remote=bool(job_data.get("is_remote", False)),

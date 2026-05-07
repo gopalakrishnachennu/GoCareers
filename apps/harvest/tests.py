@@ -341,6 +341,12 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         html = (
             '<html><body>'
             '<h2 class="jv-header">QA Lead</h2>'
+            '<p class="jv-job-detail-meta">'
+            'Professional Staff<span class="jv-inline-separator"></span>Hybrid Remote<span>,</span>'
+            'Seattle,<br>Washington<span class="jv-inline-separator"></span>'
+            'Los Angeles,<br>California<span class="jv-inline-separator"></span>'
+            'San Francisco,<br>California'
+            '</p>'
             '<div class="jv-job-detail-description"><p>Jobvite JD body here with plenty of text to pass the minimum character threshold easily.</p></div>'
             '</body></html>'
         )
@@ -352,6 +358,8 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertIsNotNone(out)
         self.assertIn("Jobvite JD body", out.get("description", ""))
         self.assertEqual(out.get("title"), "QA Lead")
+        self.assertIn("Seattle, Washington", out.get("location_candidates", []))
+        self.assertIn("Los Angeles, California", out.get("location_candidates", []))
 
     def test_taleo_detail_page_scrape(self):
         jarvis = JobJarvis()
@@ -1838,12 +1846,14 @@ class LocationResolverScopeTests(TestCase):
         toronto = resolve_location(location_raw="Toronto, CA")
         vancouver = resolve_location(location_raw="Vancouver, BC, CA")
         bangalore = resolve_location(location_raw="Bangalore, India")
+        state_only = resolve_location(country="ON")
 
         self.assertEqual(sf.country_code, "US")
         self.assertEqual(sf.region_code, "CA")
         self.assertEqual(toronto.country_code, "CA")
         self.assertEqual(vancouver.country_code, "CA")
         self.assertEqual(bangalore.country_code, "IN")
+        self.assertNotEqual(state_only.country_code, "ON")
 
     def test_scope_evaluator_marks_target_cold_and_unknown(self):
         from harvest.location_resolver import evaluate_rawjob_scope
@@ -1950,6 +1960,71 @@ class LocationResolverScopeTests(TestCase):
 
         self.assertEqual(result.status, LocationCache.Status.FAILED)
         self.assertEqual(provider_requests_this_month("mapbox"), 1)
+
+    def test_multi_location_candidates_make_target_country_priority(self):
+        from harvest.location_resolver import evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.target_countries = ["US", "IN", "CA", "GB", "AU"]
+        cfg.process_unknown_country_with_target_domain = False
+        cfg.save()
+
+        raw = self._raw(
+            url_hash="scope-multi-location-target",
+            title="Practice Manager",
+            location_raw="Hybrid Remote, 4 Locations",
+            location_candidates=["Seattle, WA", "Toronto, ON"],
+            city="Hybrid Remote",
+            state="4 Locations",
+            country="Hybrid",
+        )
+
+        evaluate_rawjob_scope(raw, cfg=cfg, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+        self.assertTrue(raw.is_priority)
+        self.assertEqual(raw.country_code, "US")
+        self.assertEqual(raw.country_source, "multi_location")
+        self.assertIn("US", raw.country_codes)
+        self.assertIn("CA", raw.country_codes)
+        self.assertIn("Seattle, WA", raw.location_raw)
+
+    def test_nested_payload_location_candidates_make_target_country_priority(self):
+        from harvest.location_resolver import evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.target_countries = ["US", "IN", "CA", "GB", "AU"]
+        cfg.process_unknown_country_with_target_domain = False
+        cfg.save()
+
+        raw = self._raw(
+            url_hash="scope-nested-payload-locations",
+            title="Practice Manager",
+            location_raw="Hybrid Remote, 4 Locations",
+            city="Hybrid Remote",
+            state="4 Locations",
+            country="Hybrid",
+            raw_payload={
+                "jobPostingInfo": {
+                    "postingLocations": [
+                        {"locationName": "Seattle, Washington"},
+                        {"locationName": "Los Angeles, California"},
+                    ],
+                },
+            },
+        )
+
+        evaluate_rawjob_scope(raw, cfg=cfg, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+        self.assertTrue(raw.is_priority)
+        self.assertEqual(raw.country_code, "US")
+        self.assertIn("Seattle, Washington", raw.location_candidates)
+        self.assertIn("Los Angeles, California", raw.location_candidates)
 
     def test_backfill_eligible_excludes_non_priority(self):
         """Slice 2 gate: JD backfill must skip non-priority jobs."""

@@ -423,6 +423,7 @@ def harvest_jobs_task(
     from .normalizer import normalize_job_data
     from .rate_limiter import throttle as _throttle
     from .enrichments import clean_job_content, clean_job_text, extract_enrichments
+    from .location_resolver import extract_location_candidates
 
     tb = triggered_by if triggered_by in ("SCHEDULED", "MANUAL") else "SCHEDULED"
 
@@ -974,6 +975,23 @@ def fetch_raw_jobs_for_company_task(
                 "vendor_degree_level": job_dict.get("vendor_degree_level") or "",
                 "vendor_job_schedule": job_dict.get("vendor_job_schedule") or "",
             })
+            supplied_location_candidates = job_dict.get("location_candidates")
+            if not isinstance(supplied_location_candidates, list):
+                supplied_location_candidates = []
+            supplied_country_codes = job_dict.get("country_codes")
+            if not isinstance(supplied_country_codes, list):
+                supplied_country_codes = []
+            location_candidates = (
+                supplied_location_candidates
+                or extract_location_candidates(
+                    location_raw=job_dict.get("location_raw") or "",
+                    city=job_dict.get("city") or "",
+                    state=job_dict.get("state") or "",
+                    country=job_dict.get("country") or "",
+                    vendor_location_block=job_dict.get("vendor_location_block") or "",
+                    raw_payload=job_dict.get("raw_payload") or {},
+                )
+            )
 
             defaults = {
                 "company": label.company,
@@ -990,6 +1008,8 @@ def fetch_raw_jobs_for_company_task(
                 "city": (job_dict.get("city") or "")[:128],
                 "state": (job_dict.get("state") or "")[:128],
                 "country": (job_dict.get("country") or "")[:128],
+                "location_candidates": location_candidates,
+                "country_codes": supplied_country_codes,
                 "location_type": job_dict.get("location_type", "UNKNOWN"),
                 "is_remote": bool(job_dict.get("is_remote", False)),
                 "employment_type": job_dict.get("employment_type", "UNKNOWN"),
@@ -1416,9 +1436,10 @@ def fetch_raw_jobs_for_company_task(
             # tasks will skip them.
             SCOPE_FIELDS = [
                 "country_code", "country_confidence", "country_source",
+                "country_codes", "location_candidates",
                 "scope_status", "scope_reason", "is_priority",
                 "last_scope_evaluated_at",
-                "country", "state", "city",
+                "country", "state", "city", "location_raw",
             ]
             from .location_resolver import evaluate_rawjob_scope
 
@@ -2255,12 +2276,14 @@ def sync_harvested_to_pool_task(
     
                 try:
                     platform_slug = rj.platform_slug or (rj.job_platform.slug if rj.job_platform else "")
+                    job_location = " | ".join(rj.location_candidates or []) or rj.location_raw or ""
+                    job_country = rj.country or ((rj.country_codes or [""])[0] if rj.country_codes else "")
                     with transaction.atomic():
                         job = Job.objects.create(
                             title=rj.title,
                             company=rj.company_name or (rj.company.name if rj.company else ""),
                             company_obj=rj.company,
-                            location=rj.location_raw or "",
+                            location=job_location,
                             description=rj.description or rj.title,
                             original_link=rj.original_url,
                             salary_range=rj.salary_raw or "",
@@ -2274,7 +2297,7 @@ def sync_harvested_to_pool_task(
                             source_raw_job=rj,
                             queue_entered_at=_tz.now(),
                             # Propagate classification from RawJob if available
-                            country=rj.country or "",
+                            country=job_country,
                             department=rj.department_normalized or "",
                         )
                         apply_gate_result_to_job(job, gate)

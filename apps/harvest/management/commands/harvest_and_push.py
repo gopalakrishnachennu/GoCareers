@@ -202,6 +202,8 @@ def _harvest_one_company(label: dict, since_hours: int, fetch_all: bool) -> list
                 "city": str(raw.get("city", ""))[:128],
                 "state": str(raw.get("state", ""))[:128],
                 "country": str(raw.get("country", ""))[:128],
+                "location_candidates": raw.get("location_candidates") or [],
+                "country_codes": raw.get("country_codes") or [],
                 "postal_code": str(raw.get("postal_code", ""))[:32],
                 "location_type": raw.get("location_type", "UNKNOWN"),
                 "is_remote": bool(raw.get("is_remote", False)),

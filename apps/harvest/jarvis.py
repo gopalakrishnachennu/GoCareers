@@ -1114,11 +1114,23 @@ class JobJarvis:
         el = soup.select_one(".jv-job-detail-meta .location") or soup.select_one("[class*='location']")
         if el:
             location_raw = el.get_text(" ", strip=True)
+        if not location_raw:
+            try:
+                from harvest.harvesters.jobvite import _detail_location_line
+                location_raw = _detail_location_line(html, title)
+            except Exception:
+                location_raw = ""
+        try:
+            from harvest.location_resolver import split_multi_location_text
+            location_candidates = split_multi_location_text(location_raw)
+        except Exception:
+            location_candidates = []
 
         return {
             "title": title,
             "company_name": company_slug.replace("-", " ").title(),
             "location_raw": location_raw,
+            "location_candidates": location_candidates,
             "description": description,
             "external_id": job_id,
             "original_url": detail_url,

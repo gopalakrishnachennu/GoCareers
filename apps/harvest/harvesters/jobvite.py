@@ -43,6 +43,67 @@ def _split_location(location_raw: str) -> tuple[str, str, str]:
     return city, state, country
 
 
+def _detail_location_line(html: str, title: str = "") -> str:
+    """Extract Jobvite detail header location text before the Description section."""
+    try:
+        from bs4 import BeautifulSoup
+        from harvest.location_resolver import split_multi_location_text
+    except Exception:
+        return ""
+
+    soup = BeautifulSoup(html or "", "html.parser")
+    lines = [line.strip() for line in soup.get_text("\n", strip=True).splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    meta = soup.select_one(".jv-job-detail-meta")
+    if meta:
+        candidates: list[str] = []
+        # Jobvite often renders multi-location headers as:
+        # Hybrid Remote<span>,</span> Seattle, Washington
+        # <span class="jv-inline-separator"></span> Los Angeles, California
+        # Splitting on the separator before stripping text preserves city/state
+        # pairs that BeautifulSoup otherwise breaks into separate lines.
+        for segment in re.split(r"<span[^>]*jv-inline-separator[^>]*></span>", str(meta), flags=re.I):
+            text = BeautifulSoup(segment, "html.parser").get_text(" ", strip=True)
+            text = re.sub(r"\s*,\s*", ", ", text)
+            text = re.sub(r"\s+", " ", text).strip(" ,")
+            for candidate in split_multi_location_text(text):
+                if candidate not in candidates:
+                    candidates.append(candidate)
+        if candidates:
+            return " | ".join(candidates)[:512]
+
+    start = 0
+    if title:
+        title_key = title.strip().lower()
+        for idx, line in enumerate(lines):
+            if line.lower() == title_key:
+                start = idx + 1
+                break
+
+    collected: list[str] = []
+    for line in lines[start:start + 8]:
+        low = line.lower()
+        if low in {"description", "job description", "job summary"}:
+            break
+        if "apply" == low:
+            continue
+        if split_multi_location_text(line):
+            collected.append(line)
+
+    if not collected:
+        return ""
+
+    # Drop a leading department/category segment when a bullet-delimited meta
+    # line looks like "Professional Staff • Seattle, Washington • Los Angeles..."
+    text = " • ".join(collected)
+    parts = [p.strip(" ,") for p in re.split(r"\s*(?:\u2022|·|\|)\s*", text) if p.strip(" ,")]
+    if len(parts) > 1 and not split_multi_location_text(parts[0]):
+        parts = parts[1:]
+    return " | ".join(parts)[:512]
+
+
 class JobviteHarvester(BaseHarvester):
     platform_slug = "jobvite"
     is_scraper = True
@@ -77,20 +138,34 @@ class JobviteHarvester(BaseHarvester):
         if not postings:
             return []
 
-        for i, posting in enumerate(postings):
-            if i >= DETAIL_FETCH_CAP:
-                break
-            if posting.get("description"):
+        detail_fetched = 0
+        for posting in postings:
+            needs_location_detail = "locations" in (posting.get("location_raw") or "").lower()
+            if posting.get("description") and not needs_location_detail:
                 continue
+            if detail_fetched >= DETAIL_FETCH_CAP:
+                break
             url = posting.get("original_url", "")
             if url:
                 detail = self._fetch_detail_data(url)
+                detail_fetched += 1
                 if detail.get("description"):
                     posting["description"] = detail["description"]
                 if detail.get("requirements") and not posting.get("requirements"):
                     posting["requirements"] = detail["requirements"]
                 if detail.get("responsibilities") and not posting.get("responsibilities"):
                     posting["responsibilities"] = detail["responsibilities"]
+                if detail.get("location_raw"):
+                    posting["location_raw"] = detail["location_raw"]
+                    posting["location_candidates"] = detail.get("location_candidates") or []
+                    location_type, is_remote = _detect_location_type(posting["location_raw"])
+                    posting["location_type"] = location_type
+                    posting["is_remote"] = is_remote
+                    first_location = (posting["location_candidates"] or [posting["location_raw"]])[0]
+                    city, state, country = _split_location(first_location)
+                    posting["city"] = city
+                    posting["state"] = state
+                    posting["country"] = country
         return postings
 
     # ── JSON feed ─────────────────────────────────────────────────────────────
@@ -239,6 +314,12 @@ class JobviteHarvester(BaseHarvester):
                 plain = re.sub(r"\s+", " ", plain).strip()
                 if plain:
                     result[key] = plain
+
+        location_raw = _detail_location_line(html, "")
+        if location_raw:
+            from harvest.location_resolver import split_multi_location_text
+            result["location_raw"] = location_raw
+            result["location_candidates"] = split_multi_location_text(location_raw)
 
         return result
 

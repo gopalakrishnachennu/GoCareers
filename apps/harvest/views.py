@@ -154,12 +154,14 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
         )
 
     platform_slug = raw_job.platform_slug or (raw_job.job_platform.slug if raw_job.job_platform else "")
+    job_location = " | ".join(raw_job.location_candidates or []) or raw_job.location_raw or ""
+    job_country = raw_job.country or ((raw_job.country_codes or [""])[0] if raw_job.country_codes else "")
     with transaction.atomic():
         job = Job.objects.create(
             title=raw_job.title,
             company=raw_job.company_name or (raw_job.company.name if raw_job.company else ""),
             company_obj=raw_job.company,
-            location=raw_job.location_raw or "",
+            location=job_location,
             description=raw_job.description or raw_job.title,
             original_link=raw_job.original_url,
             salary_range=raw_job.salary_raw or "",
@@ -172,7 +174,7 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
             posted_by=posted_by,
             source_raw_job=raw_job,
             queue_entered_at=_tz.now(),
-            country=raw_job.country or "",
+            country=job_country,
             department=raw_job.department_normalized or "",
         )
         apply_gate_result_to_job(job, gate)

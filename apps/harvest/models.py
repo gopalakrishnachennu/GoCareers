@@ -581,6 +581,16 @@ class RawJob(models.Model):
     city = models.CharField(max_length=128, blank=True)
     state = models.CharField(max_length=128, blank=True)
     country = models.CharField(max_length=128, blank=True)
+    location_candidates = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="All vendor/detail locations for multi-location postings.",
+    )
+    country_codes = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="All resolved ISO country codes from location_candidates.",
+    )
     postal_code = models.CharField(max_length=32, blank=True)
     location_type = models.CharField(
         max_length=8, choices=LocationType.choices, default=LocationType.UNKNOWN

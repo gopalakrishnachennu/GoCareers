@@ -53,6 +53,8 @@ class Command(BaseCommand):
             "country_code",
             "country_confidence",
             "country_source",
+            "country_codes",
+            "location_candidates",
             "scope_status",
             "scope_reason",
             "is_priority",
@@ -60,6 +62,7 @@ class Command(BaseCommand):
             "country",
             "state",
             "city",
+            "location_raw",
         ]
 
         def flush():
