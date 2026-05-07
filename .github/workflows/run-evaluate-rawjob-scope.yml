@@ -1,0 +1,79 @@
+name: Run — Evaluate RawJob Scope
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Selector: all / only-unscoped / only-unknown / platform"
+        required: true
+        default: "all"
+        type: choice
+        options:
+          - all
+          - only-unscoped
+          - only-unknown
+          - platform
+      platform_slug:
+        description: "Platform slug (only when mode=platform; e.g. workday)"
+        required: false
+        default: ""
+      batch_size:
+        description: "Bulk update batch size (100–5000)"
+        required: true
+        default: "1000"
+      limit:
+        description: "Max rows (0 = no limit)"
+        required: true
+        default: "0"
+      use_provider:
+        description: "Allow Mapbox provider fallback for unresolved rows? (true/false)"
+        required: true
+        default: "false"
+      dry_run:
+        description: "Dry-run only — print stats, do not write (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate RawJob scope on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+
+            ARGS="--batch-size ${{ github.event.inputs.batch_size }}"
+
+            case "${{ github.event.inputs.mode }}" in
+              all)            ARGS="${ARGS} --all" ;;
+              only-unscoped)  ARGS="${ARGS} --only-unscoped" ;;
+              only-unknown)   ARGS="${ARGS} --only-unknown" ;;
+              platform)
+                if [ -z "${{ github.event.inputs.platform_slug }}" ]; then
+                  echo "platform mode requires platform_slug input"
+                  exit 1
+                fi
+                ARGS="${ARGS} --platform ${{ github.event.inputs.platform_slug }}"
+                ;;
+            esac
+
+            if [ "${{ github.event.inputs.limit }}" != "0" ]; then
+              ARGS="${ARGS} --limit ${{ github.event.inputs.limit }}"
+            fi
+            if [ "${{ github.event.inputs.use_provider }}" = "true" ]; then
+              ARGS="${ARGS} --provider"
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="${ARGS} --dry-run"
+            fi
+
+            echo "Running: python manage.py evaluate_rawjob_scope ${ARGS}"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py evaluate_rawjob_scope ${ARGS}
