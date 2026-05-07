@@ -1,0 +1,36 @@
+name: Run — Check Geocoding Provider
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: "Test query (default 'Bangalore, India')"
+        required: false
+        default: "Bangalore, India"
+      skip_call:
+        description: "Print config only, don't hit Mapbox (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Diagnose geocoding provider on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 5m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            ARGS="--query \"${{ github.event.inputs.query }}\""
+            if [ "${{ github.event.inputs.skip_call }}" = "true" ]; then
+              ARGS="${ARGS} --skip-call"
+            fi
+            echo "Running: python manage.py check_geocoding_provider ${ARGS}"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              sh -c "python manage.py check_geocoding_provider ${ARGS}"
