@@ -1,0 +1,136 @@
+name: Run — Mapbox Full Setup + Backfill (one-shot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: "How far to go: configure / diagnose / test / full"
+        required: true
+        default: "diagnose"
+        type: choice
+        options:
+          - configure   # only save token + flip flags, no calls
+          - diagnose    # configure + run check_geocoding_provider live test
+          - test        # diagnose + 5-row Mapbox eval
+          - full        # everything + backfill all 60k unknowns
+
+jobs:
+  setup-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure provider, run diagnostic, optionally backfill
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          MAPBOX_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          STAGE: ${{ github.event.inputs.stage }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 90m
+          script_stop: true
+          envs: MAPBOX_TOKEN,STAGE
+          script: |
+            set -e
+            cd /opt/consulting
+
+            # Sanitize: never print the token. Only confirm length.
+            if [ -z "${MAPBOX_TOKEN}" ]; then
+              echo "❌ MAPBOX_TOKEN env not received from secrets"
+              exit 1
+            fi
+            echo "✓ Token received from secrets (length=${#MAPBOX_TOKEN})"
+
+            # ── Step 1: configure DB (token + provider + enable) ──────────
+            echo ""
+            echo "=== Step 1/4: Save token + enable provider ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T -e MAPBOX_TOKEN="${MAPBOX_TOKEN}" web \
+              python -c "
+            import os
+            from harvest.models import HarvestEngineConfig
+            cfg = HarvestEngineConfig.get()
+            cfg.geocoding_provider_token = os.environ['MAPBOX_TOKEN']
+            cfg.geocoding_provider = 'mapbox'
+            cfg.geocoding_provider_enabled = True
+            cfg.geocoding_cache_enabled = True
+            cfg.save()
+            print('✓ Config saved')
+            print(f'  provider={cfg.geocoding_provider}')
+            print(f'  enabled={cfg.geocoding_provider_enabled}')
+            print(f'  cache={cfg.geocoding_cache_enabled}')
+            print(f'  monthly_limit={cfg.geocoding_monthly_limit}')
+            print(f'  token_len={len(cfg.geocoding_provider_token)}')
+            "
+
+            if [ "$STAGE" = "configure" ]; then
+              echo ""
+              echo "✓ Stage=configure complete. Stopping per request."
+              exit 0
+            fi
+
+            # ── Step 2: run diagnostic (live Mapbox call with 'Bangalore') ─
+            echo ""
+            echo "=== Step 2/4: Run check_geocoding_provider diagnostic ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T web \
+              python manage.py check_geocoding_provider --query "Bangalore, India"
+
+            if [ "$STAGE" = "diagnose" ]; then
+              echo ""
+              echo "✓ Stage=diagnose complete. Stopping per request."
+              exit 0
+            fi
+
+            # ── Step 3: 5-row Mapbox test on real unknowns ────────────────
+            echo ""
+            echo "=== Step 3/4: 5-row Mapbox test on UNKNOWN rows ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T web \
+              python manage.py evaluate_rawjob_scope \
+                --only-unknown --batch-size 5 --limit 5 --provider
+
+            if [ "$STAGE" = "test" ]; then
+              echo ""
+              echo "✓ Stage=test complete. Stopping per request."
+              echo "Inspect /admin/harvest/locationcache/?provider=mapbox to see resolutions."
+              exit 0
+            fi
+
+            # ── Step 4: full backfill of unknowns ─────────────────────────
+            echo ""
+            echo "=== Step 4/4: Full Mapbox backfill on ALL unresolved rows ==="
+            echo "(quota: 80,000 hard cap; ~5,000 unique strings expected)"
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T web \
+              python manage.py evaluate_rawjob_scope \
+                --only-unknown --batch-size 1000 --provider
+
+            # ── Final summary ─────────────────────────────────────────────
+            echo ""
+            echo "=== FINAL SCOPE DISTRIBUTION ==="
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T web \
+              python -c "
+            from collections import Counter
+            from harvest.models import RawJob
+            from django.db.models import Count
+
+            total = RawJob.objects.count()
+            print(f'Total RawJobs: {total:,}')
+            print('')
+            print('Scope status breakdown:')
+            for row in RawJob.objects.values('scope_status').annotate(c=Count('id')).order_by('-c'):
+                print(f'  {row[\"scope_status\"]:30s}  {row[\"c\"]:>8,}')
+
+            print('')
+            print('Top 15 countries:')
+            for row in RawJob.objects.exclude(country_code='').values('country_code').annotate(c=Count('id')).order_by('-c')[:15]:
+                print(f'  {row[\"country_code\"]:5s}  {row[\"c\"]:>8,}')
+
+            print('')
+            from harvest.models import LocationCache
+            cache_total = LocationCache.objects.count()
+            cache_mapbox = LocationCache.objects.filter(provider='mapbox').count()
+            print(f'LocationCache: {cache_total:,} total, {cache_mapbox:,} resolved by Mapbox')
+            "
