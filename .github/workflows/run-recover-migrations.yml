@@ -23,12 +23,23 @@ jobs:
             set -e
             cd /opt/consulting
             FAKE_TO="${{ github.event.inputs.fake_to }}"
+
+            # Use 'run --entrypoint=""' so we bypass the failing entrypoint.sh
+            # that is currently crashing the web container.
             echo "Faking ${FAKE_TO} as already-applied..."
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
-              python manage.py migrate ${FAKE_TO} --fake --no-input
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm \
+              --entrypoint "" web python manage.py migrate ${FAKE_TO} --fake --no-input
+
             echo "Now running full migrate to catch up remaining..."
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
-              python manage.py migrate --no-input
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm \
+              --entrypoint "" web python manage.py migrate --no-input
+
             echo "Migration state after recovery:"
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
-              python manage.py showmigrations harvest | tail -20
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm \
+              --entrypoint "" web python manage.py showmigrations harvest | tail -20
+
+            echo "Restarting web container with normal entrypoint..."
+            docker compose -f docker-compose.prod.yml --env-file .env.production up -d web
+
+            sleep 5
+            docker compose -f docker-compose.prod.yml --env-file .env.production ps web
