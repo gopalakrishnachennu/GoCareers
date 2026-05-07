@@ -44,9 +44,8 @@ jobs:
             # ── Step 1: configure DB (token + provider + enable) ──────────
             echo ""
             echo "=== Step 1/4: Save token + enable provider ==="
-            docker compose -f docker-compose.prod.yml --env-file .env.production \
-              exec -T -e MAPBOX_TOKEN="${MAPBOX_TOKEN}" web \
-              python -c "
+            # Write Python to a temp file to avoid SSH-action heredoc injection
+            cat > /tmp/_cfg_mapbox.py <<'PYEOF'
             import os
             from harvest.models import HarvestEngineConfig
             cfg = HarvestEngineConfig.get()
@@ -55,13 +54,19 @@ jobs:
             cfg.geocoding_provider_enabled = True
             cfg.geocoding_cache_enabled = True
             cfg.save()
-            print('✓ Config saved')
-            print(f'  provider={cfg.geocoding_provider}')
-            print(f'  enabled={cfg.geocoding_provider_enabled}')
-            print(f'  cache={cfg.geocoding_cache_enabled}')
-            print(f'  monthly_limit={cfg.geocoding_monthly_limit}')
-            print(f'  token_len={len(cfg.geocoding_provider_token)}')
-            "
+            print('OK config saved')
+            print('  provider=' + cfg.geocoding_provider)
+            print('  enabled=' + str(cfg.geocoding_provider_enabled))
+            print('  cache=' + str(cfg.geocoding_cache_enabled))
+            print('  monthly_limit=' + str(cfg.geocoding_monthly_limit))
+            print('  token_len=' + str(len(cfg.geocoding_provider_token)))
+            PYEOF
+            # Strip leading 12 spaces of indent from the heredoc-flowed file
+            sed -i 's/^            //' /tmp/_cfg_mapbox.py
+            docker cp /tmp/_cfg_mapbox.py $(docker compose -f docker-compose.prod.yml --env-file .env.production ps -q web | head -1):/tmp/_cfg_mapbox.py
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T -e MAPBOX_TOKEN="${MAPBOX_TOKEN}" web \
+              python manage.py shell < /tmp/_cfg_mapbox.py
 
             if [ "$STAGE" = "configure" ]; then
               echo ""
@@ -109,28 +114,29 @@ jobs:
             # ── Final summary ─────────────────────────────────────────────
             echo ""
             echo "=== FINAL SCOPE DISTRIBUTION ==="
-            docker compose -f docker-compose.prod.yml --env-file .env.production \
-              exec -T web \
-              python -c "
-            from collections import Counter
-            from harvest.models import RawJob
+            cat > /tmp/_summary.py <<'PYEOF'
+            from harvest.models import RawJob, LocationCache
             from django.db.models import Count
 
             total = RawJob.objects.count()
-            print(f'Total RawJobs: {total:,}')
+            print('Total RawJobs: ' + format(total, ','))
             print('')
             print('Scope status breakdown:')
             for row in RawJob.objects.values('scope_status').annotate(c=Count('id')).order_by('-c'):
-                print(f'  {row[\"scope_status\"]:30s}  {row[\"c\"]:>8,}')
+                print('  ' + row['scope_status'].ljust(30) + format(row['c'], ',').rjust(10))
 
             print('')
             print('Top 15 countries:')
             for row in RawJob.objects.exclude(country_code='').values('country_code').annotate(c=Count('id')).order_by('-c')[:15]:
-                print(f'  {row[\"country_code\"]:5s}  {row[\"c\"]:>8,}')
+                print('  ' + row['country_code'].ljust(6) + format(row['c'], ',').rjust(10))
 
             print('')
-            from harvest.models import LocationCache
             cache_total = LocationCache.objects.count()
             cache_mapbox = LocationCache.objects.filter(provider='mapbox').count()
-            print(f'LocationCache: {cache_total:,} total, {cache_mapbox:,} resolved by Mapbox')
-            "
+            print('LocationCache: ' + format(cache_total, ',') + ' total, ' + format(cache_mapbox, ',') + ' from Mapbox')
+            PYEOF
+            sed -i 's/^            //' /tmp/_summary.py
+            docker cp /tmp/_summary.py $(docker compose -f docker-compose.prod.yml --env-file .env.production ps -q web | head -1):/tmp/_summary.py
+            docker compose -f docker-compose.prod.yml --env-file .env.production \
+              exec -T web \
+              python manage.py shell < /tmp/_summary.py
