@@ -180,21 +180,60 @@
         </label>
       </div>
 
-      <!-- Location resolver cache -->
+      <!-- Location resolver + Mapbox dashboard -->
       <div class="card-padded">
         <div class="flex items-start justify-between gap-3 mb-3">
           <div>
-            <h3 class="text-sm font-bold text-gray-800">Location Resolver & Cache</h3>
-            <p class="text-xs text-gray-500 mt-0.5">Free rules + normalized cache first; provider fallback is quota-guarded.</p>
+            <h3 class="text-sm font-bold text-gray-800">Location Resolver &amp; Geocoding</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Cache-first → free rules → coco → provider. Mapbox only fires for unresolved unique locations.</p>
           </div>
-          <span class="badge-green text-xs font-semibold">✓ Safe default</span>
+          {% if geocoding_stats.provider_enabled and geocoding_stats.token_present %}
+            <span class="badge-green text-xs font-semibold">● Live</span>
+          {% elif geocoding_stats.provider_enabled and not geocoding_stats.token_present %}
+            <span class="badge-red text-xs font-semibold">⚠ Token missing</span>
+          {% else %}
+            <span class="badge-blue text-xs font-semibold">⏸ Provider off</span>
+          {% endif %}
         </div>
+
+        {# ── Mapbox / provider call counter — visual progress bar ────────────── #}
+        <div class="mb-4">
+          <div class="flex items-center justify-between text-xs mb-1.5">
+            <span class="font-semibold text-gray-700">
+              {% if geocoding_stats.provider == 'mapbox' %}Mapbox{% elif geocoding_stats.provider == 'google' %}Google{% else %}Provider{% endif %}
+              calls this month
+            </span>
+            <span class="font-mono
+              {% if geocoding_stats.tone == 'bad' %}text-red-600 font-bold
+              {% elif geocoding_stats.tone == 'warn' %}text-amber-700 font-semibold
+              {% else %}text-green-700 font-semibold{% endif %}">
+              {{ geocoding_stats.provider_monthly_used|floatformat:"0" }}
+              <span class="text-gray-400">/</span>
+              {{ geocoding_stats.monthly_limit|floatformat:"0" }}
+              <span class="text-gray-400">({{ geocoding_stats.provider_monthly_pct }}%)</span>
+            </span>
+          </div>
+          <div class="w-full h-3 rounded-full bg-gray-100 overflow-hidden border border-gray-200">
+            <div class="h-full transition-all
+              {% if geocoding_stats.tone == 'bad' %}bg-red-500
+              {% elif geocoding_stats.tone == 'warn' %}bg-amber-500
+              {% else %}bg-green-500{% endif %}"
+              style="width: {{ geocoding_stats.provider_monthly_pct|stringformat:'.1f' }}%; min-width: 2px;">
+            </div>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-gray-400 mt-1">
+            <span>Resets monthly · Hard cap stops calls before billing risk</span>
+            <span class="font-mono">{{ geocoding_stats.rate_remaining|floatformat:"0" }} remaining</span>
+          </div>
+        </div>
+
+        {# ── Toggles + provider/limit inputs ───────────────────────────────── #}
         <div class="space-y-3 text-xs text-gray-600">
           <label class="flex items-center gap-2">
             <input type="checkbox" name="geocoding_cache_enabled" value="1"
                    {% if cfg.geocoding_cache_enabled %}checked{% endif %}
                    class="w-4 h-4 rounded text-green-600 border-gray-300">
-            Enable aggressive normalized LocationCache
+            Enable normalized LocationCache (always recommended)
           </label>
           <label class="flex items-center gap-2">
             <input type="checkbox" name="geocoding_provider_enabled" value="1"
@@ -206,23 +245,72 @@
             <div>
               <label class="form-label">Provider</label>
               <select name="geocoding_provider" class="form-select w-full">
-                <option value="none" {% if cfg.geocoding_provider == 'none' %}selected{% endif %}>None</option>
+                <option value="none"   {% if cfg.geocoding_provider == 'none' %}selected{% endif %}>None — rules only</option>
                 <option value="mapbox" {% if cfg.geocoding_provider == 'mapbox' %}selected{% endif %}>Mapbox</option>
                 <option value="google" {% if cfg.geocoding_provider == 'google' %}selected{% endif %}>Google</option>
               </select>
+              <p class="mt-1 text-[10px] text-gray-400">
+                Token env var:
+                {% if geocoding_stats.token_env_var %}
+                  <code class="bg-gray-100 px-1 rounded">{{ geocoding_stats.token_env_var }}</code>
+                  {% if geocoding_stats.token_present %}
+                    <span class="text-green-600 font-semibold">✓ detected</span>
+                  {% else %}
+                    <span class="text-red-600 font-semibold">✗ missing</span>
+                  {% endif %}
+                {% else %}
+                  <span class="text-gray-400">— (no provider)</span>
+                {% endif %}
+              </p>
             </div>
             <div>
               <label class="form-label">Monthly provider hard limit</label>
               <input type="number" name="geocoding_monthly_limit" value="{{ cfg.geocoding_monthly_limit }}"
                      min="0" max="100000" step="1000"
                      class="form-input w-full text-center font-mono">
+              <p class="mt-1 text-[10px] text-gray-400">Free tier ≈ 100,000 / month — stay below.</p>
             </div>
           </div>
-          <p class="rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-orange-800">
-            Provider usage this month: <strong>{{ provider_monthly_used }}</strong> / {{ cfg.geocoding_monthly_limit }}.
-            Tokens must stay in environment variables such as <code>MAPBOX_ACCESS_TOKEN</code>, never in code or DB.
-          </p>
         </div>
+
+        {# ── LocationCache stats ───────────────────────────────────────────── #}
+        <div class="mt-4 pt-3 border-t border-gray-100">
+          <div class="text-[10px] font-semibold uppercase tracking-wide text-gray-500 mb-2">Cache Inventory</div>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-xs">
+            <div class="rounded-lg bg-slate-50 border border-slate-200 p-2">
+              <div class="text-base font-bold text-slate-700">{{ geocoding_stats.cache_total|floatformat:"0" }}</div>
+              <div class="text-[10px] text-slate-500 uppercase tracking-wide">Total</div>
+            </div>
+            <div class="rounded-lg bg-green-50 border border-green-200 p-2">
+              <div class="text-base font-bold text-green-700">{{ geocoding_stats.cache_resolved|floatformat:"0" }}</div>
+              <div class="text-[10px] text-green-600 uppercase tracking-wide">Resolved</div>
+            </div>
+            <div class="rounded-lg bg-amber-50 border border-amber-200 p-2">
+              <div class="text-base font-bold text-amber-700">{{ geocoding_stats.cache_unknown|floatformat:"0" }}</div>
+              <div class="text-[10px] text-amber-600 uppercase tracking-wide">Unknown</div>
+            </div>
+            <div class="rounded-lg bg-red-50 border border-red-200 p-2">
+              <div class="text-base font-bold text-red-700">{{ geocoding_stats.cache_failed|floatformat:"0" }}</div>
+              <div class="text-[10px] text-red-600 uppercase tracking-wide">Failed</div>
+            </div>
+          </div>
+          {% if geocoding_stats.by_source %}
+          <div class="mt-3 flex flex-wrap gap-1.5 text-[10px]">
+            <span class="text-gray-400 uppercase tracking-wide">Resolved by:</span>
+            {% for source, count in geocoding_stats.by_source.items %}
+              <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-gray-100 border border-gray-200 text-gray-700">
+                <strong>{{ source }}</strong>
+                <span class="font-mono">{{ count|floatformat:"0" }}</span>
+              </span>
+            {% endfor %}
+          </div>
+          {% endif %}
+        </div>
+
+        <p class="mt-3 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-[11px] text-blue-800">
+          🔒 Tokens must live in environment variables, never in code or DB.
+          When provider is OFF, the system stays free + rule-based forever.
+        </p>
       </div>
 
     </div>

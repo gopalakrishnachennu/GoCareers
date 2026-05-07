@@ -2650,6 +2650,101 @@ class EngineConfigView(SuperuserRequiredMixin, View):
     """GET = show engine config GUI. POST = save + broadcast rate limit live."""
     template_name = "harvest/settings_engine.html"
 
+    @staticmethod
+    def _geocoding_stats(cfg) -> dict:
+        """Build the dashboard data for the Location Resolver & Mapbox card.
+
+        Returns:
+            {
+              "provider": "mapbox" | "google" | "none",
+              "provider_enabled": bool,
+              "monthly_limit": int,
+              "provider_monthly_used": int,
+              "provider_monthly_pct": float,    # for progress bar
+              "tone": "good" | "warn" | "bad",
+              "token_present": bool,
+              "token_env_var": "MAPBOX_ACCESS_TOKEN",
+              "cache_total": int,
+              "cache_resolved": int,
+              "cache_unknown": int,
+              "cache_failed": int,
+              "by_source": {"rules": N, "city_dict": N, "provider": N, ...},
+              "by_country_top": [{"country_code": "US", "count": N}, ...],
+              "rate_remaining": int,
+              "rate_remaining_pct": float,
+            }
+        """
+        import os
+        from django.db.models import Count
+        from .location_resolver import provider_requests_this_month
+        from .models import LocationCache
+
+        provider = (cfg.geocoding_provider or "none").strip().lower()
+        provider_enabled = bool(cfg.geocoding_provider_enabled)
+        monthly_limit = int(cfg.geocoding_monthly_limit or 0)
+
+        # Provider call counter (per calendar month) — only counts rows that
+        # actually hit a provider (provider_place_id non-empty).
+        try:
+            used = provider_requests_this_month(provider)
+        except Exception:
+            used = 0
+        pct = round(100.0 * used / monthly_limit, 1) if monthly_limit else 0.0
+        if pct >= 90:
+            tone = "bad"
+        elif pct >= 70:
+            tone = "warn"
+        else:
+            tone = "good"
+
+        # Token presence — never expose the value, just whether it's set.
+        token_env_var = "MAPBOX_ACCESS_TOKEN" if provider == "mapbox" else (
+            "GOOGLE_MAPS_API_KEY" if provider == "google" else ""
+        )
+        token_present = bool(os.getenv(token_env_var, "").strip()) if token_env_var else False
+
+        # LocationCache stats — single aggregate query, no per-row work.
+        try:
+            cache_qs = LocationCache.objects.all()
+            cache_total = cache_qs.count()
+            by_status = dict(
+                cache_qs.values("status").annotate(c=Count("id")).values_list("status", "c")
+            )
+            by_source = dict(
+                cache_qs.exclude(source="")
+                .values("source").annotate(c=Count("id")).values_list("source", "c")
+            )
+            by_country_top = list(
+                cache_qs.exclude(country_code="")
+                .values("country_code").annotate(c=Count("id"))
+                .order_by("-c")[:8]
+            )
+            for row in by_country_top:
+                row["count"] = row.pop("c")
+        except Exception:
+            cache_total = 0
+            by_status, by_source, by_country_top = {}, {}, []
+
+        return {
+            "provider": provider,
+            "provider_enabled": provider_enabled,
+            "monthly_limit": monthly_limit,
+            "provider_monthly_used": used,
+            "provider_monthly_pct": pct,
+            "tone": tone,
+            "token_present": token_present,
+            "token_env_var": token_env_var,
+            "cache_total": cache_total,
+            "cache_resolved": by_status.get("RESOLVED", 0),
+            "cache_unknown": by_status.get("UNKNOWN", 0),
+            "cache_failed": by_status.get("FAILED", 0),
+            "cache_rate_limited": by_status.get("RATE_LIMITED", 0),
+            "by_source": by_source,
+            "by_country_top": by_country_top,
+            "rate_remaining": max(0, monthly_limit - used) if monthly_limit else 0,
+            "rate_remaining_pct": round(100.0 - pct, 1) if monthly_limit else 0.0,
+        }
+
     def get(self, request, *args, **kwargs):
         import os
         from django.template.response import TemplateResponse
@@ -2683,12 +2778,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             ("CA", "Canada"),
         ]
         selected_countries = cfg.get_target_countries()
-        provider_monthly_used = 0
-        try:
-            from .location_resolver import provider_requests_this_month
-            provider_monthly_used = provider_requests_this_month(cfg.geocoding_provider)
-        except Exception:
-            provider_monthly_used = 0
+        geocoding_stats = self._geocoding_stats(cfg)
 
         ctx = {
             "cfg": cfg,
@@ -2699,7 +2789,9 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "concurrency_presets": [1, 2, 3, 4, 6, 8],
             "country_options": country_options,
             "selected_countries": selected_countries,
-            "provider_monthly_used": provider_monthly_used,
+            "geocoding_stats": geocoding_stats,
+            # Backwards-compat for existing template fragments:
+            "provider_monthly_used": geocoding_stats["provider_monthly_used"],
             **_full_crawl_cooldown_ctx(),
         }
         return TemplateResponse(request, self.template_name, ctx)
