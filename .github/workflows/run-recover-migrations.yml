@@ -1,0 +1,34 @@
+name: Run — Recover Migrations (one-shot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      fake_to:
+        description: "App+migration to fake (e.g. 'harvest 0028')"
+        required: true
+        default: "harvest 0028"
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fake-apply migration then continue
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            FAKE_TO="${{ github.event.inputs.fake_to }}"
+            echo "Faking ${FAKE_TO} as already-applied..."
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py migrate ${FAKE_TO} --fake --no-input
+            echo "Now running full migrate to catch up remaining..."
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py migrate --no-input
+            echo "Migration state after recovery:"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py showmigrations harvest | tail -20
