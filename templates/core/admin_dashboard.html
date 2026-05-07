@@ -286,38 +286,38 @@
 
             <!-- Per-employee funnel -->
             <h3 class="text-sm font-medium text-gray-700 mb-3">Funnel by employee (drop-off rates)</h3>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Employee</th>
-                            <th class="px-4 py-3 text-right font-mono">Resumes</th>
-                            <th class="px-4 py-3 text-right font-mono">Submitted</th>
-                            <th class="px-4 py-3 text-right font-mono">Interview</th>
-                            <th class="px-4 py-3 text-right font-mono">Hired</th>
-                            <th class="px-4 py-3 text-right font-mono">Rejected</th>
-                            <th class="px-4 py-3 text-right">Res→Sub %</th>
-                            <th class="px-4 py-3 text-right">Sub→Int %</th>
-                            <th class="px-4 py-3 text-right">Int→Hire %</th>
-                            <th class="px-4 py-3 text-right">Reject %</th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Employee</th>
+                            <th class="tbl-th-right font-mono">Resumes</th>
+                            <th class="tbl-th-right font-mono">Submitted</th>
+                            <th class="tbl-th-right font-mono">Interview</th>
+                            <th class="tbl-th-right font-mono">Hired</th>
+                            <th class="tbl-th-right font-mono">Rejected</th>
+                            <th class="tbl-th-right">Res→Sub %</th>
+                            <th class="tbl-th-right">Sub→Int %</th>
+                            <th class="tbl-th-right">Int→Hire %</th>
+                            <th class="tbl-th-right">Reject %</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in funnel_by_employee %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3 font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.resumes }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.submitted }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.interview }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.hired }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-red-700">{{ row.rejected|default:0 }}</td>
-                            <td class="px-4 py-3 text-right">{% if row.conv_resumes_to_submitted_pct is not None %}{{ row.conv_resumes_to_submitted_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.conv_submitted_to_interview_pct is not None %}{{ row.conv_submitted_to_interview_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.conv_interview_to_hired_pct is not None %}{{ row.conv_interview_to_hired_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.rejection_rate_submitted_pct is not None %}{{ row.rejection_rate_submitted_pct }}%{% else %}—{% endif %}</td>
+                        <tr class="tbl-row">
+                            <td class="tbl-td font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.resumes }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.submitted }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.interview }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.hired }}</td>
+                            <td class="tbl-td-right font-mono text-red-700">{{ row.rejected|default:0 }}</td>
+                            <td class="tbl-td-right">{% if row.conv_resumes_to_submitted_pct is not None %}{{ row.conv_resumes_to_submitted_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.conv_submitted_to_interview_pct is not None %}{{ row.conv_submitted_to_interview_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.conv_interview_to_hired_pct is not None %}{{ row.conv_interview_to_hired_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.rejection_rate_submitted_pct is not None %}{{ row.rejection_rate_submitted_pct }}%{% else %}—{% endif %}</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="10" class="px-4 py-6 text-center text-gray-500">No employee data.</td></tr>
+                        <tr><td colspan="10" class="tbl-empty">No employee data.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -328,43 +328,43 @@
         <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
             <h2 class="text-lg font-semibold text-gray-800 border-b border-gray-100 pb-3 mb-4">👤 Consultant Performance Score</h2>
             <p class="text-sm text-gray-500 mb-4">Score each consultant on interview rate, hire rate, and avg employer response time (days). Helps employees pick the best performers.</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Consultant</th>
-                            <th class="px-4 py-3 text-right font-mono">Submissions</th>
-                            <th class="px-4 py-3 text-right">Interview rate</th>
-                            <th class="px-4 py-3 text-right">Hire rate</th>
-                            <th class="px-4 py-3 text-right">Avg response (days)</th>
-                            <th class="px-4 py-3 text-right">Rejected</th>
-                            <th class="px-4 py-3 text-right">Reject %</th>
-                            <th class="px-4 py-3 text-right">Score (0–100)</th>
-                            <th class="px-4 py-3 w-20"></th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Consultant</th>
+                            <th class="tbl-th-right font-mono">Submissions</th>
+                            <th class="tbl-th-right">Interview rate</th>
+                            <th class="tbl-th-right">Hire rate</th>
+                            <th class="tbl-th-right">Avg response (days)</th>
+                            <th class="tbl-th-right">Rejected</th>
+                            <th class="tbl-th-right">Reject %</th>
+                            <th class="tbl-th-right">Score (0–100)</th>
+                            <th class="tbl-th w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in consultant_performance %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3 font-medium text-gray-900">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.total_submissions }}</td>
-                            <td class="px-4 py-3 text-right">{% if row.interview_rate_pct is not None %}{{ row.interview_rate_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.hire_rate_pct is not None %}{{ row.hire_rate_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.avg_response_days is not None %}{{ row.avg_response_days }}{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right font-mono text-red-700">{{ row.rejected_count|default:0 }}</td>
-                            <td class="px-4 py-3 text-right">{% if row.rejection_rate_pct is not None %}{{ row.rejection_rate_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">
+                        <tr class="tbl-row">
+                            <td class="tbl-td font-medium text-gray-900">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.total_submissions }}</td>
+                            <td class="tbl-td-right">{% if row.interview_rate_pct is not None %}{{ row.interview_rate_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.hire_rate_pct is not None %}{{ row.hire_rate_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.avg_response_days is not None %}{{ row.avg_response_days }}{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right font-mono text-red-700">{{ row.rejected_count|default:0 }}</td>
+                            <td class="tbl-td-right">{% if row.rejection_rate_pct is not None %}{{ row.rejection_rate_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">
                                 {% if row.performance_score is not None %}
-                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold {% if row.performance_score >= 70 %}bg-emerald-100 text-emerald-800{% elif row.performance_score >= 40 %}bg-amber-100 text-amber-800{% else %}bg-gray-100 text-gray-700{% endif %}">{{ row.performance_score }}</span>
+                                <span class="{% if row.performance_score >= 70 %}badge-green{% elif row.performance_score >= 40 %}badge-yellow{% else %}badge-gray{% endif %}">{{ row.performance_score }}</span>
                                 {% else %}—
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3">
-                                <a href="{% url 'consultant-detail' row.consultant.user.pk %}" class="text-blue-600 hover:underline text-xs font-medium">Profile</a>
+                            <td class="tbl-td">
+                                <a href="{% url 'consultant-detail' row.consultant.user.pk %}" class="link-action text-xs">Profile</a>
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="9" class="px-4 py-6 text-center text-gray-500">No consultants yet.</td></tr>
+                        <tr><td colspan="9" class="tbl-empty">No consultants yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -404,36 +404,36 @@
         <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
             <h2 class="text-lg font-semibold text-gray-800 border-b border-gray-100 pb-3 mb-4">🏆 Employee Leaderboard</h2>
             <p class="text-sm text-gray-500 mb-4">Submission-to-interview rate and most hires. Creates healthy competition and identifies top performers.</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3 w-12">#</th>
-                            <th class="px-4 py-3">Employee</th>
-                            <th class="px-4 py-3 text-right font-mono">Submissions</th>
-                            <th class="px-4 py-3 text-right font-mono">Interviews</th>
-                            <th class="px-4 py-3 text-right font-mono">Hires</th>
-                            <th class="px-4 py-3 text-right font-mono">Rejected</th>
-                            <th class="px-4 py-3 text-right">Sub→Interview %</th>
-                            <th class="px-4 py-3 text-right">Reject %</th>
-                            <th class="px-4 py-3 w-20"></th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th w-12">#</th>
+                            <th class="tbl-th">Employee</th>
+                            <th class="tbl-th-right font-mono">Submissions</th>
+                            <th class="tbl-th-right font-mono">Interviews</th>
+                            <th class="tbl-th-right font-mono">Hires</th>
+                            <th class="tbl-th-right font-mono">Rejected</th>
+                            <th class="tbl-th-right">Sub→Interview %</th>
+                            <th class="tbl-th-right">Reject %</th>
+                            <th class="tbl-th w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in employee_leaderboard %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50 {% if row.rank == 1 %}bg-amber-50/50{% endif %}">
-                            <td class="px-4 py-3 font-bold text-gray-700">{% if row.rank <= 3 %}{{ row.rank }}{% else %}{{ row.rank }}{% endif %}</td>
-                            <td class="px-4 py-3 font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.submissions }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.interviews }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-emerald-700">{{ row.hires }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-red-700">{{ row.rejections|default:0 }}</td>
-                            <td class="px-4 py-3 text-right">{% if row.sub_to_interview_rate_pct is not None %}{{ row.sub_to_interview_rate_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">{% if row.rejection_rate_pct is not None %}{{ row.rejection_rate_pct }}%{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3"><a href="{% url 'employee-detail' row.user.pk %}" class="text-blue-600 hover:underline text-xs font-medium">Profile</a></td>
+                        <tr class="tbl-row {% if row.rank == 1 %}bg-amber-50/50{% endif %}">
+                            <td class="tbl-td font-bold text-gray-700">{% if row.rank <= 3 %}{{ row.rank }}{% else %}{{ row.rank }}{% endif %}</td>
+                            <td class="tbl-td font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.submissions }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.interviews }}</td>
+                            <td class="tbl-td-right font-mono text-emerald-700">{{ row.hires }}</td>
+                            <td class="tbl-td-right font-mono text-red-700">{{ row.rejections|default:0 }}</td>
+                            <td class="tbl-td-right">{% if row.sub_to_interview_rate_pct is not None %}{{ row.sub_to_interview_rate_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">{% if row.rejection_rate_pct is not None %}{{ row.rejection_rate_pct }}%{% else %}—{% endif %}</td>
+                            <td class="tbl-td"><a href="{% url 'employee-detail' row.user.pk %}" class="link-action text-xs">Profile</a></td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="9" class="px-4 py-6 text-center text-gray-500">No employees yet.</td></tr>
+                        <tr><td colspan="9" class="tbl-empty">No employees yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -446,23 +446,23 @@
             <p class="text-sm text-gray-500 mb-4">
                 Interview rate per employee (interviews ÷ submissions). Shows who is doing the smartest work, not just the most work.
             </p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Employee</th>
-                            <th class="px-4 py-3 text-right font-mono">Submissions</th>
-                            <th class="px-4 py-3 text-right font-mono">Interviews</th>
-                            <th class="px-4 py-3 text-right">Quality %</th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Employee</th>
+                            <th class="tbl-th-right font-mono">Submissions</th>
+                            <th class="tbl-th-right font-mono">Interviews</th>
+                            <th class="tbl-th-right">Quality %</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in submission_quality %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3 font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.submissions }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.interviews }}</td>
-                            <td class="px-4 py-3 text-right">
+                        <tr class="tbl-row">
+                            <td class="tbl-td font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.submissions }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.interviews }}</td>
+                            <td class="tbl-td-right">
                                 {% if row.quality_pct is not None %}
                                     {{ row.quality_pct }}%
                                 {% else %}
@@ -471,7 +471,7 @@
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="4" class="px-4 py-6 text-center text-gray-500">No employee submissions yet.</td></tr>
+                        <tr><td colspan="4" class="tbl-empty">No employee submissions yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -541,36 +541,36 @@
         <div class="bg-white rounded-xl border border-gray-200 p-5 mb-5">
             <h2 class="text-lg font-semibold text-gray-800 border-b border-gray-100 pb-3 mb-4">💰 Consultant ROI Score</h2>
             <p class="text-sm text-gray-500 mb-4">Total submissions, interviews, placements, and revenue proxy. Shows which consultants are worth investing time in.</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Consultant</th>
-                            <th class="px-4 py-3 text-right font-mono">Submissions</th>
-                            <th class="px-4 py-3 text-right font-mono">Interviews</th>
-                            <th class="px-4 py-3 text-right font-mono">Placements</th>
-                            <th class="px-4 py-3 text-right font-mono">Rejected</th>
-                            <th class="px-4 py-3 text-right">Revenue proxy</th>
-                            <th class="px-4 py-3 text-right">ROI Score</th>
-                            <th class="px-4 py-3 w-20"></th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Consultant</th>
+                            <th class="tbl-th-right font-mono">Submissions</th>
+                            <th class="tbl-th-right font-mono">Interviews</th>
+                            <th class="tbl-th-right font-mono">Placements</th>
+                            <th class="tbl-th-right font-mono">Rejected</th>
+                            <th class="tbl-th-right">Revenue proxy</th>
+                            <th class="tbl-th-right">ROI Score</th>
+                            <th class="tbl-th w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in consultant_roi %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3 font-medium text-gray-900">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.total_submissions }}</td>
-                            <td class="px-4 py-3 text-right font-mono">{{ row.interviews }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-emerald-700">{{ row.placements }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-red-700">{{ row.rejections|default:0 }}</td>
-                            <td class="px-4 py-3 text-right">{% if row.revenue_generated is not None %}${{ row.revenue_generated|floatformat:0 }}{% else %}—{% endif %}</td>
-                            <td class="px-4 py-3 text-right">
-                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold {% if row.roi_score >= 60 %}bg-emerald-100 text-emerald-800{% elif row.roi_score >= 30 %}bg-amber-100 text-amber-800{% else %}bg-gray-100 text-gray-700{% endif %}">{{ row.roi_score }}</span>
+                        <tr class="tbl-row">
+                            <td class="tbl-td font-medium text-gray-900">{{ row.consultant.user.get_full_name|default:row.consultant.user.username }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.total_submissions }}</td>
+                            <td class="tbl-td-right font-mono">{{ row.interviews }}</td>
+                            <td class="tbl-td-right font-mono text-emerald-700">{{ row.placements }}</td>
+                            <td class="tbl-td-right font-mono text-red-700">{{ row.rejections|default:0 }}</td>
+                            <td class="tbl-td-right">{% if row.revenue_generated is not None %}${{ row.revenue_generated|floatformat:0 }}{% else %}—{% endif %}</td>
+                            <td class="tbl-td-right">
+                                <span class="{% if row.roi_score >= 60 %}badge-green{% elif row.roi_score >= 30 %}badge-yellow{% else %}badge-gray{% endif %}">{{ row.roi_score }}</span>
                             </td>
-                            <td class="px-4 py-3"><a href="{% url 'consultant-detail' row.consultant.user.pk %}" class="text-blue-600 hover:underline text-xs font-medium">Profile</a></td>
+                            <td class="tbl-td"><a href="{% url 'consultant-detail' row.consultant.user.pk %}" class="link-action text-xs">Profile</a></td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="8" class="px-4 py-6 text-center text-gray-500">No consultants yet.</td></tr>
+                        <tr><td colspan="8" class="tbl-empty">No consultants yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -584,42 +584,42 @@
                 <h2 class="text-sm font-semibold text-gray-800">Employees · micro view</h2>
                 <a href="{% url 'employee-list' %}" class="text-sm font-medium text-blue-600 hover:underline">View all →</a>
             </div>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Employee</th>
-                            <th class="px-4 py-3">Company / Dept</th>
-                            <th class="px-4 py-3 text-right font-mono">Jobs</th>
-                            <th class="px-4 py-3 text-right font-mono">Open</th>
-                            <th class="px-4 py-3 text-right font-mono">Apps</th>
-                            <th class="px-4 py-3 text-right font-mono">Pending</th>
-                            <th class="px-4 py-3 w-20"></th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Employee</th>
+                            <th class="tbl-th">Company / Dept</th>
+                            <th class="tbl-th-right font-mono">Jobs</th>
+                            <th class="tbl-th-right font-mono">Open</th>
+                            <th class="tbl-th-right font-mono">Apps</th>
+                            <th class="tbl-th-right font-mono">Pending</th>
+                            <th class="tbl-th w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in employee_stats %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3">
+                        <tr class="tbl-row">
+                            <td class="tbl-td">
                                 <span class="font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</span>
                                 <span class="block text-xs text-gray-500">{{ row.user.email }}</span>
                             </td>
-                            <td class="px-4 py-3 text-gray-600">
+                            <td class="tbl-td text-gray-600">
                                 {{ row.user.employee_profile.company_name|default:"—" }}
                                 {% if row.user.employee_profile.department %}
                                 <span class="text-gray-400"> · {{ row.user.employee_profile.department.name }}</span>
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-800">{{ row.jobs_posted }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-800">{{ row.open_jobs }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-800">{{ row.apps_received }}</td>
-                            <td class="px-4 py-3 text-right font-mono {% if row.pending %}text-amber-600 font-semibold{% else %}text-gray-500{% endif %}">{{ row.pending }}</td>
-                            <td class="px-4 py-3">
-                                <a href="{% url 'employee-detail' row.user.pk %}" class="text-blue-600 hover:underline text-xs font-medium">Profile</a>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ row.jobs_posted }}</td>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ row.open_jobs }}</td>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ row.apps_received }}</td>
+                            <td class="tbl-td-right font-mono {% if row.pending %}text-amber-600 font-semibold{% else %}text-gray-500{% endif %}">{{ row.pending }}</td>
+                            <td class="tbl-td">
+                                <a href="{% url 'employee-detail' row.user.pk %}" class="link-action text-xs">Profile</a>
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="7" class="px-4 py-8 text-center text-gray-500">No employees yet.</td></tr>
+                        <tr><td colspan="7" class="tbl-empty py-8">No employees yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -633,49 +633,45 @@
                 <h2 class="text-sm font-semibold text-gray-800">Consultants · micro view</h2>
                 <a href="{% url 'consultant-list' %}" class="text-sm font-medium text-blue-600 hover:underline">View all →</a>
             </div>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-4 py-3">Consultant</th>
-                            <th class="px-4 py-3">Status</th>
-                            <th class="px-4 py-3 text-right font-mono">Total</th>
-                            <th class="px-4 py-3 text-right font-mono">In progress</th>
-                            <th class="px-4 py-3 text-right font-mono">Applied</th>
-                            <th class="px-4 py-3 text-right font-mono">Interview</th>
-                            <th class="px-4 py-3 text-right font-mono">Offer</th>
-                            <th class="px-4 py-3 text-right font-mono">Rejected</th>
-                            <th class="px-4 py-3 w-20"></th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Consultant</th>
+                            <th class="tbl-th">Status</th>
+                            <th class="tbl-th-right font-mono">Total</th>
+                            <th class="tbl-th-right font-mono">In progress</th>
+                            <th class="tbl-th-right font-mono">Applied</th>
+                            <th class="tbl-th-right font-mono">Interview</th>
+                            <th class="tbl-th-right font-mono">Offer</th>
+                            <th class="tbl-th-right font-mono">Rejected</th>
+                            <th class="tbl-th w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for c in consultant_stats %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/50">
-                            <td class="px-4 py-3">
+                        <tr class="tbl-row">
+                            <td class="tbl-td">
                                 <span class="font-medium text-gray-900">{{ c.user.get_full_name|default:c.user.username }}</span>
                             </td>
-                            <td class="px-4 py-3">
-                                <span class="px-2 py-0.5 rounded-full text-xs font-medium
-                                    {% if c.status == 'ACTIVE' %}bg-emerald-50 text-emerald-700
-                                    {% elif c.status == 'BENCH' %}bg-amber-50 text-amber-700
-                                    {% elif c.status == 'PLACED' %}bg-blue-50 text-blue-700
-                                    {% else %}bg-gray-100 text-gray-600{% endif %}">
+                            <td class="tbl-td">
+                                <span class="{% if c.status == 'ACTIVE' %}badge-green{% elif c.status == 'BENCH' %}badge-yellow{% elif c.status == 'PLACED' %}badge-blue{% else %}badge-gray{% endif %}">
                                     {{ c.get_status_display }}
                                 </span>
                             </td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-800">{{ c.total_apps }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ c.in_progress }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ c.applied }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ c.interview }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ c.offer }}</td>
-                            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ c.rejected }}</td>
-                            <td class="px-4 py-3 flex gap-2">
-                                <a href="{% url 'consultant-detail' c.user.pk %}" class="text-blue-600 hover:underline text-xs font-medium">Profile</a>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ c.total_apps }}</td>
+                            <td class="tbl-td-right font-mono text-gray-600">{{ c.in_progress }}</td>
+                            <td class="tbl-td-right font-mono text-gray-600">{{ c.applied }}</td>
+                            <td class="tbl-td-right font-mono text-gray-600">{{ c.interview }}</td>
+                            <td class="tbl-td-right font-mono text-gray-600">{{ c.offer }}</td>
+                            <td class="tbl-td-right font-mono text-gray-600">{{ c.rejected }}</td>
+                            <td class="tbl-td flex gap-2">
+                                <a href="{% url 'consultant-detail' c.user.pk %}" class="link-action text-xs">Profile</a>
                                 <a href="{% url 'consultant-public-profile' slug=c.profile_slug %}" target="_blank" rel="noopener" class="text-gray-500 hover:text-gray-700 text-xs font-medium" title="Public profile">Public</a>
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="9" class="px-4 py-8 text-center text-gray-500">No consultants yet.</td></tr>
+                        <tr><td colspan="9" class="tbl-empty py-8">No consultants yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>

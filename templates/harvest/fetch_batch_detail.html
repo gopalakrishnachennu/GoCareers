@@ -112,28 +112,28 @@
         <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">This batch — by platform</h2>
         <p class="text-xs text-slate-500">Ok = SUCCESS + PARTIAL · Bad = FAILED + SKIPPED</p>
       </div>
-      <div class="overflow-x-auto">
+      <div class="table-scroll">
         <table class="min-w-full text-sm">
-          <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <thead class="tbl-head">
             <tr>
-              <th class="px-4 py-2">Platform</th>
-              <th class="px-4 py-2">Companies</th>
-              <th class="px-4 py-2">Ok</th>
-              <th class="px-4 py-2">Bad</th>
-              <th class="px-4 py-2">Running</th>
+              <th class="tbl-th">Platform</th>
+              <th class="tbl-th">Companies</th>
+              <th class="tbl-th">Ok</th>
+              <th class="tbl-th">Bad</th>
+              <th class="tbl-th">Running</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody>
             {% for row in batch_platform_rows %}
-            <tr class="hover:bg-slate-50">
-              <td class="px-4 py-2 font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
-              <td class="px-4 py-2">{{ row.total }}</td>
-              <td class="px-4 py-2 text-emerald-700">{{ row.ok }}</td>
-              <td class="px-4 py-2 text-rose-700">{{ row.bad }}</td>
-              <td class="px-4 py-2 text-amber-700">{{ row.running }}</td>
+            <tr class="tbl-row">
+              <td class="tbl-td font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
+              <td class="tbl-td">{{ row.total }}</td>
+              <td class="tbl-td text-emerald-700">{{ row.ok }}</td>
+              <td class="tbl-td text-rose-700">{{ row.bad }}</td>
+              <td class="tbl-td text-amber-700">{{ row.running }}</td>
             </tr>
             {% empty %}
-            <tr><td colspan="5" class="px-4 py-6 text-center text-slate-500">No company runs recorded yet.</td></tr>
+            <tr><td colspan="5" class="tbl-empty">No company runs recorded yet.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -145,26 +145,26 @@
         <h2 class="text-sm font-bold uppercase tracking-wide text-slate-700">Last 7 days — platforms struggling most</h2>
         <p class="text-xs text-slate-500">All batches combined · sorted by “bad” runs</p>
       </div>
-      <div class="overflow-x-auto max-h-80 overflow-y-auto">
+      <div class="table-scroll max-h-80 overflow-y-auto">
         <table class="min-w-full text-sm">
-          <thead class="sticky top-0 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+          <thead class="tbl-head sticky top-0">
             <tr>
-              <th class="px-4 py-2">Platform</th>
-              <th class="px-4 py-2">Runs</th>
-              <th class="px-4 py-2">Ok</th>
-              <th class="px-4 py-2">Bad</th>
+              <th class="tbl-th">Platform</th>
+              <th class="tbl-th">Runs</th>
+              <th class="tbl-th">Ok</th>
+              <th class="tbl-th">Bad</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody>
             {% for row in platform_health_7d %}
-            <tr class="hover:bg-slate-50">
-              <td class="px-4 py-2 font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
-              <td class="px-4 py-2">{{ row.total }}</td>
-              <td class="px-4 py-2 text-emerald-700">{{ row.ok }}</td>
-              <td class="px-4 py-2 text-rose-700">{{ row.bad }}</td>
+            <tr class="tbl-row">
+              <td class="tbl-td font-mono text-xs">{{ row.label__platform__slug|default:"—" }}</td>
+              <td class="tbl-td">{{ row.total }}</td>
+              <td class="tbl-td text-emerald-700">{{ row.ok }}</td>
+              <td class="tbl-td text-rose-700">{{ row.bad }}</td>
             </tr>
             {% empty %}
-            <tr><td colspan="4" class="px-4 py-6 text-center text-slate-500">No harvest runs in the last 7 days.</td></tr>
+            <tr><td colspan="4" class="tbl-empty">No harvest runs in the last 7 days.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -179,55 +179,55 @@
         <p class="text-xs text-slate-500">Filter:</p>
       </div>
       <form method="get" class="flex flex-wrap items-center gap-2">
-        <select name="status" class="rounded-lg border border-slate-300 px-3 py-1.5 text-sm">
+        <select name="status" class="form-select max-w-[12rem]">
           <option value="">All statuses</option>
           {% for s in valid_run_statuses %}
           <option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>
           {% endfor %}
         </select>
-        <button type="submit" class="rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-semibold text-white">Apply</button>
+        <button type="submit" class="btn-primary">Apply</button>
       </form>
     </div>
-    <div class="overflow-x-auto">
+    <div class="table-scroll">
       <table class="min-w-full text-sm">
-        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+        <thead class="tbl-head">
           <tr>
-            <th class="px-4 py-2">Company</th>
-            <th class="px-4 py-2">Platform</th>
-            <th class="px-4 py-2">Status</th>
-            <th class="px-4 py-2">Found</th>
-            <th class="px-4 py-2">New</th>
-            <th class="px-4 py-2">Upd</th>
-            <th class="px-4 py-2">Dup</th>
-            <th class="px-4 py-2">Fail rows</th>
-            <th class="px-4 py-2">Error</th>
+            <th class="tbl-th">Company</th>
+            <th class="tbl-th">Platform</th>
+            <th class="tbl-th">Status</th>
+            <th class="tbl-th">Found</th>
+            <th class="tbl-th">New</th>
+            <th class="tbl-th">Upd</th>
+            <th class="tbl-th">Dup</th>
+            <th class="tbl-th">Fail rows</th>
+            <th class="tbl-th">Error</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-slate-100">
+        <tbody>
           {% for run in runs %}
-          <tr class="hover:bg-slate-50 align-top">
-            <td class="px-4 py-2 font-medium text-slate-900">{{ run.label.company.name|default:"—" }}</td>
-            <td class="px-4 py-2 font-mono text-xs">{{ run.label.platform.slug|default:"—" }}</td>
-            <td class="px-4 py-2">
+          <tr class="tbl-row align-top">
+            <td class="tbl-td font-medium text-slate-900">{{ run.label.company.name|default:"—" }}</td>
+            <td class="tbl-td font-mono text-xs">{{ run.label.platform.slug|default:"—" }}</td>
+            <td class="tbl-td">
               {% if run.status == "SUCCESS" %}
-              <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-800">{{ run.status }}</span>
+              <span class="badge-green">{{ run.status }}</span>
               {% elif run.status == "PARTIAL" %}
-              <span class="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900">{{ run.status }}</span>
+              <span class="badge-yellow">{{ run.status }}</span>
               {% elif run.status == "RUNNING" %}
-              <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-semibold text-blue-800">{{ run.status }}</span>
+              <span class="badge-blue">{{ run.status }}</span>
               {% else %}
-              <span class="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-semibold text-rose-800">{{ run.status }}</span>
+              <span class="badge-red">{{ run.status }}</span>
               {% endif %}
             </td>
-            <td class="px-4 py-2">{{ run.jobs_found }}</td>
-            <td class="px-4 py-2">{{ run.jobs_new }}</td>
-            <td class="px-4 py-2">{{ run.jobs_updated }}</td>
-            <td class="px-4 py-2">{{ run.jobs_duplicate }}</td>
-            <td class="px-4 py-2">{{ run.jobs_failed }}</td>
-            <td class="px-4 py-2 max-w-md text-xs text-slate-600 break-words">{{ run.error_message|default:"—"|truncatechars:160 }}</td>
+            <td class="tbl-td">{{ run.jobs_found }}</td>
+            <td class="tbl-td">{{ run.jobs_new }}</td>
+            <td class="tbl-td">{{ run.jobs_updated }}</td>
+            <td class="tbl-td">{{ run.jobs_duplicate }}</td>
+            <td class="tbl-td">{{ run.jobs_failed }}</td>
+            <td class="tbl-td max-w-md text-xs text-slate-600 break-words">{{ run.error_message|default:"—"|truncatechars:160 }}</td>
           </tr>
           {% empty %}
-          <tr><td colspan="9" class="px-4 py-8 text-center text-slate-500">No runs match this filter.</td></tr>
+          <tr><td colspan="9" class="tbl-empty">No runs match this filter.</td></tr>
           {% endfor %}
         </tbody>
       </table>

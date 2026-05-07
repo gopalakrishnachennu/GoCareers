@@ -451,58 +451,42 @@
         <!-- Existing Drafts Table -->
         <div class="p-6">
             {% if resume_drafts %}
-            <div class="overflow-x-auto">
-                <table class="min-w-full">
-                    <thead>
-                        <tr class="border-b border-gray-100">
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">Job
-                            </th>
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                Version</th>
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                Status</th>
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                Tokens</th>
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                Created</th>
-                            <th class="px-4 py-3 text-left text-xs font-bold text-gray-500 uppercase tracking-wider">
-                                Actions</th>
+            <div class="table-scroll">
+                <table class="min-w-full text-sm table-min-wide">
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Job</th>
+                            <th class="tbl-th">Version</th>
+                            <th class="tbl-th">Status</th>
+                            <th class="tbl-th">Tokens</th>
+                            <th class="tbl-th">Created</th>
+                            <th class="tbl-th">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for draft in resume_drafts %}
-                        <tr class="border-b border-gray-50 hover:bg-gray-50/50 transition">
-                            <td class="px-4 py-3 text-sm">
+                        <tr class="tbl-row">
+                            <td class="tbl-td">
                                 <div class="font-semibold text-gray-900">{{ draft.job.title }}</div>
-                                <div class="text-xs text-gray-500">{{ draft.job.company }}</div>
+                                <div class="tbl-meta">{{ draft.job.company }}</div>
                             </td>
-                            <td class="px-4 py-3 text-sm font-mono font-bold text-gray-700">v{{ draft.version }}</td>
-                            <td class="px-4 py-3 text-sm">
+                            <td class="tbl-td tbl-mono font-bold text-gray-700">v{{ draft.version }}</td>
+                            <td class="tbl-td">
                                 {% if draft.status == 'FINAL' %}
-                                <span
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">✅
-                                    Final</span>
+                                <span class="badge-green">✅ Final</span>
                                 {% elif draft.status == 'REVIEW' %}
-                                <span
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200">🕵️
-                                    Review</span>
+                                <span class="badge-yellow">🕵️ Review</span>
                                 {% elif draft.status == 'DRAFT' %}
-                                <span
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-50 text-blue-700 border border-blue-200">📝
-                                    Draft</span>
+                                <span class="badge-blue">📝 Draft</span>
                                 {% elif draft.status == 'ERROR' %}
-                                <span
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200"
-                                    title="{{ draft.error_message }}">❌ Error</span>
+                                <span class="badge-red" title="{{ draft.error_message }}">❌ Error</span>
                                 {% else %}
-                                <span
-                                    class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-yellow-50 text-yellow-700 border border-yellow-200">⏳
-                                    Processing</span>
+                                <span class="badge-yellow">⏳ Processing</span>
                                 {% endif %}
                             </td>
-                            <td class="px-4 py-3 text-sm text-gray-600">{{ draft.tokens_used|default:"—" }}</td>
-                            <td class="px-4 py-3 text-sm text-gray-600">{{ draft.created_at|date:"M d, H:i" }}</td>
-                            <td class="px-4 py-3 text-sm">
+                            <td class="tbl-td text-gray-600">{{ draft.tokens_used|default:"—" }}</td>
+                            <td class="tbl-td text-gray-600">{{ draft.created_at|date:"M d, H:i" }}</td>
+                            <td class="tbl-td text-sm">
                                 <div class="flex items-center gap-2 flex-wrap">
                                     {% if draft.status == 'DRAFT' or draft.status == 'FINAL' or draft.status == 'REVIEW' %}
                                     <a href="{% url 'draft-detail' draft.pk %}"

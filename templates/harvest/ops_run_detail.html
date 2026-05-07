@@ -13,7 +13,7 @@
         {% if ops_run.celery_task_id %}· Celery <code class="text-xs bg-slate-100 px-1 rounded">{{ ops_run.celery_task_id }}</code>{% endif %}
       </p>
     </div>
-    <a href="{% url 'harvest-batch-activity' %}" class="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">← Batch &amp; ops activity</a>
+    <a href="{% url 'harvest-batch-activity' %}" class="link-action text-sm rounded-lg border border-slate-300 bg-white px-4 py-2 hover:bg-slate-50">← Batch &amp; ops activity</a>
   </div>
 
   <dl class="mb-6 grid gap-3 text-sm sm:grid-cols-2">
@@ -27,7 +27,7 @@
     </div>
   </dl>
 
-  <section class="rounded-xl border border-slate-200 bg-slate-900 p-4 shadow-inner overflow-x-auto">
+  <section class="rounded-xl border border-slate-200 bg-slate-900 p-4 shadow-inner table-scroll">
     <p class="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">audit_payload</p>
     <pre class="text-xs text-emerald-100 font-mono whitespace-pre-wrap break-all">{{ audit_json }}</pre>
   </section>

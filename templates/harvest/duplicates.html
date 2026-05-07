@@ -148,24 +148,24 @@
         </div>
       </div>
 
-      <div class="overflow-x-auto">
+      <div class="table-scroll">
         <table class="w-full text-sm">
-          <thead class="bg-slate-50 border-b border-slate-200">
+          <thead class="tbl-head">
             <tr>
-              <th class="w-8 px-4 py-3 text-left"></th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Label</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Primary Job</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Duplicate</th>
-              <th class="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wider">Similarity</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Method</th>
-              <th class="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">Status</th>
-              <th class="px-4 py-3 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Actions</th>
+              <th class="w-8 tbl-th"></th>
+              <th class="tbl-th">Label</th>
+              <th class="tbl-th">Primary Job</th>
+              <th class="tbl-th">Duplicate</th>
+              <th class="tbl-th text-center">Similarity</th>
+              <th class="tbl-th">Method</th>
+              <th class="tbl-th">Status</th>
+              <th class="tbl-th-right">Actions</th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-slate-100">
+          <tbody>
             {% for pair in pairs %}
-            <tr class="hover:bg-slate-50 transition group">
-              <td class="px-4 py-3">
+            <tr class="tbl-row group">
+              <td class="tbl-td">
                 {% if pair.resolution == 'PENDING' %}
                 <input type="checkbox" name="pair_ids" value="{{ pair.pk }}"
                        class="pair-checkbox rounded border-slate-300"
@@ -174,23 +174,14 @@
               </td>
 
               {# Label badge #}
-              <td class="px-4 py-3 whitespace-nowrap">
-                <span class="inline-flex px-2.5 py-0.5 rounded-full text-xs font-semibold
-                  {% if pair.label == 'EXACT' %}bg-red-100 text-red-700
-                  {% elif pair.label == 'STRONG_MATCH' %}bg-orange-100 text-orange-700
-                  {% elif pair.label == 'URL_DUPLICATE' %}bg-yellow-100 text-yellow-700
-                  {% elif pair.label == 'REQUISITION' %}bg-purple-100 text-purple-700
-                  {% elif pair.label == 'NEAR_DUPLICATE' %}bg-blue-100 text-blue-700
-                  {% elif pair.label == 'LOCATION_VARIANT' %}bg-teal-100 text-teal-700
-                  {% elif pair.label == 'REPOST' %}bg-sky-100 text-sky-700
-                  {% elif pair.label == 'AGENCY_DUP' %}bg-pink-100 text-pink-700
-                  {% else %}bg-slate-100 text-slate-600{% endif %}">
+              <td class="tbl-td whitespace-nowrap">
+                <span class="{% if pair.label == 'EXACT' %}badge-red{% elif pair.label == 'STRONG_MATCH' %}badge-yellow{% elif pair.label == 'URL_DUPLICATE' %}badge-yellow{% elif pair.label == 'REQUISITION' %}badge-indigo{% elif pair.label == 'NEAR_DUPLICATE' %}badge-blue{% elif pair.label == 'LOCATION_VARIANT' %}badge-green{% elif pair.label == 'REPOST' %}badge-blue{% elif pair.label == 'AGENCY_DUP' %}badge-indigo{% else %}badge-gray{% endif %}">
                   {{ pair.get_label_display }}
                 </span>
               </td>
 
               {# Primary job #}
-              <td class="px-4 py-3 max-w-[220px]">
+              <td class="tbl-td max-w-[220px]">
                 <a href="{% url 'harvest-rawjob-detail' pair.primary.pk %}" target="_blank"
                    class="font-medium text-slate-800 hover:text-indigo-600 truncate block leading-tight">
                   {{ pair.primary.title|truncatechars:50 }}
@@ -203,7 +194,7 @@
               </td>
 
               {# Duplicate job #}
-              <td class="px-4 py-3 max-w-[220px]">
+              <td class="tbl-td max-w-[220px]">
                 <a href="{% url 'harvest-rawjob-detail' pair.duplicate.pk %}" target="_blank"
                    class="font-medium text-slate-700 hover:text-indigo-600 truncate block leading-tight">
                   {{ pair.duplicate.title|truncatechars:50 }}
@@ -216,25 +207,20 @@
               </td>
 
               {# Similarity #}
-              <td class="px-4 py-3 text-center">
+              <td class="tbl-td text-center">
                 <span class="font-semibold {% if pair.similarity >= 0.95 %}text-red-600{% elif pair.similarity >= 0.85 %}text-orange-500{% else %}text-slate-600{% endif %}">
                   {{ pair.similarity|floatformat:2 }}
                 </span>
               </td>
 
               {# Method #}
-              <td class="px-4 py-3 max-w-[160px]">
+              <td class="tbl-td max-w-[160px]">
                 <code class="text-xs text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded break-all">{{ pair.method }}</code>
               </td>
 
               {# Resolution status #}
-              <td class="px-4 py-3 whitespace-nowrap">
-                <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium
-                  {% if pair.resolution == 'PENDING' %}bg-amber-100 text-amber-700
-                  {% elif pair.resolution == 'MERGED' %}bg-emerald-100 text-emerald-700
-                  {% elif pair.resolution == 'DISMISSED' %}bg-slate-100 text-slate-600
-                  {% elif pair.resolution == 'CONFIRMED' %}bg-orange-100 text-orange-700
-                  {% endif %}">
+              <td class="tbl-td whitespace-nowrap">
+                <span class="{% if pair.resolution == 'PENDING' %}badge-yellow{% elif pair.resolution == 'MERGED' %}badge-green{% elif pair.resolution == 'DISMISSED' %}badge-gray{% elif pair.resolution == 'CONFIRMED' %}badge-yellow{% endif %}">
                   {{ pair.get_resolution_display }}
                 </span>
                 {% if pair.resolved_by %}
@@ -243,7 +229,7 @@
               </td>
 
               {# Actions #}
-              <td class="px-4 py-3 text-right">
+              <td class="tbl-td-right">
                 {% if pair.resolution == 'PENDING' %}
                 <div class="flex items-center justify-end gap-1.5">
                   {# Merge #}
@@ -252,8 +238,7 @@
                     {% csrf_token %}
                     <input type="hidden" name="action" value="merge">
                     <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                    <button type="submit"
-                            class="px-2.5 py-1.5 bg-emerald-600 text-white text-xs font-semibold rounded-lg hover:bg-emerald-700 transition">
+                    <button type="submit" class="btn-primary text-xs px-2.5 py-1.5">
                       Merge
                     </button>
                   </form>
@@ -262,8 +247,7 @@
                     {% csrf_token %}
                     <input type="hidden" name="action" value="confirm">
                     <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                    <button type="submit"
-                            class="px-2.5 py-1.5 bg-orange-500 text-white text-xs font-semibold rounded-lg hover:bg-orange-600 transition">
+                    <button type="submit" class="btn-warning text-xs px-2.5 py-1.5">
                       Confirm
                     </button>
                   </form>
@@ -272,8 +256,7 @@
                     {% csrf_token %}
                     <input type="hidden" name="action" value="dismiss">
                     <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                    <button type="submit"
-                            class="px-2.5 py-1.5 bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg hover:bg-slate-300 transition">
+                    <button type="submit" class="btn-secondary text-xs px-2.5 py-1.5">
                       Keep Both
                     </button>
                   </form>
@@ -284,8 +267,7 @@
                   {% csrf_token %}
                   <input type="hidden" name="action" value="reopen">
                   <input type="hidden" name="next" value="{{ request.get_full_path }}">
-                  <button type="submit"
-                          class="px-2.5 py-1.5 bg-slate-100 text-slate-500 text-xs font-semibold rounded-lg hover:bg-slate-200 transition">
+                  <button type="submit" class="btn-secondary text-xs px-2.5 py-1.5">
                     Reopen
                   </button>
                 </form>

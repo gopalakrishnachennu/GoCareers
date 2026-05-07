@@ -42,48 +42,43 @@
                 <span class="text-xs font-mono text-gray-500">{{ active_submissions|length }} live</span>
             </div>
             <p class="text-xs text-gray-500 mb-3">All non-terminal applications ordered by last update.</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-xs md:text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-[11px] font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-3 py-2">Job</th>
-                            <th class="px-3 py-2">Consultant</th>
-                            <th class="px-3 py-2 hidden md:table-cell">Employee</th>
-                            <th class="px-3 py-2">Status</th>
-                            <th class="px-3 py-2 text-right">Updated</th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Job</th>
+                            <th class="tbl-th">Consultant</th>
+                            <th class="tbl-th hidden md:table-cell">Employee</th>
+                            <th class="tbl-th">Status</th>
+                            <th class="tbl-th-right">Updated</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for sub in active_submissions %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/60">
-                            <td class="px-3 py-2">
+                        <tr class="tbl-row">
+                            <td class="tbl-td">
                                 <div class="font-medium text-gray-900 truncate">{{ sub.job.title }}</div>
-                                <div class="text-[11px] text-gray-500 truncate">{{ sub.job.company }}</div>
+                                <div class="tbl-meta truncate">{{ sub.job.company }}</div>
                             </td>
-                            <td class="px-3 py-2">
+                            <td class="tbl-td">
                                 <div class="font-medium text-gray-900 truncate">{{ sub.consultant.user.get_full_name|default:sub.consultant.user.username }}</div>
                             </td>
-                            <td class="px-3 py-2 hidden md:table-cell">
-                                <div class="text-[11px] text-gray-700 truncate">
+                            <td class="tbl-td hidden md:table-cell">
+                                <div class="text-xs text-gray-700 truncate">
                                     {{ sub.job.posted_by.get_full_name|default:sub.job.posted_by.username }}
                                 </div>
                             </td>
-                            <td class="px-3 py-2">
-                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold
-                                    {% if sub.status == 'IN_PROGRESS' %}bg-amber-50 text-amber-800
-                                    {% elif sub.status == 'APPLIED' %}bg-blue-50 text-blue-700
-                                    {% elif sub.status == 'INTERVIEW' %}bg-purple-50 text-purple-700
-                                    {% elif sub.status == 'OFFER' %}bg-emerald-50 text-emerald-700
-                                    {% endif %}">
+                            <td class="tbl-td">
+                                <span class="{% if sub.status == 'IN_PROGRESS' %}badge-yellow{% elif sub.status == 'APPLIED' %}badge-blue{% elif sub.status == 'INTERVIEW' %}badge-indigo{% elif sub.status == 'OFFER' %}badge-green{% endif %}">
                                     {{ sub.get_status_display }}
                                 </span>
                             </td>
-                            <td class="px-3 py-2 text-right text-[11px] text-gray-500">
+                            <td class="tbl-td-right text-xs text-gray-500">
                                 {{ sub.updated_at|date:"M d, H:i" }}
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="5" class="px-3 py-6 text-center text-gray-500 text-sm">No active submissions.</td></tr>
+                        <tr><td colspan="5" class="tbl-empty">No active submissions.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -96,38 +91,37 @@
                 <span class="text-xs font-mono text-gray-500">{{ final_round_submissions|length }} candidates</span>
             </div>
             <p class="text-xs text-gray-500 mb-3">Submissions in Interview or Offer stages.</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-xs md:text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-[11px] font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-3 py-2">Job</th>
-                            <th class="px-3 py-2">Consultant</th>
-                            <th class="px-3 py-2">Status</th>
-                            <th class="px-3 py-2 text-right">Updated</th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Job</th>
+                            <th class="tbl-th">Consultant</th>
+                            <th class="tbl-th">Status</th>
+                            <th class="tbl-th-right">Updated</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for sub in final_round_submissions %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/60">
-                            <td class="px-3 py-2">
+                        <tr class="tbl-row">
+                            <td class="tbl-td">
                                 <div class="font-medium text-gray-900 truncate">{{ sub.job.title }}</div>
-                                <div class="text-[11px] text-gray-500 truncate">{{ sub.job.company }}</div>
+                                <div class="tbl-meta truncate">{{ sub.job.company }}</div>
                             </td>
-                            <td class="px-3 py-2">
+                            <td class="tbl-td">
                                 <div class="font-medium text-gray-900 truncate">{{ sub.consultant.user.get_full_name|default:sub.consultant.user.username }}</div>
                             </td>
-                            <td class="px-3 py-2">
-                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold
-                                    {% if sub.status == 'INTERVIEW' %}bg-purple-50 text-purple-700{% else %}bg-emerald-50 text-emerald-700{% endif %}">
+                            <td class="tbl-td">
+                                <span class="{% if sub.status == 'INTERVIEW' %}badge-indigo{% else %}badge-green{% endif %}">
                                     {{ sub.get_status_display }}
                                 </span>
                             </td>
-                            <td class="px-3 py-2 text-right text-[11px] text-gray-500">
+                            <td class="tbl-td-right text-xs text-gray-500">
                                 {{ sub.updated_at|date:"M d, H:i" }}
                             </td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="4" class="px-3 py-6 text-center text-gray-500 text-sm">No candidates in final rounds.</td></tr>
+                        <tr><td colspan="4" class="tbl-empty">No candidates in final rounds.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -142,26 +136,26 @@
                 <h2 class="text-sm font-semibold text-gray-800 uppercase tracking-wide">Employee activity today</h2>
             </div>
             <p class="text-xs text-gray-500 mb-3">Who is most active (jobs posted + submissions touched today).</p>
-            <div class="overflow-x-auto">
+            <div class="table-scroll">
                 <table class="w-full text-xs md:text-sm">
-                    <thead>
-                        <tr class="border-b border-gray-200 bg-gray-50 text-left text-[11px] font-semibold text-gray-600 uppercase tracking-wider">
-                            <th class="px-3 py-2">Employee</th>
-                            <th class="px-3 py-2 text-right font-mono">Jobs</th>
-                            <th class="px-3 py-2 text-right font-mono">Submissions</th>
-                            <th class="px-3 py-2 text-right font-mono">Total</th>
+                    <thead class="tbl-head">
+                        <tr>
+                            <th class="tbl-th">Employee</th>
+                            <th class="tbl-th-right font-mono">Jobs</th>
+                            <th class="tbl-th-right font-mono">Submissions</th>
+                            <th class="tbl-th-right font-mono">Total</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for row in employee_activity_today %}
-                        <tr class="border-b border-gray-100 hover:bg-gray-50/60 {% if forloop.first %}bg-amber-50/60{% endif %}">
-                            <td class="px-3 py-2 font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
-                            <td class="px-3 py-2 text-right font-mono text-gray-800">{{ row.jobs_today }}</td>
-                            <td class="px-3 py-2 text-right font-mono text-gray-800">{{ row.submissions_today }}</td>
-                            <td class="px-3 py-2 text-right font-mono text-gray-900">{{ row.total_actions }}</td>
+                        <tr class="tbl-row {% if forloop.first %}bg-amber-50/60{% endif %}">
+                            <td class="tbl-td font-medium text-gray-900">{{ row.user.get_full_name|default:row.user.username }}</td>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ row.jobs_today }}</td>
+                            <td class="tbl-td-right font-mono text-gray-800">{{ row.submissions_today }}</td>
+                            <td class="tbl-td-right font-mono text-gray-900">{{ row.total_actions }}</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="4" class="px-3 py-6 text-center text-gray-500 text-sm">No activity yet today.</td></tr>
+                        <tr><td colspan="4" class="tbl-empty">No activity yet today.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -213,4 +207,3 @@
     </div>
 </div>
 {% endblock %}
-
