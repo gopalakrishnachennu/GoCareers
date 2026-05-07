@@ -1698,3 +1698,107 @@ class HarvestPhase3NavigationTests(TestCase):
         payload = response.json()
         self.assertIn("runs", payload)
         self.assertIsInstance(payload["runs"], list)
+
+
+class BoardAnalyticsServiceTests(TestCase):
+    def test_board_analytics_exposes_expanded_rawjob_metrics(self):
+        from companies.models import Company
+        from harvest.board_analytics import get_board_analytics
+        from harvest.models import JobBoardPlatform, RawJob
+
+        company = Company.objects.create(name="Metrics Co")
+        platform = JobBoardPlatform.objects.create(
+            name="Metrics Platform",
+            slug="metrics-platform",
+            support_tier=JobBoardPlatform.SupportTier.HEALTHY,
+            is_enabled=True,
+        )
+
+        RawJob.objects.create(
+            company=company,
+            job_platform=platform,
+            platform_slug=platform.slug,
+            url_hash="metrics-rich-1",
+            title="Senior DevOps Engineer",
+            normalized_title="devops engineer",
+            company_name="Metrics Co",
+            department="Infrastructure",
+            department_normalized="DevOps / SRE",
+            location_raw="Austin, TX",
+            city="Austin",
+            state="Texas",
+            country="United States",
+            postal_code="78701",
+            employment_type=RawJob.EmploymentType.FULL_TIME,
+            experience_level=RawJob.ExperienceLevel.SENIOR,
+            salary_raw="$150k - $180k",
+            description="Strong Kubernetes and Terraform background required.",
+            requirements="Terraform, Kubernetes",
+            responsibilities="Build CI/CD systems",
+            benefits="Health, 401k",
+            posted_date="2026-05-01",
+            vendor_job_identification="REQ-100",
+            vendor_job_category="Engineering",
+            vendor_degree_level="BS",
+            vendor_job_schedule="Full time",
+            vendor_job_shift="Day",
+            vendor_location_block="Austin, TX, United States",
+            skills=["terraform", "kubernetes"],
+            tech_stack=["terraform", "kubernetes"],
+            job_category="IT",
+            job_domain="devops-engineer",
+            job_domain_candidates=["devops-engineer", "cloud-engineer"],
+            domain_version="d2",
+            years_required=5,
+            education_required="BS",
+            visa_sponsorship=False,
+            work_authorization="US work authorization",
+            clearance_level="Secret",
+            travel_required="up to 10%",
+            schedule_type="Full time",
+            shift_schedule="Day",
+            certifications=["AWS"],
+            licenses_required=["Driver License"],
+            languages_required=["English"],
+            job_keywords=["devops", "kubernetes"],
+            title_keywords=["devops", "engineer"],
+            company_industry="Software",
+            company_size="1000+",
+            company_stage="Public",
+            quality_score=0.92,
+            jd_quality_score=0.88,
+            classification_confidence=0.93,
+            category_confidence=0.89,
+            resume_ready_score=0.87,
+            sync_status=RawJob.SyncStatus.SYNCED,
+            is_active=True,
+        )
+        RawJob.objects.create(
+            company=company,
+            job_platform=platform,
+            platform_slug=platform.slug,
+            url_hash="metrics-thin-2",
+            title="General Analyst",
+            company_name="Metrics Co",
+            location_raw="Remote",
+            sync_status=RawJob.SyncStatus.PENDING,
+            is_active=True,
+        )
+
+        data = get_board_analytics(window_days=30)
+        self.assertIn("rawjob_field_groups", data)
+        self.assertIn("rawjob_score_group", data)
+        self.assertIn("rawjob_blocker_group", data)
+
+        row = next(p for p in data["platforms"] if p["slug"] == platform.slug)
+        self.assertEqual(row["total_jobs"], 2)
+        self.assertEqual(row["rawjob_metrics"]["job_domain"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["job_category"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["requirements"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["current_enrichment_version"]["count"], 2)
+        self.assertEqual(row["rawjob_metrics"]["current_domain_version"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["parsed"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["classified"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["ready"]["count"], 1)
+        self.assertEqual(row["rawjob_metrics"]["synced"]["count"], 1)
+        self.assertEqual(row["score_metrics"]["quality_score"]["count"], 1)

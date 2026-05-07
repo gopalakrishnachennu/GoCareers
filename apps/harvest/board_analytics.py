@@ -14,11 +14,14 @@ Usage:
 from __future__ import annotations
 
 from datetime import timedelta
+from django.core.cache import cache
 from django.db import models
-from django.db.models import Avg, Case, Count, F, FloatField, Max, Min, Q, Sum, When
+from django.db.models import Avg, Case, Count, F, FloatField, Max, Q, When
 from django.utils import timezone
 
 from .board_capabilities import get_capabilities, capability_gap
+from .services.rawjob_query import effective_classification_q, ready_stage_q
+from .enrichments import CURRENT_DOMAIN_VERSION
 
 
 # Boards that harvest via Jarvis (manual paste) — excluded from ATS ranking.
@@ -29,6 +32,119 @@ UNSUPPORTED_SLUGS = {"applytojob", "adp", "applicantpro", "dayforce"}
 
 # Minimum runs required before we trust the risk score.
 MIN_RUNS_FOR_RISK = 5
+CURRENT_ENRICHMENT_VERSION = "v3"
+BOARD_ANALYTICS_CACHE_TTL = 300
+
+
+RAWJOB_FIELD_GROUP_SPECS = [
+    {
+        "key": "freshness",
+        "title": "Freshness & Versioning",
+        "description": "Distinguish old historical rows from true parser/extractor gaps.",
+        "columns": [
+            {"key": "recent_30d", "label": "Recent 30d", "tip": "Rows fetched in the last 30 days.", "warn": 20, "good": 50},
+            {"key": "current_enrichment_version", "label": "Enrich v3", "tip": "Rows enriched with the current enrichment version.", "warn": 40, "good": 75},
+            {"key": "current_domain_version", "label": "Domain d2", "tip": "Rows classified with the current domain taxonomy version.", "warn": 40, "good": 75},
+        ],
+    },
+    {
+        "key": "pipeline_stages",
+        "title": "RawJob Pipeline Stages",
+        "description": "Where each board's raw jobs are getting through the harvest pipeline.",
+        "columns": [
+            {"key": "fetched", "label": "Fetched", "tip": "All raw jobs collected for this board.", "warn": 100, "good": 100},
+            {"key": "parsed", "label": "Parsed", "tip": "Has JD / description text parsed.", "warn": 70, "good": 90},
+            {"key": "enriched", "label": "Enriched", "tip": "Has enrichment scores / extracted metadata.", "warn": 60, "good": 85},
+            {"key": "classified", "label": "Classified", "tip": "Has at least minimal classification confidence.", "warn": 55, "good": 80},
+            {"key": "ready", "label": "Ready", "tip": "Active + usable JD + classification confidence >= 0.55.", "warn": 40, "good": 65},
+            {"key": "synced", "label": "Synced", "tip": "Already promoted to the vet pool.", "warn": 5, "good": 20},
+            {"key": "failed_sync", "label": "Failed", "tip": "Sync failed.", "warn": 5, "good": 0, "inverse": True},
+            {"key": "duplicate", "label": "Duplicate", "tip": "Marked duplicate / skipped.", "warn": 5, "good": 0, "inverse": True},
+        ],
+    },
+    {
+        "key": "content",
+        "title": "RawJob Content Coverage",
+        "description": "How much usable job content each board is storing in RawJob.",
+        "columns": [
+            {"key": "jd", "label": "JD", "tip": "Has description text stored.", "capability_key": "jd", "warn": 70, "good": 90},
+            {"key": "requirements", "label": "Req", "tip": "Has requirements / qualifications text.", "capability_key": "requirements", "warn": 30, "good": 60},
+            {"key": "responsibilities", "label": "Resp", "tip": "Has responsibilities / duties text.", "capability_key": "responsibilities", "warn": 30, "good": 60},
+            {"key": "benefits", "label": "Benefits", "tip": "Has benefits section text.", "warn": 15, "good": 40},
+            {"key": "salary_any", "label": "Salary", "tip": "Has either structured salary or raw salary text.", "capability_key": "salary", "warn": 10, "good": 30},
+            {"key": "salary_structured", "label": "Sal Struct", "tip": "Has structured salary_min/max.", "capability_key": "salary", "warn": 10, "good": 25},
+            {"key": "salary_raw", "label": "Sal Raw", "tip": "Has raw salary text.", "capability_key": "salary", "warn": 10, "good": 25},
+            {"key": "posted_date", "label": "Posted", "tip": "Has posted date.", "warn": 60, "good": 90},
+            {"key": "closing_date", "label": "Closing", "tip": "Has closing date.", "warn": 10, "good": 30},
+        ],
+    },
+    {
+        "key": "classification",
+        "title": "Classification & Enrichment",
+        "description": "Board coverage for taxonomy, title normalization, skills, and role routing fields.",
+        "columns": [
+            {"key": "normalized_title", "label": "Norm Title", "tip": "Normalized title stored.", "warn": 70, "good": 90},
+            {"key": "department", "label": "Dept", "tip": "Raw department stored.", "capability_key": "department", "warn": 30, "good": 60},
+            {"key": "department_normalized", "label": "Dept Norm", "tip": "Normalized department stored.", "warn": 30, "good": 60},
+            {"key": "job_category", "label": "Category", "tip": "Category assigned.", "warn": 70, "good": 95},
+            {"key": "job_domain", "label": "Domain", "tip": "Marketing role domain assigned.", "warn": 70, "good": 95},
+            {"key": "job_domain_candidates", "label": "Candidates", "tip": "Candidate domain slugs stored.", "warn": 60, "good": 90},
+            {"key": "skills", "label": "Skills", "tip": "Any extracted skills.", "warn": 40, "good": 75},
+            {"key": "tech_stack", "label": "Tech", "tip": "Any extracted tech stack.", "warn": 30, "good": 60},
+            {"key": "job_keywords", "label": "Keywords", "tip": "Any extracted job/title keywords.", "warn": 40, "good": 75},
+        ],
+    },
+    {
+        "key": "location_work",
+        "title": "Location, Experience & Work Conditions",
+        "description": "Coverage for structured location, experience, education, and work-condition fields.",
+        "columns": [
+            {"key": "location_raw", "label": "Loc Raw", "tip": "Original location text stored.", "warn": 70, "good": 95},
+            {"key": "city", "label": "City", "tip": "City extracted.", "capability_key": "geo", "warn": 30, "good": 60},
+            {"key": "state", "label": "State", "tip": "State/region extracted.", "capability_key": "geo", "warn": 30, "good": 60},
+            {"key": "country", "label": "Country", "tip": "Country extracted.", "capability_key": "geo", "warn": 40, "good": 70},
+            {"key": "postal_code", "label": "Postal", "tip": "Postal code extracted.", "capability_key": "geo", "warn": 10, "good": 30},
+            {"key": "employment_type", "label": "EmpType", "tip": "Employment type stored.", "capability_key": "employment_type", "warn": 30, "good": 60},
+            {"key": "experience_level", "label": "ExpLvl", "tip": "Experience level stored.", "capability_key": "experience_level", "warn": 15, "good": 35},
+            {"key": "years_required", "label": "Years", "tip": "Years of experience extracted.", "warn": 20, "good": 45},
+            {"key": "education_required", "label": "Education", "tip": "Education requirement stored.", "capability_key": "education", "warn": 20, "good": 45},
+            {"key": "schedule_type", "label": "Schedule", "tip": "Schedule type stored.", "warn": 20, "good": 45},
+            {"key": "shift_schedule", "label": "Shift", "tip": "Shift schedule stored.", "warn": 10, "good": 30},
+            {"key": "travel_required", "label": "Travel", "tip": "Travel requirement stored.", "warn": 10, "good": 25},
+        ],
+    },
+    {
+        "key": "legal_company_vendor",
+        "title": "Legal, Company & Vendor Fields",
+        "description": "Coverage for legal/work-auth signals, company context, and vendor-native fields.",
+        "columns": [
+            {"key": "visa_sponsorship", "label": "Visa", "tip": "Visa sponsorship explicitly known (true/false).", "warn": 5, "good": 20},
+            {"key": "work_authorization", "label": "WorkAuth", "tip": "Work authorization text stored.", "warn": 5, "good": 20},
+            {"key": "clearance_signal", "label": "Clearance", "tip": "Security clearance signal stored.", "warn": 5, "good": 20},
+            {"key": "languages_required", "label": "Lang", "tip": "Languages required list stored.", "warn": 5, "good": 20},
+            {"key": "certifications", "label": "Certs", "tip": "Certifications list stored.", "warn": 10, "good": 25},
+            {"key": "licenses_required", "label": "Licenses", "tip": "Licenses required list stored.", "warn": 10, "good": 25},
+            {"key": "company_industry", "label": "Industry", "tip": "Company industry stored on RawJob.", "warn": 20, "good": 50},
+            {"key": "company_size", "label": "Company Size", "tip": "Company size stored on RawJob.", "warn": 15, "good": 40},
+            {"key": "company_stage", "label": "Stage", "tip": "Company stage stored on RawJob.", "warn": 10, "good": 30},
+            {"key": "vendor_job_identification", "label": "Vendor ID", "tip": "Vendor-native job identification stored.", "warn": 20, "good": 50},
+            {"key": "vendor_job_category", "label": "Vendor Cat", "tip": "Vendor-native category stored.", "warn": 20, "good": 50},
+            {"key": "vendor_degree_level", "label": "Vendor Edu", "tip": "Vendor-native education/degree field stored.", "warn": 10, "good": 30},
+            {"key": "vendor_job_schedule", "label": "Vendor Sched", "tip": "Vendor-native schedule stored.", "warn": 10, "good": 30},
+            {"key": "vendor_job_shift", "label": "Vendor Shift", "tip": "Vendor-native shift stored.", "warn": 10, "good": 30},
+            {"key": "vendor_location_block", "label": "Vendor Loc", "tip": "Vendor-native location block stored.", "warn": 20, "good": 50},
+        ],
+    },
+]
+
+
+RAWJOB_SCORE_SPECS = [
+    {"key": "quality_score", "label": "Quality", "tip": "Average RawJob quality_score for rows where it exists."},
+    {"key": "jd_quality_score", "label": "JD Quality", "tip": "Average JD quality score for rows where it exists."},
+    {"key": "classification_confidence", "label": "Class Conf", "tip": "Average classification confidence where stored."},
+    {"key": "category_confidence", "label": "Cat Conf", "tip": "Average category confidence where stored."},
+    {"key": "resume_ready_score", "label": "Resume Ready", "tip": "Average resume-ready score where stored."},
+]
 
 
 def _pct(numerator, denominator, decimals=1):
@@ -37,7 +153,51 @@ def _pct(numerator, denominator, decimals=1):
     return round(numerator / denominator * 100, decimals)
 
 
-def get_board_analytics(window_days: int = 30) -> dict:
+def _coverage_metric(count, total):
+    return {
+        "count": int(count or 0),
+        "pct": _pct(int(count or 0), total),
+    }
+
+
+def _score_metric(avg_value, known_count, total):
+    avg_pct = None
+    if avg_value is not None:
+        avg_pct = round(float(avg_value) * 100, 1)
+    return {
+        "count": int(known_count or 0),
+        "known_pct": _pct(int(known_count or 0), total),
+        "avg_pct": avg_pct,
+    }
+
+
+def _tone_from_pct(pct, warn, good, inverse: bool = False):
+    if pct is None:
+        return "muted"
+    if inverse:
+        if pct <= good:
+            return "good"
+        if pct <= warn:
+            return "warn"
+        return "bad"
+    if pct >= good:
+        return "good"
+    if pct >= warn:
+        return "warn"
+    return "bad"
+
+
+def _tone_from_score(score_pct):
+    if score_pct is None:
+        return "muted"
+    if score_pct >= 80:
+        return "good"
+    if score_pct >= 60:
+        return "warn"
+    return "bad"
+
+
+def _build_board_analytics(window_days: int = 30) -> dict:
     """
     Returns a dict with:
       - platforms: list of per-platform metric rows (ATS boards only, no Jarvis)
@@ -50,6 +210,7 @@ def get_board_analytics(window_days: int = 30) -> dict:
 
     now = timezone.now()
     run_window = now - timedelta(days=window_days)
+    fresh_30d_cutoff = now - timedelta(days=30)
 
     # ── 1. Per-platform RawJob metrics (job-level, all-time) ──────────────────
     # Detect which optional fields exist in this DB (handles schema drift gracefully).
@@ -61,9 +222,68 @@ def get_board_analytics(window_days: int = 30) -> dict:
         "pending":     Count("id", filter=Q(sync_status="PENDING")),
         "failed_sync": Count("id", filter=Q(sync_status="FAILED")),
         "skipped":     Count("id", filter=Q(sync_status="SKIPPED")),
+        "duplicate_count": Count("id", filter=Q(sync_status="SKIPPED")),
         "inactive":    Count("id", filter=Q(is_active=False)),
         "missing_jd":  Count("id", filter=Q(has_description=False)),
+        "jd_count":    Count("id", filter=Q(has_description=True)),
+        "parsed_count": Count("id", filter=Q(has_description=True)),
+        "enriched_count": Count("id", filter=Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)),
+        "classified_count": Count("id", filter=effective_classification_q(min_conf=0.01)),
+        "ready_count": Count("id", filter=ready_stage_q(min_conf=0.55)),
+        "recent_30d_count": Count("id", filter=Q(fetched_at__gte=fresh_30d_cutoff)),
+        "current_enrichment_version_count": Count("id", filter=Q(enrichment_version=CURRENT_ENRICHMENT_VERSION)),
+        "current_domain_version_count": Count("id", filter=Q(domain_version=CURRENT_DOMAIN_VERSION)),
         "has_salary":  Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
+        "salary_any_count": Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False) | ~Q(salary_raw="")),
+        "salary_structured_count": Count("id", filter=Q(salary_min__isnull=False) | Q(salary_max__isnull=False)),
+        "salary_raw_count": Count("id", filter=~Q(salary_raw="")),
+        "benefits_count": Count("id", filter=~Q(benefits="")),
+        "location_raw_count": Count("id", filter=~Q(location_raw="")),
+        "city_count": Count("id", filter=~Q(city="")),
+        "state_count": Count("id", filter=~Q(state="")),
+        "country_count": Count("id", filter=~Q(country="")),
+        "postal_code_count": Count("id", filter=~Q(postal_code="")),
+        "posted_date_count": Count("id", filter=Q(posted_date__isnull=False)),
+        "closing_date_count": Count("id", filter=Q(closing_date__isnull=False)),
+        "normalized_title_count": Count("id", filter=~Q(normalized_title="")),
+        "department_normalized_count": Count("id", filter=~Q(department_normalized="")),
+        "job_category_count": Count("id", filter=~Q(job_category="")),
+        "job_domain_count": Count("id", filter=~Q(job_domain="")),
+        "job_domain_candidates_count": Count("id", filter=~Q(job_domain_candidates=[])),
+        "skills_count": Count("id", filter=~Q(skills=[])),
+        "tech_stack_count": Count("id", filter=~Q(tech_stack=[])),
+        "job_keywords_count": Count("id", filter=~Q(job_keywords=[]) | ~Q(title_keywords=[])),
+        "years_required_count": Count("id", filter=Q(years_required__isnull=False)),
+        "employment_type_count": Count("id", filter=~Q(employment_type="UNKNOWN")),
+        "experience_level_count": Count("id", filter=~Q(experience_level="UNKNOWN")),
+        "travel_required_count": Count("id", filter=~Q(travel_required="")),
+        "schedule_type_count": Count("id", filter=~Q(schedule_type="")),
+        "shift_schedule_count": Count("id", filter=~Q(shift_schedule="")),
+        "visa_sponsorship_count": Count("id", filter=Q(visa_sponsorship__isnull=False)),
+        "work_authorization_count": Count("id", filter=~Q(work_authorization="")),
+        "clearance_signal_count": Count("id", filter=Q(clearance_required=True) | ~Q(clearance_level="")),
+        "languages_required_count": Count("id", filter=~Q(languages_required=[])),
+        "certifications_count": Count("id", filter=~Q(certifications=[])),
+        "licenses_required_count": Count("id", filter=~Q(licenses_required=[])),
+        "company_industry_count": Count("id", filter=~Q(company_industry="")),
+        "company_size_count": Count("id", filter=~Q(company_size="")),
+        "company_stage_count": Count("id", filter=~Q(company_stage="")),
+        "vendor_job_identification_count": Count("id", filter=~Q(vendor_job_identification="")),
+        "vendor_job_category_count": Count("id", filter=~Q(vendor_job_category="")),
+        "vendor_degree_level_count": Count("id", filter=~Q(vendor_degree_level="")),
+        "vendor_job_schedule_count": Count("id", filter=~Q(vendor_job_schedule="")),
+        "vendor_job_shift_count": Count("id", filter=~Q(vendor_job_shift="")),
+        "vendor_location_block_count": Count("id", filter=~Q(vendor_location_block="")),
+        "quality_score_known_count": Count("id", filter=Q(quality_score__isnull=False)),
+        "jd_quality_score_known_count": Count("id", filter=Q(jd_quality_score__isnull=False)),
+        "classification_confidence_known_count": Count("id", filter=Q(classification_confidence__isnull=False)),
+        "category_confidence_known_count": Count("id", filter=Q(category_confidence__isnull=False)),
+        "resume_ready_score_known_count": Count("id", filter=Q(resume_ready_score__isnull=False)),
+        "avg_quality_score": Avg("quality_score"),
+        "avg_jd_quality_score": Avg("jd_quality_score"),
+        "avg_classification_confidence": Avg("classification_confidence"),
+        "avg_category_confidence": Avg("category_confidence"),
+        "avg_resume_ready_score": Avg("resume_ready_score"),
     }
     # Blocker reason counts (only if sync_skip_reason field exists)
     if "sync_skip_reason" in _raw_fields:
@@ -72,6 +292,14 @@ def get_board_analytics(window_days: int = 30) -> dict:
         _field_annotations["blocked_mismatch"]    = Count("id", filter=Q(sync_skip_reason="PLATFORM_MISMATCH"))
         _field_annotations["blocked_duplicate"]   = Count("id", filter=Q(sync_skip_reason__in=["DUPLICATE_RISK", "DUPLICATE_EXISTING"]))
         _field_annotations["blocked_no_company"]  = Count("id", filter=Q(sync_skip_reason="COMPANY_UNRESOLVED"))
+    _field_annotations["blocked_low_conf"] = Count(
+        "id",
+        filter=(
+            Q(sync_status="PENDING", has_description=True, is_active=True)
+            & effective_classification_q(min_conf=0.01)
+            & ~effective_classification_q(min_conf=0.55)
+        ),
+    )
     if "requirements" in _raw_fields:
         _field_annotations["has_requirements"] = Count("id", filter=~Q(requirements=""))
     if "responsibilities" in _raw_fields:
@@ -181,6 +409,7 @@ def get_board_analytics(window_days: int = 30) -> dict:
         )
 
         coverage = {
+            "jd":               _pct(j.get("jd_count", 0), total),
             "requirements":     _pct(j.get("has_requirements", 0), total),
             "responsibilities": _pct(j.get("has_responsibilities", 0), total),
             "salary":           _pct(j.get("has_salary", 0), total),
@@ -255,7 +484,74 @@ def get_board_analytics(window_days: int = 30) -> dict:
                 "mismatch":   j.get("blocked_mismatch", 0),
                 "duplicate":  j.get("blocked_duplicate", 0),
                 "no_company": j.get("blocked_no_company", 0),
+                "low_conf":   j.get("blocked_low_conf", 0),
             },
+        }
+
+        row["rawjob_metrics"] = {
+            "recent_30d": _coverage_metric(j.get("recent_30d_count", 0), total),
+            "current_enrichment_version": _coverage_metric(j.get("current_enrichment_version_count", 0), total),
+            "current_domain_version": _coverage_metric(j.get("current_domain_version_count", 0), total),
+            "fetched": _coverage_metric(total, total),
+            "parsed": _coverage_metric(j.get("parsed_count", 0), total),
+            "enriched": _coverage_metric(j.get("enriched_count", 0), total),
+            "classified": _coverage_metric(j.get("classified_count", 0), total),
+            "ready": _coverage_metric(j.get("ready_count", 0), total),
+            "synced": _coverage_metric(j.get("synced", 0), total),
+            "failed_sync": _coverage_metric(j.get("failed_sync", 0), total),
+            "duplicate": _coverage_metric(j.get("duplicate_count", 0), total),
+            "jd": _coverage_metric(j.get("jd_count", 0), total),
+            "requirements": _coverage_metric(j.get("has_requirements", 0), total),
+            "responsibilities": _coverage_metric(j.get("has_responsibilities", 0), total),
+            "benefits": _coverage_metric(j.get("benefits_count", 0), total),
+            "salary_any": _coverage_metric(j.get("salary_any_count", 0), total),
+            "salary_structured": _coverage_metric(j.get("salary_structured_count", 0), total),
+            "salary_raw": _coverage_metric(j.get("salary_raw_count", 0), total),
+            "posted_date": _coverage_metric(j.get("posted_date_count", 0), total),
+            "closing_date": _coverage_metric(j.get("closing_date_count", 0), total),
+            "normalized_title": _coverage_metric(j.get("normalized_title_count", 0), total),
+            "department": _coverage_metric(j.get("has_department", 0), total),
+            "department_normalized": _coverage_metric(j.get("department_normalized_count", 0), total),
+            "job_category": _coverage_metric(j.get("job_category_count", 0), total),
+            "job_domain": _coverage_metric(j.get("job_domain_count", 0), total),
+            "job_domain_candidates": _coverage_metric(j.get("job_domain_candidates_count", 0), total),
+            "skills": _coverage_metric(j.get("skills_count", 0), total),
+            "tech_stack": _coverage_metric(j.get("tech_stack_count", 0), total),
+            "job_keywords": _coverage_metric(j.get("job_keywords_count", 0), total),
+            "location_raw": _coverage_metric(j.get("location_raw_count", 0), total),
+            "city": _coverage_metric(j.get("city_count", 0), total),
+            "state": _coverage_metric(j.get("state_count", 0), total),
+            "country": _coverage_metric(j.get("country_count", 0), total),
+            "postal_code": _coverage_metric(j.get("postal_code_count", 0), total),
+            "employment_type": _coverage_metric(j.get("employment_type_count", 0), total),
+            "experience_level": _coverage_metric(j.get("experience_level_count", 0), total),
+            "years_required": _coverage_metric(j.get("years_required_count", 0), total),
+            "education_required": _coverage_metric(j.get("has_education", 0), total),
+            "schedule_type": _coverage_metric(j.get("schedule_type_count", 0), total),
+            "shift_schedule": _coverage_metric(j.get("shift_schedule_count", 0), total),
+            "travel_required": _coverage_metric(j.get("travel_required_count", 0), total),
+            "visa_sponsorship": _coverage_metric(j.get("visa_sponsorship_count", 0), total),
+            "work_authorization": _coverage_metric(j.get("work_authorization_count", 0), total),
+            "clearance_signal": _coverage_metric(j.get("clearance_signal_count", 0), total),
+            "languages_required": _coverage_metric(j.get("languages_required_count", 0), total),
+            "certifications": _coverage_metric(j.get("certifications_count", 0), total),
+            "licenses_required": _coverage_metric(j.get("licenses_required_count", 0), total),
+            "company_industry": _coverage_metric(j.get("company_industry_count", 0), total),
+            "company_size": _coverage_metric(j.get("company_size_count", 0), total),
+            "company_stage": _coverage_metric(j.get("company_stage_count", 0), total),
+            "vendor_job_identification": _coverage_metric(j.get("vendor_job_identification_count", 0), total),
+            "vendor_job_category": _coverage_metric(j.get("vendor_job_category_count", 0), total),
+            "vendor_degree_level": _coverage_metric(j.get("vendor_degree_level_count", 0), total),
+            "vendor_job_schedule": _coverage_metric(j.get("vendor_job_schedule_count", 0), total),
+            "vendor_job_shift": _coverage_metric(j.get("vendor_job_shift_count", 0), total),
+            "vendor_location_block": _coverage_metric(j.get("vendor_location_block_count", 0), total),
+        }
+        row["score_metrics"] = {
+            "quality_score": _score_metric(j.get("avg_quality_score"), j.get("quality_score_known_count", 0), total),
+            "jd_quality_score": _score_metric(j.get("avg_jd_quality_score"), j.get("jd_quality_score_known_count", 0), total),
+            "classification_confidence": _score_metric(j.get("avg_classification_confidence"), j.get("classification_confidence_known_count", 0), total),
+            "category_confidence": _score_metric(j.get("avg_category_confidence"), j.get("category_confidence_known_count", 0), total),
+            "resume_ready_score": _score_metric(j.get("avg_resume_ready_score"), j.get("resume_ready_score_known_count", 0), total),
         }
 
         if slug in UNSUPPORTED_SLUGS or tier == JobBoardPlatform.SupportTier.UNSUPPORTED:
@@ -278,12 +574,113 @@ def get_board_analytics(window_days: int = 30) -> dict:
         "note": "Manual/Jarvis ingest — not ranked alongside ATS boards.",
     }
 
+    rawjob_field_groups = []
+    for group in RAWJOB_FIELD_GROUP_SPECS:
+        group_rows = []
+        for p in ats_rows:
+            cells = []
+            for col in group["columns"]:
+                metric = p["rawjob_metrics"][col["key"]]
+                gap = None
+                capability_key = col.get("capability_key")
+                if capability_key:
+                    gap = p["capability_gaps"].get(capability_key)
+                cells.append({
+                    "key": col["key"],
+                    "count": metric["count"],
+                    "pct": metric["pct"],
+                    "gap": gap,
+                    "tone": _tone_from_pct(metric["pct"], col["warn"], col["good"], inverse=bool(col.get("inverse"))),
+                })
+            group_rows.append({
+                "slug": p["slug"],
+                "name": p["name"],
+                "support_tier": p["support_tier"],
+                "source_reliability": p["source_reliability"],
+                "total_jobs": p["total_jobs"],
+                "cells": cells,
+            })
+        rawjob_field_groups.append({
+            "key": group["key"],
+            "title": group["title"],
+            "description": group["description"],
+            "columns": group["columns"],
+            "rows": group_rows,
+        })
+
+    score_group = {
+        "title": "RawJob Quality & Confidence",
+        "description": "Average score values plus how many rows actually have those scores populated.",
+        "columns": RAWJOB_SCORE_SPECS,
+        "rows": [],
+    }
+    for p in ats_rows:
+        cells = []
+        for spec in RAWJOB_SCORE_SPECS:
+            metric = p["score_metrics"][spec["key"]]
+            cells.append({
+                "key": spec["key"],
+                "count": metric["count"],
+                "known_pct": metric["known_pct"],
+                "avg_pct": metric["avg_pct"],
+                "tone": _tone_from_score(metric["avg_pct"]),
+            })
+        score_group["rows"].append({
+            "slug": p["slug"],
+            "name": p["name"],
+            "support_tier": p["support_tier"],
+            "source_reliability": p["source_reliability"],
+            "total_jobs": p["total_jobs"],
+            "cells": cells,
+        })
+
+    blocker_group = {
+        "title": "RawJob Sync Blocker Matrix",
+        "description": "Why RawJobs are getting stuck before sync. High percentages here are the clearest fix targets.",
+        "columns": [
+            {"key": "inactive", "label": "Inactive", "tip": "Blocked because posting is inactive."},
+            {"key": "jd_weak", "label": "JD Weak", "tip": "Blocked because JD is too weak / unusable."},
+            {"key": "mismatch", "label": "Mismatch", "tip": "Blocked by platform mismatch or gate mismatch."},
+            {"key": "duplicate", "label": "Duplicate", "tip": "Blocked because of duplicate risk / existing duplicate."},
+            {"key": "no_company", "label": "No Company", "tip": "Blocked because company could not be resolved."},
+            {"key": "low_conf", "label": "Low Conf", "tip": "Blocked because classification is present but below ready threshold."},
+        ],
+        "rows": [],
+    }
+    for p in ats_rows:
+        cells = []
+        for spec in blocker_group["columns"]:
+            count = int(p["blockers"].get(spec["key"], 0))
+            pct = _pct(count, p["total_jobs"])
+            cells.append({
+                "key": spec["key"],
+                "count": count,
+                "pct": pct,
+                "tone": _tone_from_pct(pct, 5, 15, inverse=True),
+            })
+        blocker_group["rows"].append({
+            "slug": p["slug"],
+            "name": p["name"],
+            "support_tier": p["support_tier"],
+            "source_reliability": p["source_reliability"],
+            "total_jobs": p["total_jobs"],
+            "cells": cells,
+        })
+
     return {
         "platforms": ats_rows,
+        "rawjob_field_groups": rawjob_field_groups,
+        "rawjob_score_group": score_group,
+        "rawjob_blocker_group": blocker_group,
         "unsupported": unsupported_rows,
         "jarvis": jarvis_summary,
         "generated_at": now.isoformat(),
         "window_days": window_days,
+        "versions": {
+            "domain_version": CURRENT_DOMAIN_VERSION,
+            "enrichment_version": CURRENT_ENRICHMENT_VERSION,
+            "cache_ttl_seconds": BOARD_ANALYTICS_CACHE_TTL,
+        },
         "totals": {
             "ats_boards": len(ats_rows),
             "total_rawjobs": sum(r["total_jobs"] for r in ats_rows),
@@ -291,3 +688,14 @@ def get_board_analytics(window_days: int = 30) -> dict:
             "total_pending": sum(r["pending"]     for r in ats_rows),
         },
     }
+
+
+def get_board_analytics(window_days: int = 30, *, force_refresh: bool = False) -> dict:
+    cache_key = f"harvest:board-analytics:v3:{window_days}"
+    if not force_refresh:
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+    data = _build_board_analytics(window_days=window_days)
+    cache.set(cache_key, data, BOARD_ANALYTICS_CACHE_TTL)
+    return data

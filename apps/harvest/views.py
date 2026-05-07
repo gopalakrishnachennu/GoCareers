@@ -1787,11 +1787,13 @@ class BoardAnalyticsDashboardView(SuperuserRequiredMixin, View):
             window = 30
 
         from .board_analytics import MIN_RUNS_FOR_RISK
-        data = get_board_analytics(window_days=window)
+        force_refresh = request.GET.get("refresh") == "1"
+        data = get_board_analytics(window_days=window, force_refresh=force_refresh)
         return render(request, "harvest/board_analytics.html", {
             "data": data,
             "window_choices": [7, 14, 30, 60, 90],
             "min_runs_for_risk": MIN_RUNS_FOR_RISK,
+            "force_refresh": force_refresh,
         })
 
 
@@ -1814,7 +1816,8 @@ class BoardAnalyticsView(SuperuserRequiredMixin, View):
         except (ValueError, TypeError):
             window = 30
 
-        data = get_board_analytics(window_days=window)
+        force_refresh = request.GET.get("refresh") == "1"
+        data = get_board_analytics(window_days=window, force_refresh=force_refresh)
         return JsonResponse({"ok": True, **data})
 
 

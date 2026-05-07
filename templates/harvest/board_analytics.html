@@ -38,7 +38,7 @@
       <h1 class="text-2xl font-bold text-gray-900">Board Analytics</h1>
       <p class="text-sm text-gray-500 mt-0.5">Per-platform harvest quality • generated {{ data.generated_at|truncatechars:19 }} UTC</p>
     </div>
-    <form method="get" class="flex items-center gap-2">
+    <form method="get" class="flex flex-wrap items-center justify-end gap-2">
       <label class="text-sm text-gray-500 font-medium">Window:</label>
       {% for w in window_choices %}
       <button type="submit" name="window_days" value="{{ w }}"
@@ -47,6 +47,10 @@
         {{ w }}d
       </button>
       {% endfor %}
+      <button type="submit" name="refresh" value="1"
+              class="px-3 py-1.5 rounded-lg text-sm font-semibold border border-gray-300 bg-white text-gray-600 hover:border-indigo-400 hover:text-indigo-600 transition">
+        Refresh
+      </button>
     </form>
   </div>
 
@@ -69,6 +73,21 @@
         <span data-tip="PENDING = harvested but not yet pushed to the vet pool. High pending% means sync is backlogged.">Pending Sync</span>
       </p>
       <p class="text-2xl font-bold text-amber-700">{{ data.totals.total_pending|floatformat:"0" }}</p>
+    </div>
+  </div>
+
+  <div class="mb-5 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
+      <span><strong class="text-slate-800">Interpretation:</strong> low field coverage is not always a parser failure.</span>
+      <span>Current domain version: <strong class="text-slate-800">{{ data.versions.domain_version }}</strong></span>
+      <span>Current enrichment version: <strong class="text-slate-800">{{ data.versions.enrichment_version }}</strong></span>
+      <span>Cache: <strong class="text-slate-800">{{ data.versions.cache_ttl_seconds }}s</strong></span>
+      {% if force_refresh %}
+      <span class="text-indigo-700 font-semibold">Manual refresh used</span>
+      {% endif %}
+    </div>
+    <div class="mt-1">
+      Use the <strong>Freshness &amp; Versioning</strong> table to separate historical backlog from real extractor gaps. Low `Enrich v3` or `Domain d2` means old rows need re-backfill before you blame the board parser.
     </div>
   </div>
 
@@ -351,6 +370,162 @@
     </div>
     <div class="px-5 py-2 border-t border-gray-100 text-xs text-gray-400">
       Risk score shown only when ≥{{ min_runs_for_risk }} runs. N/A badge = source platform doesn't provide this field. ⚠ = parser gap (source has it, we're not extracting it).
+    </div>
+  </div>
+
+  {# ── RawJob field matrices ──────────────────────────────────────────────── #}
+  {% for group in data.rawjob_field_groups %}
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-8">
+    <div class="px-5 py-3 border-b border-gray-100">
+      <h2 class="text-sm font-semibold text-gray-700">{{ group.title }}</h2>
+      <p class="text-xs text-gray-400 mt-1">{{ group.description }}</p>
+    </div>
+    <div class="table-scroll">
+      <table class="w-full text-sm">
+        <thead class="tbl-head">
+          <tr>
+            <th class="tbl-th sticky left-0 bg-gray-50 z-10 min-w-[160px]">Platform</th>
+            <th class="tbl-th-right">Jobs</th>
+            {% for col in group.columns %}
+            <th class="tbl-th-right" {% if col.tip %}data-tip="{{ col.tip }}"{% endif %}>{{ col.label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for row in group.rows %}
+          <tr class="tbl-row">
+            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[160px]">
+              <div class="flex items-center gap-2">
+                {% if row.support_tier == 'healthy' %}
+                  <span class="w-2 h-2 rounded-full bg-green-400 flex-shrink-0"></span>
+                {% elif row.support_tier == 'degraded' %}
+                  <span class="w-2 h-2 rounded-full bg-amber-400 flex-shrink-0"></span>
+                {% elif row.support_tier == 'experimental' %}
+                  <span class="w-2 h-2 rounded-full bg-blue-400 flex-shrink-0"></span>
+                {% else %}
+                  <span class="w-2 h-2 rounded-full bg-gray-300 flex-shrink-0"></span>
+                {% endif %}
+                <a href="{% url 'harvest-board-drilldown' row.slug %}" class="font-semibold text-gray-800 hover:text-indigo-600 hover:underline">{{ row.name }}</a>
+              </div>
+              <div class="text-xs text-gray-400 ml-4">{{ row.slug }}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ row.total_jobs|floatformat:"0" }}</td>
+            {% for cell in row.cells %}
+            <td class="px-4 py-3 text-right text-xs">
+              {% if cell.pct != None %}
+                <div class="{% if cell.tone == 'good' %}text-green-700{% elif cell.tone == 'warn' %}text-amber-600{% elif cell.tone == 'bad' %}text-red-500{% else %}text-gray-400{% endif %} font-semibold">
+                  {{ cell.pct }}%
+                </div>
+                <div class="text-[10px] text-gray-400 font-mono">{{ cell.count }}</div>
+              {% else %}
+                <span class="text-gray-300">—</span>
+              {% endif %}
+              {% if cell.gap == 'n/a' %}
+                <span class="gap-badge-na px-1 rounded text-[9px] ml-0.5">N/A</span>
+              {% elif cell.gap == 'parser' %}
+                <span class="gap-badge-parser px-1 rounded text-[9px] ml-0.5" title="Source can provide this field, but parser coverage is weak">⚠</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ group.columns|length|add:'2' }}" class="tbl-empty">No board data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+
+  {# ── Quality score matrix ──────────────────────────────────────────────── #}
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-8">
+    <div class="px-5 py-3 border-b border-gray-100">
+      <h2 class="text-sm font-semibold text-gray-700">{{ data.rawjob_score_group.title }}</h2>
+      <p class="text-xs text-gray-400 mt-1">{{ data.rawjob_score_group.description }}</p>
+    </div>
+    <div class="table-scroll">
+      <table class="w-full text-sm">
+        <thead class="tbl-head">
+          <tr>
+            <th class="tbl-th sticky left-0 bg-gray-50 z-10 min-w-[160px]">Platform</th>
+            <th class="tbl-th-right">Jobs</th>
+            {% for col in data.rawjob_score_group.columns %}
+            <th class="tbl-th-right" {% if col.tip %}data-tip="{{ col.tip }}"{% endif %}>{{ col.label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for row in data.rawjob_score_group.rows %}
+          <tr class="tbl-row">
+            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[160px]">
+              <div class="font-semibold text-gray-800">{{ row.name }}</div>
+              <div class="text-xs text-gray-400">{{ row.slug }}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ row.total_jobs|floatformat:"0" }}</td>
+            {% for cell in row.cells %}
+            <td class="px-4 py-3 text-right text-xs">
+              {% if cell.avg_pct != None %}
+                <div class="{% if cell.tone == 'good' %}text-green-700{% elif cell.tone == 'warn' %}text-amber-600{% else %}text-red-500{% endif %} font-semibold">
+                  {{ cell.avg_pct }}%
+                </div>
+              {% else %}
+                <div class="text-gray-300">—</div>
+              {% endif %}
+              <div class="text-[10px] text-gray-400">known {{ cell.known_pct|default:"0" }}%</div>
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ data.rawjob_score_group.columns|length|add:'2' }}" class="tbl-empty">No score data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {# ── Sync blocker matrix ──────────────────────────────────────────────── #}
+  <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden mb-8">
+    <div class="px-5 py-3 border-b border-gray-100">
+      <h2 class="text-sm font-semibold text-gray-700">{{ data.rawjob_blocker_group.title }}</h2>
+      <p class="text-xs text-gray-400 mt-1">{{ data.rawjob_blocker_group.description }}</p>
+    </div>
+    <div class="table-scroll">
+      <table class="w-full text-sm">
+        <thead class="tbl-head">
+          <tr>
+            <th class="tbl-th sticky left-0 bg-gray-50 z-10 min-w-[160px]">Platform</th>
+            <th class="tbl-th-right">Jobs</th>
+            {% for col in data.rawjob_blocker_group.columns %}
+            <th class="tbl-th-right" {% if col.tip %}data-tip="{{ col.tip }}"{% endif %}>{{ col.label }}</th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100">
+          {% for row in data.rawjob_blocker_group.rows %}
+          <tr class="tbl-row">
+            <td class="px-4 py-3 sticky left-0 bg-inherit z-10 min-w-[160px]">
+              <div class="font-semibold text-gray-800">{{ row.name }}</div>
+              <div class="text-xs text-gray-400">{{ row.slug }}</div>
+            </td>
+            <td class="px-4 py-3 text-right font-mono text-gray-600">{{ row.total_jobs|floatformat:"0" }}</td>
+            {% for cell in row.cells %}
+            <td class="px-4 py-3 text-right text-xs">
+              {% if cell.pct != None %}
+                <div class="{% if cell.tone == 'good' %}text-green-700{% elif cell.tone == 'warn' %}text-amber-600{% else %}text-red-500{% endif %} font-semibold">
+                  {{ cell.pct }}%
+                </div>
+                <div class="text-[10px] text-gray-400 font-mono">{{ cell.count }}</div>
+              {% else %}
+                <span class="text-gray-300">—</span>
+              {% endif %}
+            </td>
+            {% endfor %}
+          </tr>
+          {% empty %}
+          <tr><td colspan="{{ data.rawjob_blocker_group.columns|length|add:'2' }}" class="tbl-empty">No blocker data yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
     </div>
   </div>
 
