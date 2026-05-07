@@ -1204,6 +1204,18 @@ class HarvestEngineConfig(models.Model):
         verbose_name="Provider monthly hard limit",
         help_text="Hard stop for provider requests per calendar month. Default 80k to stay below 100k free-tier claims.",
     )
+    geocoding_provider_token = models.CharField(
+        max_length=512,
+        blank=True,
+        default="",
+        verbose_name="Geocoding provider token (DB)",
+        help_text=(
+            "Optional API token stored in DB so it can be rotated from the GUI. "
+            "When blank, the resolver falls back to MAPBOX_ACCESS_TOKEN / "
+            "GOOGLE_MAPS_API_KEY environment variables. "
+            "Env var is the more secure pattern; DB storage exists for convenience."
+        ),
+    )
 
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(

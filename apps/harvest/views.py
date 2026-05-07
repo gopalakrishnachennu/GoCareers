@@ -2697,11 +2697,27 @@ class EngineConfigView(SuperuserRequiredMixin, View):
         else:
             tone = "good"
 
-        # Token presence — never expose the value, just whether it's set.
+        # Token presence — check DB first, env var second. Never expose value.
         token_env_var = "MAPBOX_ACCESS_TOKEN" if provider == "mapbox" else (
             "GOOGLE_MAPS_API_KEY" if provider == "google" else ""
         )
-        token_present = bool(os.getenv(token_env_var, "").strip()) if token_env_var else False
+        db_token_raw = (cfg.geocoding_provider_token or "").strip()
+        env_token_present = bool(os.getenv(token_env_var, "").strip()) if token_env_var else False
+        db_token_present = bool(db_token_raw)
+        token_present = db_token_present or env_token_present
+        if db_token_present:
+            token_source = "db"
+        elif env_token_present:
+            token_source = "env"
+        else:
+            token_source = "none"
+        # Mask the DB token for display: first 6 + last 4 chars only.
+        if db_token_present and len(db_token_raw) >= 12:
+            token_masked = f"{db_token_raw[:6]}…{db_token_raw[-4:]}"
+        elif db_token_present:
+            token_masked = "•" * len(db_token_raw)
+        else:
+            token_masked = ""
 
         # LocationCache stats — single aggregate query, no per-row work.
         try:
@@ -2734,6 +2750,10 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "tone": tone,
             "token_present": token_present,
             "token_env_var": token_env_var,
+            "token_source": token_source,         # "db" | "env" | "none"
+            "token_masked": token_masked,         # safe to display, e.g. "pk.eyJ…SFmQ"
+            "db_token_present": db_token_present,
+            "env_token_present": env_token_present,
             "cache_total": cache_total,
             "cache_resolved": by_status.get("RESOLVED", 0),
             "cache_unknown": by_status.get("UNKNOWN", 0),
@@ -2851,6 +2871,26 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             cfg.geocoding_provider = provider
         else:
             errors.append("geocoding_provider: unsupported provider")
+
+        # ── Provider token (rotatable from GUI) ────────────────────────────
+        # Three actions on the token:
+        #   action=keep    — leave existing token unchanged (default if no value)
+        #   action=update  — replace with the value in geocoding_provider_token
+        #   action=clear   — wipe DB token (resolver falls back to env var)
+        token_action = (request.POST.get("geocoding_provider_token_action") or "keep").strip().lower()
+        if token_action == "clear":
+            cfg.geocoding_provider_token = ""
+        elif token_action == "update":
+            new_token = (request.POST.get("geocoding_provider_token") or "").strip()
+            if not new_token:
+                errors.append("geocoding_provider_token: cannot save empty token (use Clear instead)")
+            elif len(new_token) > 512:
+                errors.append("geocoding_provider_token: too long (max 512 chars)")
+            elif provider == "mapbox" and not (new_token.startswith("pk.") or new_token.startswith("sk.")):
+                errors.append("geocoding_provider_token: Mapbox tokens start with 'pk.' or 'sk.'")
+            else:
+                cfg.geocoding_provider_token = new_token
+        # "keep" → no-op
 
         if errors:
             messages.error(request, " | ".join(errors))

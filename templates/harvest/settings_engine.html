@@ -250,16 +250,17 @@
                 <option value="google" {% if cfg.geocoding_provider == 'google' %}selected{% endif %}>Google</option>
               </select>
               <p class="mt-1 text-[10px] text-gray-400">
-                Token env var:
-                {% if geocoding_stats.token_env_var %}
-                  <code class="bg-gray-100 px-1 rounded">{{ geocoding_stats.token_env_var }}</code>
-                  {% if geocoding_stats.token_present %}
-                    <span class="text-green-600 font-semibold">✓ detected</span>
-                  {% else %}
-                    <span class="text-red-600 font-semibold">✗ missing</span>
-                  {% endif %}
+                {% if geocoding_stats.token_source == 'db' %}
+                  <span class="text-green-700 font-semibold">✓ DB token</span>
+                  <code class="bg-green-50 text-green-800 px-1 rounded ml-1">{{ geocoding_stats.token_masked }}</code>
+                {% elif geocoding_stats.token_source == 'env' %}
+                  <span class="text-green-700 font-semibold">✓ Env</span>
+                  <code class="bg-gray-100 px-1 rounded ml-1">{{ geocoding_stats.token_env_var }}</code>
+                {% elif geocoding_stats.token_env_var %}
+                  <span class="text-red-600 font-semibold">✗ no token</span>
+                  <span class="text-gray-400 ml-1">paste below or set <code>{{ geocoding_stats.token_env_var }}</code></span>
                 {% else %}
-                  <span class="text-gray-400">— (no provider)</span>
+                  <span class="text-gray-400">— (provider off)</span>
                 {% endif %}
               </p>
             </div>
@@ -271,6 +272,54 @@
               <p class="mt-1 text-[10px] text-gray-400">Free tier ≈ 100,000 / month — stay below.</p>
             </div>
           </div>
+        </div>
+
+        {# ── Provider token (rotate from GUI) ─────────────────────────────── #}
+        <div class="mt-4 pt-3 border-t border-gray-100">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-[10px] font-semibold uppercase tracking-wide text-gray-500">Provider Token</div>
+            {% if geocoding_stats.token_source == 'db' %}
+              <span class="text-[10px] text-green-700 font-semibold">Stored in DB</span>
+            {% elif geocoding_stats.token_source == 'env' %}
+              <span class="text-[10px] text-blue-700 font-semibold">Loaded from env</span>
+            {% else %}
+              <span class="text-[10px] text-red-600 font-semibold">Not configured</span>
+            {% endif %}
+          </div>
+
+          {% if geocoding_stats.db_token_present %}
+          <div class="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 mb-2 text-[11px] flex items-center justify-between">
+            <span class="text-gray-500">Current DB token:</span>
+            <code class="font-mono text-gray-800 ml-2">{{ geocoding_stats.token_masked }}</code>
+          </div>
+          {% endif %}
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 items-end">
+            <div class="sm:col-span-2">
+              <label class="form-label text-[11px]">
+                {% if geocoding_stats.db_token_present %}Replace token{% else %}Paste API token{% endif %}
+              </label>
+              <input type="password" name="geocoding_provider_token"
+                     placeholder="{% if geocoding_stats.db_token_present %}Leave blank to keep existing{% else %}pk.eyJ1Ijoi… (Mapbox token starts with pk. or sk.){% endif %}"
+                     autocomplete="off" spellcheck="false"
+                     class="form-input w-full font-mono text-[11px]">
+            </div>
+            <div>
+              <label class="form-label text-[11px]">Action</label>
+              <select name="geocoding_provider_token_action" class="form-select w-full text-[11px]">
+                <option value="keep">Keep current</option>
+                <option value="update">Save / Update</option>
+                {% if geocoding_stats.db_token_present %}
+                <option value="clear">Clear (use env var)</option>
+                {% endif %}
+              </select>
+            </div>
+          </div>
+          <p class="mt-2 text-[10px] text-gray-500">
+            🔒 Token never appears in logs or HTML. Only the masked first/last chars are shown above.
+            DB storage works for convenience; env var is more secure if your DB has multiple readers.
+            Resolver priority: <strong>DB → env var</strong>.
+          </p>
         </div>
 
         {# ── LocationCache stats ───────────────────────────────────────────── #}

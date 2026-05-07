@@ -317,10 +317,26 @@ def _provider_quota_available(cfg: HarvestEngineConfig) -> bool:
     return True
 
 
+def _resolve_provider_token(provider: str, cfg: HarvestEngineConfig) -> str:
+    """Token resolution priority: DB token (set via GUI) → env var.
+
+    DB storage allows rotating the token from the portal without SSH access.
+    Env var remains the more secure default — used when DB field is blank.
+    """
+    db_token = (cfg.geocoding_provider_token or "").strip()
+    if db_token:
+        return db_token
+    if provider == "mapbox":
+        return os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
+    if provider == "google":
+        return os.getenv("GOOGLE_MAPS_API_KEY", "").strip()
+    return ""
+
+
 def _mapbox_geocode(raw_text: str, normalized: str, cfg: HarvestEngineConfig) -> LocationResolution | None:
     if not _provider_quota_available(cfg):
         return None
-    token = os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
+    token = _resolve_provider_token("mapbox", cfg)
     if not token:
         return None
 
