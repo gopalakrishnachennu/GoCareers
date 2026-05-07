@@ -50,19 +50,25 @@ jobs:
             cd /opt/consulting
 
             ARGS="--batch-size ${{ github.event.inputs.batch_size }}"
+            MODE="${{ github.event.inputs.mode }}"
+            PLATFORM_SLUG="${{ github.event.inputs.platform_slug }}"
 
-            case "${{ github.event.inputs.mode }}" in
-              all)            ARGS="${ARGS} --all" ;;
-              only-unscoped)  ARGS="${ARGS} --only-unscoped" ;;
-              only-unknown)   ARGS="${ARGS} --only-unknown" ;;
-              platform)
-                if [ -z "${{ github.event.inputs.platform_slug }}" ]; then
-                  echo "platform mode requires platform_slug input"
-                  exit 1
-                fi
-                ARGS="${ARGS} --platform ${{ github.event.inputs.platform_slug }}"
-                ;;
-            esac
+            if [ "$MODE" = "all" ]; then
+              ARGS="$ARGS --all"
+            elif [ "$MODE" = "only-unscoped" ]; then
+              ARGS="$ARGS --only-unscoped"
+            elif [ "$MODE" = "only-unknown" ]; then
+              ARGS="$ARGS --only-unknown"
+            elif [ "$MODE" = "platform" ]; then
+              if [ -z "$PLATFORM_SLUG" ]; then
+                echo "platform mode requires platform_slug input"
+                exit 1
+              fi
+              ARGS="$ARGS --platform $PLATFORM_SLUG"
+            else
+              echo "Unknown mode: $MODE"
+              exit 1
+            fi
 
             if [ "${{ github.event.inputs.limit }}" != "0" ]; then
               ARGS="${ARGS} --limit ${{ github.event.inputs.limit }}"
