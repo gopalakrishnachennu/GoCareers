@@ -155,8 +155,21 @@ def _code_for_country(value: str) -> str:
     known = COUNTRY_NAME_TO_CODE.get(value.lower(), "")
     if known:
         return known
+    # Skip obviously-not-country strings before calling coco — saves both noise
+    # and CPU. coco prints "X not found in regex" to stderr for every miss.
+    if (
+        len(value) > 40
+        or any(ch.isdigit() for ch in value)
+        or any(ch in value for ch in "()[]{}/\\@#$%&*+=<>")
+    ):
+        return ""
     try:
+        # Silence coco's stderr logging globally on first call.
         import country_converter as coco  # type: ignore
+        import logging as _logging
+        _coco_logger = _logging.getLogger("country_converter")
+        if _coco_logger.level < _logging.CRITICAL:
+            _coco_logger.setLevel(_logging.CRITICAL)
         result = coco.convert(names=[value], to="ISO2", not_found=None)
         if isinstance(result, list):
             result = result[0] if result else None
