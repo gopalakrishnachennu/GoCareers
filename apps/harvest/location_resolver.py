@@ -496,20 +496,23 @@ def _mapbox_geocode(raw_text: str, normalized: str, cfg: HarvestEngineConfig) ->
 def _cache_resolution(resolution: LocationResolution) -> LocationResolution:
     if not resolution.normalized_text:
         return resolution
+    # Truncate every CharField to its model max_length. Mapbox's mapbox_id
+    # can exceed 255 chars for some places; country_name / city / region_name
+    # can also be unexpectedly long (e.g. 'The Federated States of …').
     LocationCache.objects.update_or_create(
-        normalized_text=resolution.normalized_text,
+        normalized_text=(resolution.normalized_text or "")[:512],
         defaults={
-            "raw_text": resolution.raw_text[:512],
-            "country_code": resolution.country_code,
-            "country_name": resolution.country_name,
-            "region_code": resolution.region_code,
-            "region_name": resolution.region_name,
-            "city": resolution.city,
+            "raw_text": (resolution.raw_text or "")[:512],
+            "country_code": (resolution.country_code or "")[:2],
+            "country_name": (resolution.country_name or "")[:128],
+            "region_code": (resolution.region_code or "")[:16],
+            "region_name": (resolution.region_name or "")[:128],
+            "city": (resolution.city or "")[:128],
             "confidence": resolution.confidence,
-            "source": resolution.source,
-            "provider": resolution.provider,
-            "provider_place_id": resolution.provider_place_id,
-            "status": resolution.status,
+            "source": (resolution.source or "")[:32],
+            "provider": (resolution.provider or "")[:32],
+            "provider_place_id": (resolution.provider_place_id or "")[:255],
+            "status": (resolution.status or "")[:16],
         },
     )
     return resolution
@@ -637,10 +640,13 @@ def evaluate_rawjob_scope(
     )
 
     target_countries = set(cfg.get_target_countries() or DEFAULT_TARGET_COUNTRIES)
+    # Truncate to RawJob field limits — Mapbox returns can be unexpectedly long
+    # for some places, and the model fields are: country_code(2),
+    # country_source(32), country(128), state(128), city(128).
     updates = {
-        "country_code": resolution.country_code,
+        "country_code": (resolution.country_code or "")[:2],
         "country_confidence": resolution.confidence,
-        "country_source": resolution.source,
+        "country_source": (resolution.source or "")[:32],
         "last_scope_evaluated_at": timezone.now(),
     }
 
@@ -656,16 +662,16 @@ def evaluate_rawjob_scope(
         updates["city"] = ""
 
     if resolution.country_name and (not raw_job.country or country_is_placeholder):
-        updates["country"] = resolution.country_name
+        updates["country"] = resolution.country_name[:128]
     if resolution.region_code and (not raw_job.state or state_is_placeholder):
-        updates["state"] = resolution.region_code
+        updates["state"] = resolution.region_code[:128]
     if resolution.city and (not raw_job.city or city_is_placeholder):
-        updates["city"] = resolution.city
+        updates["city"] = resolution.city[:128]
 
     if resolution.country_code in target_countries:
         updates.update({
             "scope_status": RawJob.ScopeStatus.PRIORITY_TARGET,
-            "scope_reason": f"target_country:{resolution.country_code}",
+            "scope_reason": f"target_country:{resolution.country_code}"[:128],
             "is_priority": True,
         })
     elif not resolution.country_code:
@@ -676,7 +682,7 @@ def evaluate_rawjob_scope(
                     "ambiguous_multi_location_target_domain"
                     if resolution.source == "ambiguous_multi_location"
                     else "unknown_country_target_domain"
-                ),
+                )[:128],
                 "is_priority": True,
             })
         else:
@@ -686,13 +692,13 @@ def evaluate_rawjob_scope(
                     "ambiguous_multi_location"
                     if resolution.source == "ambiguous_multi_location"
                     else "country_unknown"
-                ),
+                )[:128],
                 "is_priority": False,
             })
     else:
         updates.update({
             "scope_status": RawJob.ScopeStatus.COLD_NON_TARGET_COUNTRY,
-            "scope_reason": f"non_target_country:{resolution.country_code}",
+            "scope_reason": f"non_target_country:{resolution.country_code}"[:128],
             "is_priority": False,
         })
 
