@@ -436,7 +436,18 @@ def resolve_location(
 
     if cfg.geocoding_cache_enabled:
         cached = LocationCache.objects.filter(normalized_text=normalized).first()
-        if cached:
+        # Skip cache hit if previous resolution was UNKNOWN AND provider is now
+        # available — gives the upgraded resolver a chance to retry via Mapbox.
+        # Otherwise UNKNOWN cache entries from earlier no-provider runs would
+        # permanently shadow the provider call.
+        cache_is_unknown = cached and cached.status == LocationCache.Status.UNKNOWN
+        provider_now_available = (
+            use_provider
+            and cfg.geocoding_provider_enabled
+            and cfg.geocoding_provider in {"mapbox", "google"}
+            and bool(_resolve_provider_token(cfg.geocoding_provider, cfg))
+        )
+        if cached and not (cache_is_unknown and provider_now_available):
             return LocationResolution(
                 raw_text=cached.raw_text or raw_text,
                 normalized_text=cached.normalized_text,
