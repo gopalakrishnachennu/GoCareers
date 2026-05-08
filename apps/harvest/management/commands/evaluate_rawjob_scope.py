@@ -35,6 +35,27 @@ class Command(BaseCommand):
             qs = qs.filter(scope_status__in=["", RawJob.ScopeStatus.UNSCOPED])
         if options["only_unknown"]:
             qs = qs.filter(country_code="")
+
+        # Scope evaluation only needs location/domain hints. Avoid loading every
+        # RawJob column (large descriptions, HTML, analytics JSON, etc.) during
+        # production-wide backfills.
+        qs = qs.only(
+            "id",
+            "location_raw",
+            "city",
+            "state",
+            "country",
+            "vendor_location_block",
+            "raw_payload",
+            "location_candidates",
+            "title",
+            "description",
+            "description_clean",
+            "job_domain",
+            "job_domain_candidates",
+            "job_category",
+            "department_normalized",
+        )
         if options["limit"] and options["limit"] > 0:
             qs = qs[: options["limit"]]
 
