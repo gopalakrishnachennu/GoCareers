@@ -2036,6 +2036,30 @@ class LocationResolverScopeTests(TestCase):
         self.assertIn("PA - Duquesne", candidates)
         self.assertIn("ON - Toronto", candidates)
 
+    def test_state_signal_overrides_stale_country_field(self):
+        from harvest.location_resolver import evaluate_rawjob_scope, resolve_location
+        from harvest.models import RawJob
+
+        resolved = resolve_location(location_raw="Mountain View, CA", country="Canada")
+        self.assertEqual(resolved.country_code, "US")
+        self.assertEqual(resolved.region_code, "CA")
+
+        raw = self._raw(
+            url_hash="scope-stale-canada-country",
+            title="Senior Fullstack Engineer",
+            location_raw="Mountain View, CA",
+            city="Mountain View",
+            state="CA",
+            country="Canada",
+            country_code="CA",
+        )
+        evaluate_rawjob_scope(raw, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.country_code, "US")
+        self.assertEqual(raw.country, "United States")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+
     def test_nested_payload_location_candidates_make_target_country_priority(self):
         from harvest.location_resolver import evaluate_rawjob_scope
         from harvest.models import HarvestEngineConfig, RawJob

@@ -488,6 +488,36 @@ def _state_prefix_parts(text: str) -> tuple[str, str, str] | None:
     return None
 
 
+def _has_region_hint(text: str) -> bool:
+    parts = _split_location_parts(text)
+    if len(parts) < 2:
+        return False
+    us_states = getattr(country_classifier, "_US_STATES", set())
+    ca_provinces = getattr(country_classifier, "_CA_PROVINCES", set())
+    for part in parts[1:]:
+        token = re.sub(r"[^A-Za-z]", "", part).upper()
+        if token in us_states or token in ca_provinces:
+            return True
+    return bool(_state_prefix_parts(text))
+
+
+def _should_prefer_location_resolution(
+    location_resolution: LocationResolution | None,
+    explicit_resolution: LocationResolution | None,
+    raw_text: str,
+) -> bool:
+    if not location_resolution:
+        return False
+    if not explicit_resolution:
+        return True
+    if location_resolution.country_code == explicit_resolution.country_code:
+        return False
+    # A concrete city+state/province signal is stronger than a previously
+    # stored country field. This repairs rows like "Mountain View, CA" that
+    # were once mis-saved as Canada when CA was treated as a country.
+    return location_resolution.source == "state_region" or _has_region_hint(raw_text)
+
+
 def _resolve_from_explicit_country(country: str, raw_text: str, normalized: str) -> LocationResolution | None:
     code = _code_for_country(country)
     if not code:
@@ -806,6 +836,7 @@ def resolve_location(
     placeholder_only = _is_ambiguous_location_only(location_raw, city, state, country)
     country_for_rules = "" if is_placeholder_location_value(country) else country
     raw_text_for_rules = "" if placeholder_only else raw_text
+    location_resolution = _resolve_from_state_city(raw_text_for_rules, normalized)
 
     if cfg.geocoding_cache_enabled:
         cached = LocationCache.objects.filter(normalized_text=normalized).first()
@@ -816,13 +847,21 @@ def resolve_location(
         cache_is_unknown = cached and cached.status == LocationCache.Status.UNKNOWN
         cache_country_code = _code_for_country(cached.country_code) if cached else ""
         cache_has_invalid_country = bool(cached and cached.country_code and not cache_country_code)
+        cache_conflicts_location = bool(
+            cached
+            and cache_country_code
+            and location_resolution
+            and location_resolution.country_code
+            and location_resolution.country_code != cache_country_code
+            and _should_prefer_location_resolution(location_resolution, cached, raw_text_for_rules)
+        )
         provider_now_available = (
             use_provider
             and cfg.geocoding_provider_enabled
             and cfg.geocoding_provider in {"mapbox", "google"}
             and bool(_resolve_provider_token(cfg.geocoding_provider, cfg))
         )
-        if cached and not cache_has_invalid_country and not (cache_is_unknown and provider_now_available):
+        if cached and not cache_has_invalid_country and not cache_conflicts_location and not (cache_is_unknown and provider_now_available):
             return LocationResolution(
                 raw_text=cached.raw_text or raw_text,
                 normalized_text=cached.normalized_text,
@@ -838,11 +877,15 @@ def resolve_location(
                 provider_place_id=cached.provider_place_id,
             )
 
-    resolution = (
-        _resolve_from_explicit_country(country_for_rules, raw_text, normalized)
-        or _resolve_from_state_city(raw_text_for_rules, normalized)
-        or _resolve_from_classifier(raw_text_for_rules, normalized, title=title, description=description)
-    )
+    explicit_resolution = _resolve_from_explicit_country(country_for_rules, raw_text, normalized)
+    if _should_prefer_location_resolution(location_resolution, explicit_resolution, raw_text_for_rules):
+        resolution = location_resolution
+    else:
+        resolution = (
+            explicit_resolution
+            or location_resolution
+            or _resolve_from_classifier(raw_text_for_rules, normalized, title=title, description=description)
+        )
 
     if not resolution and use_provider and cfg.geocoding_provider == "mapbox" and not placeholder_only:
         resolution = _mapbox_geocode(raw_text, normalized, cfg)
@@ -963,7 +1006,9 @@ def evaluate_rawjob_scope(
     if location_candidates and is_placeholder_location_value(raw_job.location_raw or ""):
         updates["location_raw"] = " | ".join(location_candidates)[:512]
 
-    if resolution.country_name and (not raw_job.country or country_is_placeholder):
+    current_country_code = _code_for_country(raw_job.country or "")
+    country_conflicts = bool(current_country_code and resolution.country_code and current_country_code != resolution.country_code)
+    if resolution.country_name and (not raw_job.country or country_is_placeholder or country_conflicts):
         updates["country"] = resolution.country_name[:128]
     if resolution.region_code and (not raw_job.state or state_is_placeholder):
         updates["state"] = resolution.region_code[:128]
