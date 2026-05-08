@@ -64,31 +64,35 @@ fi
 # ── load env ──────────────────────────────────────────────────────────────────
 set -a; source .env.harvester; set +a
 
-# ── SSH tunnel (auto-open if DB is on 127.0.0.1 and nothing is listening) ────
+# ── SSH tunnel (auto-open if DB is on 127.0.0.1:5433) ────────────────────────
+# Port 5433 is used to avoid collision with any local Postgres on 5432.
 TUNNEL_PID=""
 DB_URL="${DATABASE_URL:-}"
-if [[ "$DB_URL" == *"127.0.0.1:5432"* ]] || [[ "$DB_URL" == *"localhost:5432"* ]]; then
-    if ! nc -z 127.0.0.1 5432 2>/dev/null; then
+if [[ "$DB_URL" == *"127.0.0.1:5433"* ]] || [[ "$DB_URL" == *"localhost:5433"* ]]; then
+    if ! nc -z 127.0.0.1 5433 2>/dev/null; then
         VPS="${VPS_HOST:-62.238.6.14}"
-        USER="${VPS_USER:-root}"
-        info "Port 5432 not open locally — opening SSH tunnel to ${USER}@${VPS}..."
-        ssh -f -N -L 5432:localhost:5432 "${USER}@${VPS}" \
+        SSHUSER="${VPS_USER:-root}"
+        SSHKEY="${VPS_SSH_KEY:-~/.ssh/github_actions_deploy}"
+        SSHKEY="${SSHKEY/#\~/$HOME}"   # expand ~ manually
+        info "Opening SSH tunnel to ${SSHUSER}@${VPS} (local 5433 → remote 5432)..."
+        ssh -i "$SSHKEY" -f -N \
+            -L 5433:localhost:5432 "${SSHUSER}@${VPS}" \
             -o StrictHostKeyChecking=accept-new \
             -o ExitOnForwardFailure=yes \
             -o ServerAliveInterval=30
-        TUNNEL_PID=$(pgrep -f "ssh -f -N -L 5432:localhost:5432" | tail -1)
+        TUNNEL_PID=$(pgrep -f "ssh.*5433:localhost:5432" | tail -1)
         sleep 1
-        nc -z 127.0.0.1 5432 2>/dev/null || err "SSH tunnel opened but port 5432 still unreachable. Check VPS firewall allows localhost:5432."
+        nc -z 127.0.0.1 5433 2>/dev/null || err "Tunnel opened but 5433 still unreachable."
         ok "Tunnel up (pid $TUNNEL_PID)"
     else
-        info "SSH tunnel already active on 127.0.0.1:5432"
+        info "SSH tunnel already active on 127.0.0.1:5433"
     fi
 fi
 
 # kill tunnel on exit (only if we started it)
 cleanup() {
     if [ -n "$TUNNEL_PID" ]; then
-        kill "$TUNNEL_PID" 2>/dev/null && info "Tunnel closed."
+        kill "$TUNNEL_PID" 2>/dev/null && info "Tunnel closed (pid $TUNNEL_PID)."
     fi
 }
 trap cleanup EXIT
