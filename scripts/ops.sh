@@ -64,6 +64,35 @@ fi
 # ── load env ──────────────────────────────────────────────────────────────────
 set -a; source .env.harvester; set +a
 
+# ── SSH tunnel (auto-open if DB is on 127.0.0.1 and nothing is listening) ────
+TUNNEL_PID=""
+DB_URL="${DATABASE_URL:-}"
+if [[ "$DB_URL" == *"127.0.0.1:5432"* ]] || [[ "$DB_URL" == *"localhost:5432"* ]]; then
+    if ! nc -z 127.0.0.1 5432 2>/dev/null; then
+        VPS="${VPS_HOST:-62.238.6.14}"
+        USER="${VPS_USER:-root}"
+        info "Port 5432 not open locally — opening SSH tunnel to ${USER}@${VPS}..."
+        ssh -f -N -L 5432:localhost:5432 "${USER}@${VPS}" \
+            -o StrictHostKeyChecking=accept-new \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30
+        TUNNEL_PID=$(pgrep -f "ssh -f -N -L 5432:localhost:5432" | tail -1)
+        sleep 1
+        nc -z 127.0.0.1 5432 2>/dev/null || err "SSH tunnel opened but port 5432 still unreachable. Check VPS firewall allows localhost:5432."
+        ok "Tunnel up (pid $TUNNEL_PID)"
+    else
+        info "SSH tunnel already active on 127.0.0.1:5432"
+    fi
+fi
+
+# kill tunnel on exit (only if we started it)
+cleanup() {
+    if [ -n "$TUNNEL_PID" ]; then
+        kill "$TUNNEL_PID" 2>/dev/null && info "Tunnel closed."
+    fi
+}
+trap cleanup EXIT
+
 # ── venv check ────────────────────────────────────────────────────────────────
 PYTHON=""
 if [ -f "venv/bin/python3.12" ]; then
@@ -75,7 +104,6 @@ else
 fi
 
 # ── env validation ────────────────────────────────────────────────────────────
-DB_URL="${DATABASE_URL:-}"
 [ -z "$DB_URL" ] && err "DATABASE_URL is not set in .env.harvester"
 
 if [[ "$DB_URL" == sqlite* ]]; then
