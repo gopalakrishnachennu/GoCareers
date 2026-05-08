@@ -16,6 +16,8 @@ class Command(BaseCommand):
         parser.add_argument("--all", action="store_true", help="Evaluate all RawJobs.")
         parser.add_argument("--platform", default="", help="Limit to one platform slug.")
         parser.add_argument("--limit", type=int, default=0, help="Maximum rows to process.")
+        parser.add_argument("--id-gt", type=int, default=0, help="Only process RawJobs with id greater than this value.")
+        parser.add_argument("--id-lte", type=int, default=0, help="Only process RawJobs with id less than or equal to this value.")
         parser.add_argument("--batch-size", type=int, default=1000, help="Bulk update batch size.")
         parser.add_argument("--only-unscoped", action="store_true", help="Only rows with blank/UNSCOPED scope.")
         parser.add_argument("--only-unknown", action="store_true", help="Only rows with missing country_code.")
@@ -35,6 +37,10 @@ class Command(BaseCommand):
             qs = qs.filter(scope_status__in=["", RawJob.ScopeStatus.UNSCOPED])
         if options["only_unknown"]:
             qs = qs.filter(country_code="")
+        if options["id_gt"] and options["id_gt"] > 0:
+            qs = qs.filter(id__gt=options["id_gt"])
+        if options["id_lte"] and options["id_lte"] > 0:
+            qs = qs.filter(id__lte=options["id_lte"])
 
         # Scope evaluation only needs location/domain hints. Avoid loading every
         # RawJob column (large descriptions, HTML, analytics JSON, etc.) during

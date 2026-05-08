@@ -25,6 +25,14 @@ on:
         description: "Max rows (0 = no limit)"
         required: true
         default: "0"
+      id_gt:
+        description: "Only process RawJob id greater than this value (0 = no lower bound)"
+        required: true
+        default: "0"
+      id_lte:
+        description: "Only process RawJob id less than or equal to this value (0 = no upper bound)"
+        required: true
+        default: "0"
       use_provider:
         description: "Allow Mapbox provider fallback for unresolved rows? (true/false)"
         required: true
@@ -73,6 +81,12 @@ jobs:
 
             if [ "${{ github.event.inputs.limit }}" != "0" ]; then
               ARGS="${ARGS} --limit ${{ github.event.inputs.limit }}"
+            fi
+            if [ "${{ github.event.inputs.id_gt }}" != "0" ]; then
+              ARGS="${ARGS} --id-gt ${{ github.event.inputs.id_gt }}"
+            fi
+            if [ "${{ github.event.inputs.id_lte }}" != "0" ]; then
+              ARGS="${ARGS} --id-lte ${{ github.event.inputs.id_lte }}"
             fi
             if [ "${{ github.event.inputs.use_provider }}" = "true" ]; then
               ARGS="${ARGS} --provider"
