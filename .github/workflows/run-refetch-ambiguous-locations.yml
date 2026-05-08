@@ -1,0 +1,57 @@
+name: Run — Refetch Ambiguous Locations
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform_slug:
+        description: "Platform slug, blank = all platforms"
+        required: false
+        default: ""
+      limit:
+        description: "Maximum rows to refetch"
+        required: true
+        default: "1000"
+      batch_size:
+        description: "Progress print interval"
+        required: true
+        default: "100"
+      use_provider:
+        description: "Allow Mapbox provider fallback during scope evaluation? (true/false)"
+        required: true
+        default: "false"
+      dry_run:
+        description: "Dry-run only — fetch/report without saving? (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refetch ambiguous RawJob locations on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 90m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+
+            ARGS="--limit ${{ github.event.inputs.limit }} --batch-size ${{ github.event.inputs.batch_size }}"
+
+            if [ -n "${{ github.event.inputs.platform_slug }}" ]; then
+              ARGS="${ARGS} --platform ${{ github.event.inputs.platform_slug }}"
+            fi
+            if [ "${{ github.event.inputs.use_provider }}" = "true" ]; then
+              ARGS="${ARGS} --provider"
+            fi
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              ARGS="${ARGS} --dry-run"
+            fi
+
+            echo "Running: python manage.py refetch_ambiguous_locations ${ARGS}"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              python manage.py refetch_ambiguous_locations ${ARGS}
