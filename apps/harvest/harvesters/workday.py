@@ -44,17 +44,34 @@ PAGE_SIZE = 20
 DETAIL_FETCH_CAP = 300
 
 
-def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: str, ext_path: str) -> str:
+def _workday_location_candidates(data: dict) -> list[str]:
+    try:
+        from harvest.location_resolver import extract_location_candidates
+    except Exception:
+        return []
+    info = data.get("jobPostingInfo") or data
+    return extract_location_candidates(
+        location_raw=(
+            str(info.get("locationsText") or data.get("locationsText") or "")
+        ),
+        vendor_location_block=str(
+            info.get("location") or info.get("jobLocation") or data.get("location") or ""
+        ),
+        raw_payload=data,
+    )
+
+
+def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: str, ext_path: str) -> dict:
     """
-    GET the Workday CXS detail endpoint for a single job and return its description.
-    Returns empty string on any failure — never raises.
+    GET the Workday CXS detail endpoint for a single job and return detail fields.
+    Returns {} on any failure — never raises.
 
     Endpoint: https://{subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}
     Returns JSON with full job description (same API Jarvis uses for backfill).
     No Playwright — pure HTTP JSON, fast and CPU-light.
     """
     if not ext_path:
-        return ""
+        return {}
     url = (
         f"https://{full_subdomain}.myworkdayjobs.com"
         f"/wday/cxs/{tenant}/{jobboard}{ext_path}"
@@ -62,21 +79,28 @@ def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: s
     try:
         resp = session.get(url, headers={"Accept": "application/json"}, timeout=10)
         if not resp.ok:
-            return ""
+            return {}
         data = resp.json()
         if not isinstance(data, dict):
-            return ""
+            return {}
         info = data.get("jobPostingInfo") or data
+        result: dict[str, Any] = {"raw_payload": data}
         for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
             val = info.get(key) or data.get(key) or ""
             if isinstance(val, dict):
                 val = val.get("content", "") or ""
             val = str(val).strip()
             if val:
-                return val
+                result["description"] = val
+                break
+        location_candidates = _workday_location_candidates(data)
+        if location_candidates:
+            result["location_candidates"] = location_candidates
+            result["location_raw"] = " | ".join(location_candidates)[:512]
+        return result
     except Exception:
         pass
-    return ""
+    return {}
 
 
 def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboard: str = "") -> dict:
@@ -93,6 +117,7 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         job_url = ""
 
     location_raw = job.get("locationsText", "")
+    location_candidates = _workday_location_candidates(job)
     loc_lower = location_raw.lower()
     if "remote" in loc_lower:
         is_remote = True
@@ -201,6 +226,7 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "department": dept,
         "team": "",
         "location_raw": location_raw,
+        "location_candidates": location_candidates,
         "city": "",
         "state": "",
         "country": "",
@@ -338,8 +364,12 @@ class WorkdayHarvester(BaseHarvester):
             tenant_val = _re.sub(r"\.wd\d+$", "", full_subdomain, flags=_re.I)
             detail_fetched = 0
             for job_dict in results:
-                if job_dict.get("description"):
-                    continue  # already has description from list API
+                needs_location_detail = (
+                    "locations" in (job_dict.get("location_raw") or "").lower()
+                    and not job_dict.get("location_candidates")
+                )
+                if job_dict.get("description") and not needs_location_detail:
+                    continue  # already has description/location from list API
                 if detail_fetched >= DETAIL_FETCH_CAP:
                     break     # remaining jobs handled by background backfill
 
@@ -354,12 +384,26 @@ class WorkdayHarvester(BaseHarvester):
                 ext_path_val = ext_path_m.group(1).split("?")[0]
 
                 time.sleep(MIN_DELAY_API)   # polite delay between detail calls
-                desc = _fetch_workday_detail(
+                detail = _fetch_workday_detail(
                     self._session, full_subdomain, tenant_val, path, ext_path_val
                 )
-                if desc:
-                    job_dict["description"] = desc
-                    detail_fetched += 1
+                detail_fetched += 1
+                if detail.get("description"):
+                    job_dict["description"] = detail["description"]
+                if detail.get("location_raw"):
+                    job_dict["location_raw"] = detail["location_raw"]
+                    job_dict["location_candidates"] = detail.get("location_candidates") or []
+                    loc_lower = job_dict["location_raw"].lower()
+                    job_dict["is_remote"] = "remote" in loc_lower
+                    job_dict["location_type"] = (
+                        "REMOTE" if "remote" in loc_lower else
+                        "HYBRID" if "hybrid" in loc_lower else
+                        "ONSITE"
+                    )
+                if detail.get("raw_payload"):
+                    payload = dict(job_dict.get("raw_payload") or {})
+                    payload["detail"] = detail["raw_payload"]
+                    job_dict["raw_payload"] = payload
 
             self.last_detail_fetched = detail_fetched
             return results

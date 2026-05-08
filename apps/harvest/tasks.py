@@ -2602,6 +2602,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     closing_date = _jarvis_parse_date(data.get("closing_date_raw", ""))
 
     from .enrichments import clean_job_content, clean_job_text
+    from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
 
     # Normalize HTML-heavy scraped content into cleaner plain text.
     desc_meta = clean_job_content(data.get("description") or "", max_len=50000)
@@ -2618,6 +2619,20 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     raw_payload["jarvis_company_jobs_url"] = board_ctx.get("company_jobs_url") or ""
     raw_payload["jarvis_platform_label_id"] = platform_label.pk if platform_label else None
     raw_payload["jarvis_fetch_all_supported"] = bool(board_ctx.get("fetch_all_supported"))
+    supplied_location_candidates = data.get("location_candidates")
+    if not isinstance(supplied_location_candidates, list):
+        supplied_location_candidates = []
+    location_candidates = (
+        supplied_location_candidates
+        or extract_location_candidates(
+            location_raw=data.get("location_raw") or "",
+            city=data.get("city") or "",
+            state=data.get("state") or "",
+            country=data.get("country") or "",
+            vendor_location_block=data.get("vendor_location_block") or "",
+            raw_payload=raw_payload,
+        )
+    )
 
     # ── Run enrichment extraction ─────────────────────────────────────────
     from .enrichments import extract_enrichments
@@ -2652,6 +2667,8 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         "city": (data.get("city") or "")[:128],
         "state": (data.get("state") or "")[:128],
         "country": (data.get("country") or "")[:128],
+        "location_candidates": location_candidates,
+        "country_codes": data.get("country_codes") if isinstance(data.get("country_codes"), list) else [],
         "is_remote": bool(data.get("is_remote")),
         "location_type": data.get("location_type") or "UNKNOWN",
         "employment_type": data.get("employment_type") or "UNKNOWN",
@@ -2797,6 +2814,8 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             url_hash=url_hash,
             defaults=raw_job_defaults,
         )
+    if raw_job:
+        evaluate_rawjob_scope(raw_job, use_provider=False, save=True)
     _invalidate_rawjobs_dashboard_cache()
 
     update_task_progress(self, current=3, total=3, message="Done ✓")
@@ -3909,6 +3928,7 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     from celery.exceptions import SoftTimeLimitExceeded
 
     from .enrichments import extract_enrichments
+    from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
     from .models import RawJob
 
     fetch_url = (job.original_url or "").strip()
@@ -4061,6 +4081,24 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
         if isinstance(merged_pl, dict) and merged_pl.get("active") is False:
             update_fields["is_active"] = False
 
+    merged_payload = update_fields.get("raw_payload") or job.raw_payload or {}
+    supplied_candidates = data.get("location_candidates")
+    if not isinstance(supplied_candidates, list):
+        supplied_candidates = []
+    location_candidates = (
+        supplied_candidates
+        or extract_location_candidates(
+            location_raw=update_fields.get("location_raw") or job.location_raw or "",
+            city=update_fields.get("city") or job.city or "",
+            state=update_fields.get("state") or job.state or "",
+            country=update_fields.get("country") or job.country or "",
+            vendor_location_block=update_fields.get("vendor_location_block") or job.vendor_location_block or "",
+            raw_payload=merged_payload,
+        )
+    )
+    if location_candidates:
+        update_fields["location_candidates"] = location_candidates
+
     update_fields.update(extract_enrichments({
         "title": job.title,
         "description": update_fields.get("description") or job.description,
@@ -4074,6 +4112,10 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
         "company_name": job.company_name,
         "posted_date": str(job.posted_date) if job.posted_date else "",
     }))
+
+    for field, value in update_fields.items():
+        setattr(job, field, value)
+    update_fields.update(evaluate_rawjob_scope(job, use_provider=False, save=False))
 
     RawJob.objects.filter(pk=job.pk).update(**update_fields)
     log = {

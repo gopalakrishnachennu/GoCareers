@@ -225,6 +225,15 @@ class AshbyHarvester(BaseHarvester):
             comp_summary = brief.get("compensationTierSummary") or ""
             team_id = brief.get("teamId", "") or ""
             team_name = team_lookup.get(team_id, "")
+            location_candidates = []
+            for loc in [loc_name] + [
+                item.get("locationName", "")
+                for item in (brief.get("secondaryLocations") or [])
+                if isinstance(item, dict)
+            ]:
+                loc = (loc or "").strip()
+                if loc and loc not in location_candidates:
+                    location_candidates.append(loc)
 
             job_url = f"https://jobs.ashbyhq.com/{tenant_id}/{job_id}"
 
@@ -261,8 +270,12 @@ class AshbyHarvester(BaseHarvester):
                         # locationAddress is a plain string "City, State, Country"
                         loc_addr = p.get("locationAddress") or ""
                         city, state, country = _parse_location_string(loc_addr)
+                        if loc_addr and loc_addr not in location_candidates:
+                            location_candidates.insert(0, loc_addr)
                         if not loc_name:
                             loc_name = p.get("locationName") or ""
+                        if loc_name and loc_name not in location_candidates:
+                            location_candidates.append(loc_name)
                         posted_date = p.get("publishedDate") or ""
                         # Update comp if list had none
                         if not comp_summary and p.get("compensationTierSummary"):
@@ -285,6 +298,7 @@ class AshbyHarvester(BaseHarvester):
                 "department":       dept,
                 "team":             team_name,
                 "location_raw":     loc_name,
+                "location_candidates": location_candidates,
                 "city":             city,
                 "state":            state,
                 "country":          country,

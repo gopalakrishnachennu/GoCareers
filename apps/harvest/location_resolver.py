@@ -222,6 +222,8 @@ def _candidate_has_geo_signal(value: str) -> bool:
     low = text.lower()
     if any(name in low for name in COUNTRY_NAME_TO_CODE):
         return True
+    if _state_prefix_parts(text):
+        return True
     parts = _split_location_parts(text)
     if len(parts) >= 2:
         return True
@@ -468,6 +470,24 @@ def _city_country_code(city: str) -> str:
     return _code_for_country(country)
 
 
+def _state_prefix_parts(text: str) -> tuple[str, str, str] | None:
+    """Parse ATS strings like 'PA - Duquesne' or 'ON - Toronto'."""
+    match = re.match(r"^\s*([A-Za-z]{2})\s*[-–]\s*(.+?)\s*$", text or "")
+    if not match:
+        return None
+    region_code = match.group(1).upper()
+    city = match.group(2).strip(" ,")
+    if not city:
+        return None
+    us_states = getattr(country_classifier, "_US_STATES", set())
+    ca_provinces = getattr(country_classifier, "_CA_PROVINCES", set())
+    if region_code in ca_provinces:
+        return "CA", region_code, city
+    if region_code in us_states:
+        return "US", region_code, city
+    return None
+
+
 def _resolve_from_explicit_country(country: str, raw_text: str, normalized: str) -> LocationResolution | None:
     code = _code_for_country(country)
     if not code:
@@ -487,6 +507,20 @@ def _resolve_from_state_city(raw_text: str, normalized: str) -> LocationResoluti
     parts = _split_location_parts(raw_text)
     if not parts:
         return None
+
+    if prefixed := _state_prefix_parts(raw_text):
+        country_code, region_code, city = prefixed
+        return LocationResolution(
+            raw_text=raw_text,
+            normalized_text=normalized,
+            country_code=country_code,
+            country_name=COUNTRY_CODE_TO_NAME.get(country_code, ""),
+            region_code=region_code,
+            city=city,
+            confidence=0.92,
+            source="state_region",
+            status=LocationCache.Status.RESOLVED,
+        )
 
     city = parts[0]
     city_code = _city_country_code(city)

@@ -177,11 +177,21 @@ class GreenhouseHarvester(BaseHarvester):
             city = ""
             state = ""
             country = ""
+            location_candidates = []
             if offices and isinstance(offices, list):
-                first_office = offices[0]
-                city = first_office.get("city", "") or ""
-                state = first_office.get("state", "") or ""
-                country = first_office.get("country", "") or ""
+                for idx, office in enumerate(offices):
+                    if not isinstance(office, dict):
+                        continue
+                    office_city = office.get("city", "") or ""
+                    office_state = office.get("state", "") or ""
+                    office_country = office.get("country", "") or ""
+                    candidate = ", ".join(x for x in [office_city, office_state, office_country] if x)
+                    if candidate and candidate not in location_candidates:
+                        location_candidates.append(candidate)
+                    if idx == 0:
+                        city = office_city
+                        state = office_state
+                        country = office_country
 
             location_type, is_remote = _detect_location_type(location_raw)
             employment_type = _detect_employment_type(job)
@@ -244,6 +254,7 @@ class GreenhouseHarvester(BaseHarvester):
                 "department": dept,
                 "team": "",
                 "location_raw": location_raw,
+                "location_candidates": location_candidates,
                 "city": city,
                 "state": state,
                 "country": country,

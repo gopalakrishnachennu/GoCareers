@@ -405,6 +405,30 @@ class JarvisPlatformApiExtractionTests(SimpleTestCase):
         self.assertEqual(out.get("title"), "Finance Intern")
         self.assertIn("Scottsdale", out.get("location_raw", ""))
 
+    def test_workday_detail_returns_multi_location_candidates(self):
+        from harvest.harvesters.workday import _fetch_workday_detail
+
+        session = MagicMock()
+        response = MagicMock()
+        response.ok = True
+        response.json.return_value = {
+            "jobPostingInfo": {
+                "jobDescription": "Workday JD body",
+                "locationsText": "2 Locations",
+                "postingLocations": [
+                    {"locationName": "Seattle, Washington"},
+                    {"locationName": "Toronto, Ontario, Canada"},
+                ],
+            }
+        }
+        session.get.return_value = response
+
+        out = _fetch_workday_detail(session, "acme.wd5", "acme", "External", "/job/123")
+
+        self.assertEqual(out.get("description"), "Workday JD body")
+        self.assertIn("Seattle, Washington", out.get("location_candidates", []))
+        self.assertIn("Toronto, Ontario, Canada", out.get("location_candidates", []))
+
     def test_oracle_ce_rest_api(self):
         jarvis = JobJarvis()
         url = "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/300001"
@@ -1990,6 +2014,27 @@ class LocationResolverScopeTests(TestCase):
         self.assertIn("US", raw.country_codes)
         self.assertIn("CA", raw.country_codes)
         self.assertIn("Seattle, WA", raw.location_raw)
+
+    def test_state_prefix_locations_resolve_as_us_or_canada(self):
+        from harvest.location_resolver import extract_location_candidates, resolve_location
+
+        us = resolve_location(location_raw="PA - Duquesne")
+        ca = resolve_location(location_raw="ON - Toronto")
+        candidates = extract_location_candidates(
+            raw_payload={
+                "Locations": [
+                    {"LocalizedName": "PA - Duquesne"},
+                    {"LocalizedName": "ON - Toronto"},
+                ]
+            }
+        )
+
+        self.assertEqual(us.country_code, "US")
+        self.assertEqual(us.region_code, "PA")
+        self.assertEqual(ca.country_code, "CA")
+        self.assertEqual(ca.region_code, "ON")
+        self.assertIn("PA - Duquesne", candidates)
+        self.assertIn("ON - Toronto", candidates)
 
     def test_nested_payload_location_candidates_make_target_country_priority(self):
         from harvest.location_resolver import evaluate_rawjob_scope

@@ -160,21 +160,27 @@ class UltiProHarvester(BaseHarvester):
         job_id = j.get("Id") or j.get("id") or j.get("requisitionId") or j.get("jobId") or ""
         title = j.get("Title") or j.get("jobTitle") or j.get("title") or ""
 
-        # Location comes from Locations[0].LocalizedName — e.g. "PA - Duquesne"
+        # Location comes from Locations[].LocalizedName — e.g. "PA - Duquesne".
+        # Keep all entries because UKG often posts one role across many sites.
         locs = j.get("Locations") or []
-        location_parts = []
-        if locs and isinstance(locs[0], dict):
-            loc_name = (locs[0].get("LocalizedName") or locs[0].get("LocalizedLocation") or "").strip()
-            if loc_name:
-                location_parts.append(loc_name)
+        location_candidates = []
+        if isinstance(locs, list):
+            for loc in locs:
+                if not isinstance(loc, dict):
+                    continue
+                loc_name = (loc.get("LocalizedName") or loc.get("LocalizedLocation") or "").strip()
+                if loc_name and loc_name not in location_candidates:
+                    location_candidates.append(loc_name)
         # Fallback: flat city/state fields
-        if not location_parts:
+        if not location_candidates:
             city = j.get("city") or j.get("AddressCity") or ""
             state = j.get("state") or j.get("stateCode") or j.get("AddressState") or ""
             country = j.get("country") or j.get("countryCode") or j.get("AddressCountry") or ""
-            location_parts = [x for x in [city, state, country] if x]
+            fallback_location = ", ".join(x for x in [city, state, country] if x)
+            if fallback_location:
+                location_candidates.append(fallback_location)
 
-        location_raw = ", ".join(location_parts)
+        location_raw = " | ".join(location_candidates)
 
         is_remote = bool(
             j.get("workFromHome")
@@ -235,6 +241,7 @@ class UltiProHarvester(BaseHarvester):
             "department": j.get("JobCategoryName") or j.get("department") or j.get("businessUnit") or "",
             "team": "",
             "location_raw": location_raw,
+            "location_candidates": location_candidates,
             "city": "",
             "state": "",
             "country": "",
