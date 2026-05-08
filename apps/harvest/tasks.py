@@ -692,6 +692,7 @@ def fetch_raw_jobs_for_company_task(
     from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig, RawJob
     from .harvesters import get_harvester
     from .normalizer import compute_url_hash, compute_content_hash
+    from .location_resolver import extract_location_candidates
 
     # ── Read live config from DB — overrides decorator-level fallbacks ────────
     try:

@@ -421,15 +421,7 @@ def _code_for_country(value: str) -> str:
         # Do not blindly accept every two-letter token as a country code.
         # State/province abbreviations like WA/ON otherwise become fake
         # countries before the city/state resolver can disambiguate them.
-        try:
-            import country_converter as coco  # type: ignore
-            result = coco.convert(names=[upper], to="ISO2", not_found=None)
-            if isinstance(result, list):
-                result = result[0] if result else None
-            if result and result != "not found" and str(result).upper() == upper:
-                return upper
-        except Exception:
-            pass
+        # Full country names still flow through country_converter below.
         return ""
     known = COUNTRY_NAME_TO_CODE.get(value.lower(), "")
     if known:
