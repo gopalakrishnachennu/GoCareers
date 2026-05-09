@@ -76,12 +76,21 @@ def _oracle_parse_location_parts(location_block: str) -> tuple[str, str, str]:
 
 
 def _oracle_work_location(detail: dict[str, Any]) -> dict[str, Any]:
+    """Return the primary (first) workLocation dict."""
     work_locations = detail.get("workLocation") or detail.get("WorkLocation") or []
     if isinstance(work_locations, list) and work_locations:
         first = work_locations[0]
         if isinstance(first, dict):
             return first
     return {}
+
+
+def _oracle_all_work_locations(detail: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return all workLocation dicts — used for multi-location candidates."""
+    work_locations = detail.get("workLocation") or detail.get("WorkLocation") or []
+    if isinstance(work_locations, list):
+        return [loc for loc in work_locations if isinstance(loc, dict)]
+    return []
 
 
 def _oracle_normalize_country(country: str) -> str:
@@ -266,6 +275,26 @@ class OracleHCMHarvester(BaseHarvester):
         location_raw = vendor_location_block or ", ".join(x for x in [city, state, country] if x)
         postal_code = _oracle_first(work_location, "PostalCode") or _oracle_parse_postal(vendor_location_block)
 
+        # Build location_candidates from all workLocation entries (not just first)
+        from harvest.location_resolver import extract_location_candidates
+        all_locs = _oracle_all_work_locations(detail)
+        extra_blocks: list[str] = []
+        for loc_dict in all_locs[1:]:  # skip first — already in location_raw
+            parts = ", ".join(filter(None, [
+                loc_dict.get("TownOrCity") or loc_dict.get("City") or "",
+                loc_dict.get("Region2") or loc_dict.get("State") or loc_dict.get("StateProvince") or "",
+                _oracle_normalize_country(loc_dict.get("Country") or loc_dict.get("CountryCode") or ""),
+            ]))
+            if parts:
+                extra_blocks.append(parts)
+        combined_raw = " | ".join(filter(None, [location_raw] + extra_blocks))
+        location_candidates = extract_location_candidates(
+            location_raw=combined_raw, city=city, state=state, country=country,
+            vendor_location_block=vendor_location_block,
+        )
+        if extra_blocks:
+            location_raw = combined_raw[:512]
+
         work_loc = _oracle_first(detail, "PrimaryWorkLocation", "WorkLocation", "Workplace", "WorkplaceType") or _oracle_first(req, "PrimaryWorkLocation")
         work_loc = work_loc.lower()
         if "remote" in work_loc or req.get("WorkFromHome"):
@@ -336,6 +365,7 @@ class OracleHCMHarvester(BaseHarvester):
             "department": department,
             "team": "",
             "location_raw": location_raw,
+            "location_candidates": location_candidates,
             "city": city,
             "state": state,
             "country": country,

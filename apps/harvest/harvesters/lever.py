@@ -129,6 +129,8 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
     commitment = cats.get("commitment", "")
     employment_type = _map_commitment(commitment)
     location_raw = cats.get("location", "") or ""
+    # Lever sometimes stores additional locations in allLocations or workplaceType
+    extra_locations = job.get("allLocations") or job.get("additionalLocations") or []
     location_type, is_remote = _detect_location_type(location_raw)
 
     # Description + section extraction
@@ -154,6 +156,10 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
         comp_text = description[:2000]
     sal_min, sal_max, sal_period, sal_raw = _parse_lever_salary(str(comp_text))
 
+    from harvest.location_resolver import extract_location_candidates
+    combined_raw = " | ".join(filter(None, [location_raw] + list(extra_locations)))
+    location_candidates = extract_location_candidates(location_raw=combined_raw)
+
     return {
         "external_id": job.get("id", ""),
         "original_url": job.get("hostedUrl", ""),
@@ -162,7 +168,8 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
         "company_name": company_name,
         "department": cats.get("department", "") or "",
         "team": cats.get("team", "") or "",
-        "location_raw": location_raw,
+        "location_raw": combined_raw[:512] if combined_raw else location_raw,
+        "location_candidates": location_candidates,
         "city": "",
         "state": "",
         "country": "",

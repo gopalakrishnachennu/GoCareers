@@ -256,6 +256,10 @@ class IcimsHarvester(BaseHarvester):
             location_type, is_remote = _detect_location_type(location_raw)
             city, state, country = _split_location(location_raw)
             external_id = self._extract_job_id(abs_url)
+            from harvest.location_resolver import extract_location_candidates
+            location_candidates = extract_location_candidates(
+                location_raw=location_raw, city=city, state=state, country=country
+            )
             return {
                 "external_id": external_id,
                 "original_url": abs_url,
@@ -265,6 +269,7 @@ class IcimsHarvester(BaseHarvester):
                 "department": "",
                 "team": "",
                 "location_raw": location_raw,
+                "location_candidates": location_candidates,
                 "city": city,
                 "state": state,
                 "country": country,

@@ -178,6 +178,9 @@ class GreenhouseHarvester(BaseHarvester):
             state = ""
             country = ""
             location_candidates = []
+            # Seed with primary location.name first so it's the canonical entry
+            if location_raw and location_raw not in location_candidates:
+                location_candidates.append(location_raw)
             if offices and isinstance(offices, list):
                 for idx, office in enumerate(offices):
                     if not isinstance(office, dict):

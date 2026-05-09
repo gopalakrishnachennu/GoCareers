@@ -106,6 +106,11 @@ class SmartRecruitersHarvester(BaseHarvester):
         else:
             location_type = "UNKNOWN"
 
+        from harvest.location_resolver import extract_location_candidates
+        location_candidates = extract_location_candidates(
+            location_raw=location_raw, city=city, state=state, country=country
+        )
+
         dept = (p.get("department") or {}).get("label") or ""
 
         emp_raw = ((p.get("typeOfEmployment") or {}).get("label") or "").lower()
@@ -209,6 +214,7 @@ class SmartRecruitersHarvester(BaseHarvester):
             "department": dept,
             "team": "",
             "location_raw": location_raw,
+            "location_candidates": location_candidates,
             "city": city,
             "state": state,
             "country": country,
