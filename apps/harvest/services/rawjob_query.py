@@ -60,6 +60,8 @@ FILTER_STATE_KEYS = (
     "date_to",
     "company_id",
     "label_pk",
+    "scope_status",
+    "country_code",
 )
 
 
@@ -403,6 +405,14 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
     date_to = _get(params, "date_to")
     if date_to:
         qs = qs.filter(posted_date__lte=date_to)
+
+    scope_f = _get(params, "scope_status")
+    if scope_f:
+        qs = qs.filter(scope_status=scope_f)
+
+    country_code_f = _get(params, "country_code")
+    if country_code_f:
+        qs = qs.filter(country_code__iexact=country_code_f)
 
     return qs
 

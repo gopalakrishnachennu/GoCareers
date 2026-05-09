@@ -58,6 +58,7 @@ from .views import (
     DuplicateRunView,
     DuplicateResolveView,
     DuplicateBulkResolveView,
+    UnknownCountryReviewView,
 )
 
 urlpatterns = [
@@ -119,6 +120,7 @@ urlpatterns = [
     path("api/push/jobs/", PushJobsView.as_view(), name="harvest-push-jobs"),
     path("api/push/status/", PushStatusView.as_view(), name="harvest-push-status"),
     # Duplicate Engine
+    path("raw-jobs/unknown-country/", UnknownCountryReviewView.as_view(), name="harvest-unknown-country-review"),
     path("duplicates/", DuplicateListView.as_view(), name="harvest-duplicates"),
     path("duplicates/run/", DuplicateRunView.as_view(), name="harvest-duplicates-run"),
     path("duplicates/<int:pk>/resolve/", DuplicateResolveView.as_view(), name="harvest-duplicate-resolve"),

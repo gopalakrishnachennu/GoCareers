@@ -3049,3 +3049,138 @@ class DuplicateBulkResolveView(SuperuserRequiredMixin, View):
             messages.success(request, f"Kept both for {count} pair{'s' if count != 1 else ''}.")
 
         return redirect(next_url)
+
+
+class UnknownCountryReviewView(SuperuserRequiredMixin, View):
+    """Review and action RawJobs with scope_status=REVIEW_UNKNOWN_COUNTRY."""
+
+    template_name = "harvest/unknown_country_review.html"
+    PAGE_SIZE = 100
+
+    def _base_qs(self):
+        return RawJob.objects.filter(
+            scope_status=RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY
+        ).order_by("-fetched_at")
+
+    def get(self, request):
+        qs = self._base_qs()
+
+        platform_f = (request.GET.get("platform") or "").strip()
+        if platform_f:
+            qs = qs.filter(platform_slug=platform_f)
+
+        total = qs.count()
+
+        # Platform breakdown
+        by_platform = (
+            self._base_qs()
+            .values("platform_slug")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:20]
+        )
+
+        # Top location_raw patterns (stripped to first 60 chars)
+        from django.db.models.functions import Left
+        top_locations = (
+            qs.exclude(location_raw="")
+            .values("location_raw")
+            .annotate(count=Count("id"))
+            .order_by("-count")[:30]
+        )
+
+        # Pagination
+        from django.core.paginator import Paginator
+        paginator = Paginator(
+            qs.only(
+                "id", "company_name", "platform_slug", "title",
+                "location_raw", "location_candidates", "country_code",
+                "scope_reason", "fetched_at", "original_url",
+            ),
+            self.PAGE_SIZE,
+        )
+        try:
+            page_obj = paginator.page(int(request.GET.get("page", 1)))
+        except Exception:
+            page_obj = paginator.page(1)
+
+        platforms = (
+            RawJob.objects.filter(scope_status=RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY)
+            .values_list("platform_slug", flat=True)
+            .distinct()
+            .order_by("platform_slug")
+        )
+
+        return render(request, self.template_name, {
+            "total": total,
+            "by_platform": by_platform,
+            "top_locations": top_locations,
+            "page_obj": page_obj,
+            "paginator": paginator,
+            "platforms": platforms,
+            "selected_platform": platform_f,
+        })
+
+    def post(self, request):
+        action = request.POST.get("action", "")
+        ids = [int(x) for x in request.POST.getlist("ids") if x.isdigit()]
+        platform_f = (request.POST.get("platform") or "").strip()
+        redirect_url = reverse("harvest-unknown-country-review")
+        if platform_f:
+            redirect_url += f"?platform={platform_f}"
+
+        if not ids and action not in ("refetch_all_provider",):
+            messages.warning(request, "No jobs selected.")
+            return redirect(redirect_url)
+
+        if action == "mark_target":
+            from django.utils import timezone
+            updated = RawJob.objects.filter(pk__in=ids).update(
+                scope_status=RawJob.ScopeStatus.PRIORITY_TARGET,
+                is_priority=True,
+                last_scope_evaluated_at=timezone.now(),
+            )
+            messages.success(request, f"Marked {updated} job(s) as Priority Target.")
+
+        elif action == "mark_cold":
+            from django.utils import timezone
+            updated = RawJob.objects.filter(pk__in=ids).update(
+                scope_status=RawJob.ScopeStatus.COLD_NON_TARGET_COUNTRY,
+                is_priority=False,
+                last_scope_evaluated_at=timezone.now(),
+            )
+            messages.success(request, f"Marked {updated} job(s) as Cold.")
+
+        elif action == "re_evaluate":
+            from .location_resolver import evaluate_rawjob_scope
+            from django.utils import timezone
+            jobs = RawJob.objects.filter(pk__in=ids).only(
+                "id", "location_raw", "location_candidates", "country_codes",
+                "country_code", "scope_status", "platform_slug",
+            )
+            updated = 0
+            for job in jobs:
+                result = evaluate_rawjob_scope(job, use_provider=False, save=True)
+                if result:
+                    updated += 1
+            messages.success(request, f"Re-evaluated {updated} job(s) (no provider).")
+
+        elif action == "re_evaluate_provider":
+            from .location_resolver import evaluate_rawjob_scope
+            jobs = RawJob.objects.filter(pk__in=ids).only(
+                "id", "location_raw", "location_candidates", "country_codes",
+                "country_code", "scope_status", "platform_slug",
+            )
+            resolved = 0
+            for job in jobs:
+                result = evaluate_rawjob_scope(job, use_provider=True, save=True)
+                if result and result.get("scope_status") == RawJob.ScopeStatus.PRIORITY_TARGET:
+                    resolved += 1
+            messages.success(
+                request,
+                f"Provider re-evaluated {len(ids)} job(s). {resolved} resolved to Priority Target.",
+            )
+
+        else:
+            messages.error(request, f"Unknown action: {action}")
+
+        return redirect(redirect_url)
