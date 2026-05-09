@@ -2144,20 +2144,36 @@ def cleanup_harvested_jobs_task(self):
     )
     try:
         now = timezone.now()
+
+        # Phase 1: mark expired PENDING/SKIPPED rows as inactive
         deactivated = RawJob.objects.filter(
             expires_at__lt=now,
             sync_status__in=["PENDING", "SKIPPED"],
             is_active=True,
         ).update(is_active=False)
 
-        old_cutoff = now - timedelta(days=30)
-        purged = RawJob.objects.filter(
+        # Phase 2: purge is_active=False rows that are PENDING (never synced,
+        # confirmed dead) — no age requirement needed; they will never sync.
+        purged_pending = RawJob.objects.filter(
+            is_active=False,
+            sync_status=RawJob.SyncStatus.PENDING,
+        ).delete()[0]
+
+        # Phase 3: purge remaining inactive rows older than 7 days
+        # (SKIPPED/FAILED rows where the job posting is gone)
+        old_cutoff = now - timedelta(days=7)
+        purged_old = RawJob.objects.filter(
             is_active=False,
             fetched_at__lt=old_cutoff,
         ).delete()[0]
 
-        logger.info("Cleanup: %d RawJobs deactivated, %d purged.", deactivated, purged)
-        out = {"deactivated": deactivated, "purged": purged}
+        purged = purged_pending + purged_old
+        logger.info(
+            "Cleanup: %d deactivated, %d pending-dead purged, %d old purged.",
+            deactivated, purged_pending, purged_old,
+        )
+        out = {"deactivated": deactivated, "purged_pending": purged_pending,
+               "purged_old": purged_old, "purged": purged}
         finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
         return out
     except Exception as e:
