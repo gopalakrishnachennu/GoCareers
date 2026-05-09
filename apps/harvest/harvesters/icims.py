@@ -112,6 +112,13 @@ class IcimsHarvester(BaseHarvester):
                     posting["salary_max"] = detail.get("salary_max")
                     posting["salary_period"] = detail.get("salary_period", "YEAR")
                     posting["salary_raw"] = detail.get("salary_raw", "")
+                # Apply structured location from JSON-LD when list page had none
+                if not posting.get("city") and detail.get("city"):
+                    posting["city"] = detail["city"]
+                    posting["state"] = detail.get("state", "")
+                    posting["country"] = detail.get("country", "")
+                    if detail.get("location_raw_detail") and not posting.get("location_raw"):
+                        posting["location_raw"] = detail["location_raw_detail"]
 
             next_url = self._extract_next_page(page_html, page_url)
             if not next_url:
@@ -201,6 +208,18 @@ class IcimsHarvester(BaseHarvester):
                                     f"{result['salary_min']:,.0f}–{result['salary_max']:,.0f}"
                                     if result.get("salary_max") else f"{result['salary_min']:,.0f}"
                                 )
+                    # Location from JSON-LD jobLocation
+                    jl = schema.get("jobLocation")
+                    if isinstance(jl, list):
+                        jl = jl[0] if jl else None
+                    if isinstance(jl, dict):
+                        addr = jl.get("address") or {}
+                        if isinstance(addr, dict):
+                            result["city"] = addr.get("addressLocality") or ""
+                            result["state"] = addr.get("addressRegion") or ""
+                            result["country"] = addr.get("addressCountry") or ""
+                            parts = [result["city"], result["state"], result["country"]]
+                            result["location_raw_detail"] = ", ".join(p for p in parts if p)
                     if "description" in result:
                         break
             except Exception:
@@ -223,8 +242,10 @@ class IcimsHarvester(BaseHarvester):
         # Department from iCIMS header fields (JobHeaderData)
         if "department" not in result:
             for dept_pat in [
-                r'field-label">\s*(?:Job\s+)?(?:Category|Department|Function|Group)\s*</span>\s*</dt>\s*<dd[^>]*>\s*<span[^>]*>([\s\S]*?)</span>',
-                r'iCIMS_InfoMsg_Job[^>]*>\s*(?:Category|Department|Function):\s*([\w\s,&/-]+)',
+                r'field-label">\s*(?:Job\s+)?(?:Category|Department|Function|Group|Team|Division)\s*</span>\s*</dt>\s*<dd[^>]*>\s*<span[^>]*>([\s\S]*?)</span>',
+                r'iCIMS_InfoMsg_Job[^>]*>\s*(?:Category|Department|Function|Team|Division):\s*([\w\s,&/-]+)',
+                r'data-field="(?:job_?category|department|function|team)"[^>]*>\s*([\w\s,&/\-]+?)\s*<',
+                r'<dt[^>]*>\s*(?:Category|Department|Function|Team)\s*</dt>\s*<dd[^>]*>([\w\s,&/\-]+?)</dd>',
             ]:
                 dm = re.search(dept_pat, html, re.I)
                 if dm:

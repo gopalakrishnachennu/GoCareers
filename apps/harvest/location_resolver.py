@@ -566,6 +566,20 @@ def _resolve_from_state_city(raw_text: str, normalized: str) -> LocationResoluti
     if not parts:
         return None
 
+    # Single-token location that is itself a country name ("United States", "India", etc.)
+    if len(parts) == 1:
+        code = _code_for_country(raw_text.strip())
+        if code:
+            return LocationResolution(
+                raw_text=raw_text,
+                normalized_text=normalized,
+                country_code=code,
+                country_name=COUNTRY_CODE_TO_NAME.get(code, raw_text.strip()),
+                confidence=0.87,
+                source="country_name_only",
+                status=LocationCache.Status.RESOLVED,
+            )
+
     if prefixed := _state_prefix_parts(raw_text):
         country_code, region_code, city = prefixed
         return LocationResolution(
