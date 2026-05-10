@@ -32,6 +32,7 @@ from core.dashboard_metrics import (
 )
 from core.feature_flags import feature_enabled_for
 from harvest.models import CompanyFetchRun, CompanyPlatformLabel, HarvestOpsRun, JobBoardPlatform, RawJob
+from harvest.services.rawjob_query import duplicate_rawjob_q
 from jobs.models import Job
 from submissions.models import ApplicationSubmission
 from users.models import MarketingRole, User
@@ -112,7 +113,7 @@ def _platform_health_rows(since):
             pending_sync=Count("id", filter=Q(sync_status=RawJob.SyncStatus.PENDING)),
             synced_jobs=Count("id", filter=Q(sync_status=RawJob.SyncStatus.SYNCED)),
             skipped_jobs=Count("id", filter=Q(sync_status=RawJob.SyncStatus.SKIPPED)),
-            duplicate_jobs=Count("id", filter=Q(sync_status=RawJob.SyncStatus.DUPLICATE)),
+            duplicate_jobs=Count("id", filter=duplicate_rawjob_q()),
             blocked_jobs=Count("id", filter=blocked_q),
             low_confidence_jobs=Count("id", filter=low_conf_q),
             low_quality_jobs=Count("id", filter=Q(quality_score__lt=LOW_QUALITY_THRESHOLD)),
@@ -368,7 +369,7 @@ class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, Template
                 )
                 .order_by("-submission_count")[:5]
             )
-            role_qs = MarketingRole.objects.all().annotate(
+            role_qs = MarketingRole.objects.filter(is_active=True).annotate(
                 total=Count("jobs__submissions", filter=Q(jobs__submissions__created_at__gte=since)),
                 applied=Count(
                     "jobs__submissions",
@@ -410,7 +411,7 @@ class AnalyticsDashboardView(LoginRequiredMixin, EmployeeRequiredMixin, Template
                 .annotate(submission_count=Count("consultant_profile__submissions"))
                 .order_by("-submission_count")[:5]
             )
-            role_qs = MarketingRole.objects.all().annotate(
+            role_qs = MarketingRole.objects.filter(is_active=True).annotate(
                 total=Count("jobs__submissions"),
                 applied=Count("jobs__submissions", filter=Q(jobs__submissions__status=ApplicationSubmission.Status.APPLIED)),
                 interview=Count("jobs__submissions", filter=Q(jobs__submissions__status=ApplicationSubmission.Status.INTERVIEW)),
@@ -666,7 +667,7 @@ class AnalyticsExportCSVView(LoginRequiredMixin, EmployeeRequiredMixin, View):
 
         writer.writerow([])
         writer.writerow(["Marketing role funnel", "Role", "Total", "Applied", "Interview", "Offer", "Rejected"])
-        role_qs = MarketingRole.objects.all().annotate(
+        role_qs = MarketingRole.objects.filter(is_active=True).annotate(
             total=Count("jobs__submissions"),
             applied=Count("jobs__submissions", filter=Q(jobs__submissions__status=ApplicationSubmission.Status.APPLIED)),
             interview=Count("jobs__submissions", filter=Q(jobs__submissions__status=ApplicationSubmission.Status.INTERVIEW)),

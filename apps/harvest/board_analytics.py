@@ -16,11 +16,12 @@ from __future__ import annotations
 from datetime import timedelta
 from django.core.cache import cache
 from django.db import models
-from django.db.models import Avg, Case, Count, F, FloatField, Max, Q, When
+from django.db.models import Avg, Case, CharField, Count, F, FloatField, Max, Q, Value, When
+from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .board_capabilities import get_capabilities, capability_gap
-from .services.rawjob_query import effective_classification_q, ready_stage_q
+from .services.rawjob_query import duplicate_rawjob_q, effective_classification_q, json_array_contains_q, ready_stage_q
 from .enrichments import CURRENT_DOMAIN_VERSION
 
 
@@ -212,6 +213,24 @@ def _tone_from_score(score_pct):
     return "bad"
 
 
+def _rawjob_platform_slug_expr():
+    fallback = Coalesce("job_platform__slug", "platform_label__platform__slug", Value("unknown"))
+    return Case(
+        When(Q(platform_slug__isnull=True) | Q(platform_slug=""), then=fallback),
+        default=F("platform_slug"),
+        output_field=CharField(),
+    )
+
+
+def _target_country_q(country_codes: list[str]) -> Q:
+    q = Q()
+    for code in country_codes:
+        clean = (code or "").strip().upper()
+        if clean:
+            q |= Q(country_code__iexact=clean) | json_array_contains_q("country_codes", clean)
+    return q or Q(pk__in=[])
+
+
 def _build_board_analytics(window_days: int = 30) -> dict:
     """
     Returns a dict with:
@@ -227,6 +246,9 @@ def _build_board_analytics(window_days: int = 30) -> dict:
     run_window = now - timedelta(days=window_days)
     fresh_30d_cutoff = now - timedelta(days=30)
     target_countries = HarvestEngineConfig.get().get_target_countries()
+    target_country_q = _target_country_q(target_countries)
+    raw_platform_slug = _rawjob_platform_slug_expr()
+    run_platform_slug = Coalesce("label__platform__slug", Value("unknown"))
 
     # ── 1. Per-platform RawJob metrics (job-level, all-time) ──────────────────
     # Detect which optional fields exist in this DB (handles schema drift gracefully).
@@ -238,7 +260,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         "pending":     Count("id", filter=Q(sync_status="PENDING")),
         "failed_sync": Count("id", filter=Q(sync_status="FAILED")),
         "skipped":     Count("id", filter=Q(sync_status="SKIPPED")),
-        "duplicate_count": Count("id", filter=Q(sync_status="SKIPPED")),
+        "duplicate_count": Count("id", filter=duplicate_rawjob_q()),
         "inactive":    Count("id", filter=Q(is_active=False)),
         "missing_jd":  Count("id", filter=Q(has_description=False)),
         "jd_count":    Count("id", filter=Q(has_description=True)),
@@ -250,7 +272,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         "current_enrichment_version_count": Count("id", filter=Q(enrichment_version=CURRENT_ENRICHMENT_VERSION)),
         "current_domain_version_count": Count("id", filter=Q(domain_version=CURRENT_DOMAIN_VERSION)),
         "country_code_count": Count("id", filter=~Q(country_code="")),
-        "target_country_count": Count("id", filter=Q(country_code__in=target_countries)),
+        "target_country_count": Count("id", filter=target_country_q),
         "priority_target_count": Count("id", filter=Q(is_priority=True)),
         "review_unknown_country_count": Count("id", filter=Q(scope_status="REVIEW_UNKNOWN_COUNTRY")),
         "cold_non_target_country_count": Count("id", filter=Q(scope_status="COLD_NON_TARGET_COUNTRY")),
@@ -339,18 +361,20 @@ def _build_board_analytics(window_days: int = 30) -> dict:
 
     job_qs = (
         RawJob.objects
-        .exclude(platform_slug__in=JARVIS_SLUGS)
-        .values("platform_slug")
+        .annotate(metric_slug=raw_platform_slug)
+        .exclude(metric_slug__in=JARVIS_SLUGS)
+        .values("metric_slug")
         .annotate(**_field_annotations)
     )
-    job_by_slug = {row["platform_slug"]: row for row in job_qs}
+    job_by_slug = {row["metric_slug"]: row for row in job_qs}
 
     # ── 2. Per-platform Run metrics (run-level, within window) ────────────────
     run_qs = (
         CompanyFetchRun.objects
         .filter(started_at__gte=run_window)
-        .exclude(label__platform__slug__in=JARVIS_SLUGS)
-        .values("label__platform__slug")
+        .annotate(metric_slug=run_platform_slug)
+        .exclude(metric_slug__in=JARVIS_SLUGS)
+        .values("metric_slug")
         .annotate(
             runs=Count("id"),
             success_runs=Count("id", filter=Q(status=CompanyFetchRun.Status.SUCCESS)),
@@ -376,7 +400,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
             last_run=Max("started_at"),
         )
     )
-    run_by_slug = {row["label__platform__slug"]: row for row in run_qs}
+    run_by_slug = {row["metric_slug"]: row for row in run_qs}
 
     # ── 3. Platform registry (support_tier, is_enabled) ──────────────────────
     platform_meta = {

@@ -286,6 +286,12 @@ class HarvestOpsRun(models.Model):
         SYNC_POOL = "sync_pool", "Sync to vet pool"
         CLEANUP = "cleanup", "Cleanup harvested"
         CLASSIFY = "classify", "Classify raw jobs"
+        CLASSIFY_DOMAINS = "classify_domains", "Classify domains"
+        LLM_CLASSIFY = "llm_classify", "LLM classify (second pass)"
+        EVALUATE_SCOPE = "evaluate_scope", "Evaluate RawJob scope"
+        BACKFILL_ROLES = "backfill_roles", "Backfill marketing roles"
+        REFETCH_LOCATIONS = "refetch_locations", "Refetch ambiguous locations"
+        BACKFILL_ENRICHMENT = "backfill_enrichment", "Backfill enrichment"
 
     class Status(models.TextChoices):
         RUNNING = "RUNNING", "Running"
@@ -306,6 +312,9 @@ class HarvestOpsRun(models.Model):
         blank=True,
         help_text="Structured audit: queue snapshot + completion metrics (same shape spirit as FetchBatch).",
     )
+    progress_current = models.IntegerField(default=0)
+    progress_total = models.IntegerField(default=0)
+    progress_message = models.CharField(max_length=256, blank=True)
     triggered_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

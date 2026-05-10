@@ -1483,7 +1483,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 .distinct()
                 .order_by("country_code")
             ),
-            'raw_marketing_roles': MarketingRole.objects.order_by("name"),
+            'raw_marketing_roles': MarketingRole.objects.filter(is_active=True).order_by("name"),
             'raw_selected_country_code': (request.GET.get("country_code") or "").strip(),
             'raw_selected_marketing_role': (request.GET.get("marketing_role") or "").strip(),
         }

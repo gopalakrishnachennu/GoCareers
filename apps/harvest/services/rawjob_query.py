@@ -4,11 +4,15 @@ from datetime import datetime, timedelta
 from typing import Mapping
 
 from django.conf import settings
+from django.db import connection
 from django.db.models import Q, QuerySet
 from django.utils import timezone
 from django.utils.timezone import make_aware
 
 from harvest.models import RawJob
+
+
+DUPLICATE_SKIP_REASONS = ("DUPLICATE_RISK", "DUPLICATE_EXISTING")
 
 # Shared filter keys used by both Raw Jobs views and stats/funnel drill-downs.
 FILTER_STATE_KEYS = (
@@ -86,6 +90,34 @@ def ready_stage_q(min_conf: float = 0.55) -> Q:
     return Q(has_description=True, is_active=True) & effective_classification_q(min_conf=min_conf)
 
 
+def json_array_contains_q(field_name: str, value: str) -> Q:
+    """
+    JSON array membership predicate.
+
+    PostgreSQL supports JSONField contains natively. Local SQLite does not, so
+    use a quoted string fallback that still works for development/test probes.
+    """
+    clean = (value or "").strip()
+    if not clean:
+        return Q(pk__in=[])
+    if connection.features.supports_json_field_contains:
+        return Q(**{f"{field_name}__contains": [clean]})
+    return Q(**{f"{field_name}__icontains": f'"{clean}"'})
+
+
+def duplicate_rawjob_q() -> Q:
+    """
+    Canonical duplicate predicate.
+
+    New rows should use SKIPPED plus sync_skip_reason. The DUPLICATE status is
+    kept here only so legacy rows remain visible in dashboards.
+    """
+    return Q(sync_status=RawJob.SyncStatus.DUPLICATE) | Q(
+        sync_status=RawJob.SyncStatus.SKIPPED,
+        sync_skip_reason__in=DUPLICATE_SKIP_REASONS,
+    )
+
+
 def apply_stage_filter(qs: QuerySet[RawJob], stage: str) -> QuerySet[RawJob]:
     """Canonical stage predicates for funnel card click-through and stats."""
     stage_value = (stage or "").strip().upper()
@@ -104,7 +136,7 @@ def apply_stage_filter(qs: QuerySet[RawJob], stage: str) -> QuerySet[RawJob]:
     if stage_value == "FAILED":
         return qs.filter(sync_status=RawJob.SyncStatus.FAILED)
     if stage_value == "DUPLICATE":
-        return qs.filter(sync_status=RawJob.SyncStatus.SKIPPED)
+        return qs.filter(duplicate_rawjob_q())
     return qs
 
 
@@ -413,11 +445,15 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
 
     country_code_f = _get(params, "country_code")
     if country_code_f:
-        qs = qs.filter(country_code__iexact=country_code_f)
+        country_code = country_code_f.upper()
+        qs = qs.filter(Q(country_code__iexact=country_code) | json_array_contains_q("country_codes", country_code))
 
     marketing_role_f = _get(params, "marketing_role")
     if marketing_role_f:
-        qs = qs.filter(job_domain__iexact=marketing_role_f)
+        qs = qs.filter(
+            Q(job_domain__iexact=marketing_role_f)
+            | json_array_contains_q("job_domain_candidates", marketing_role_f)
+        )
 
     return qs
 
