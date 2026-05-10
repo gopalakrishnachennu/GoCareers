@@ -25,82 +25,125 @@
 
     {% if ats_enabled %}
     <section class="mb-6 space-y-4">
-        <div class="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-            <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px]">
-                <div class="p-5 md:p-6">
-                    <div class="flex items-center gap-2 flex-wrap">
-                        <span class="rounded-full border border-[var(--brand-200)] bg-[var(--brand-50)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--brand-700)]">Company Engine</span>
-                        {% if running_batches or running_company_fetches %}
-                        <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Running now</span>
-                        {% else %}
-                        <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Idle</span>
-                        {% endif %}
-                    </div>
-                    <div class="mt-5 grid grid-cols-2 md:grid-cols-4 gap-4">
-                        <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Companies</div>
-                            <div class="mt-1 text-3xl font-bold text-slate-950">{{ stat_total_companies }}</div>
-                        </div>
-                        <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Ready</div>
-                            <div class="mt-1 text-3xl font-bold text-emerald-900">{{ stat_ready_to_fetch }}</div>
-                        </div>
-                        <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-amber-700">Attention</div>
-                            <div class="mt-1 text-3xl font-bold text-amber-900">{{ stat_attention }}</div>
-                        </div>
-                        <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
-                            <div class="text-xs font-semibold uppercase tracking-wide text-blue-700">Raw jobs pending</div>
-                            <div class="mt-1 text-3xl font-bold text-blue-900">{{ raw_job_pending }}</div>
-                        </div>
-                    </div>
-                    <div class="mt-5 grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
-                        <a href="{% url 'company-list' %}?view=engine&ats_status=verified" class="rounded-lg border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50"><span class="block text-slate-500 text-xs">Live portals</span><strong class="text-slate-950">{{ stat_live }}</strong></a>
-                        <a href="{% url 'company-list' %}?view=engine&smart=portal_down" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 hover:bg-rose-100"><span class="block text-rose-700 text-xs">Down</span><strong class="text-rose-900">{{ stat_down }}</strong></a>
-                        <a href="{% url 'company-list' %}?view=engine&ats_status=unchecked" class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 hover:bg-blue-100"><span class="block text-blue-700 text-xs">Unchecked</span><strong class="text-blue-900">{{ stat_unchecked }}</strong></a>
-                        <a href="{% url 'company-list' %}?view=engine&smart=no_tenant" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 hover:bg-amber-100"><span class="block text-amber-700 text-xs">No tenant</span><strong class="text-amber-900">{{ stat_no_tenant }}</strong></a>
-                        <a href="{% url 'company-list' %}?view=engine&smart=no_ats" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-slate-100"><span class="block text-slate-600 text-xs">No ATS</span><strong class="text-slate-950">{{ stat_no_ats }}</strong></a>
-                    </div>
+        <div class="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+            <div class="flex flex-col gap-3 border-b border-gray-100 bg-gray-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                    <h2 class="text-sm font-bold text-gray-900">Company engine workspace</h2>
+                    <p class="mt-0.5 text-xs text-gray-500">Open any tab below. Click the active tab again to collapse the section.</p>
                 </div>
-                <div class="border-t xl:border-t-0 xl:border-l border-slate-200 p-5 md:p-6 bg-slate-50">
-                    <h2 class="text-sm font-bold text-slate-900">Engine operations</h2>
-                    {% if request.user.is_superuser %}
-                    <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
-                        <form method="post" action="{% url 'harvest-run-fetch-batch' %}" onsubmit="return confirmEngineAction('Fetch ready companies now? This queues background harvest tasks.');">{% csrf_token %}
-                            <input type="hidden" name="fetch_mode" value="quick">
-                            <button type="submit" {% if running_batches %}disabled{% endif %} class="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-left hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed">
-                                <span class="block text-sm font-bold text-emerald-900">Fetch ready companies</span>
-                                <span class="block text-xs text-emerald-700 mt-0.5">{% if running_batches %}A batch is already running. Wait for it to finish.{% else %}Incremental harvest using platform + tenant labels.{% endif %}</span>
-                            </button>
-                        </form>
-                        <form method="post" action="{% url 'harvest-run-detect' %}" onsubmit="return confirmEngineAction('Run ATS detection across companies?');">{% csrf_token %}
-                            <button type="submit" class="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-left hover:bg-blue-100">
-                                <span class="block text-sm font-bold text-blue-900">Run detection</span>
-                                <span class="block text-xs text-blue-700 mt-0.5">Scan company career sites and detect ATS platforms.</span>
-                            </button>
-                        </form>
-                        <form method="post" action="{% url 'harvest-run-verify-portals' %}" onsubmit="return confirmEngineAction('Verify portal live/down status now?');">{% csrf_token %}
-                            <button type="submit" class="w-full rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-left hover:bg-violet-100">
-                                <span class="block text-sm font-bold text-violet-900">Verify portals</span>
-                                <span class="block text-xs text-violet-700 mt-0.5">Refresh live/down status before fetches.</span>
-                            </button>
-                        </form>
-                        <form method="post" action="{% url 'harvest-run-backfill' %}" onsubmit="return confirmEngineAction('Backfill missing ATS labels from existing job URLs?');">{% csrf_token %}
-                            <button type="submit" class="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left hover:bg-amber-100">
-                                <span class="block text-sm font-bold text-amber-900">Backfill labels</span>
-                                <span class="block text-xs text-amber-700 mt-0.5">Use existing job URLs to fill missing labels.</span>
-                            </button>
-                        </form>
-                    </div>
-                    {% else %}
-                    <p class="mt-3 text-sm text-slate-600">Engine operations are superuser-only. You can inspect queues, companies, ATS health, and results.</p>
-                    {% endif %}
+                <div class="flex flex-wrap gap-2" role="tablist" aria-label="Company engine insights">
+                    <button type="button" id="engine-tab-overview" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="overview" role="tab" aria-selected="true" aria-expanded="true" aria-controls="engine-panel-overview">
+                        <span>Overview</span>
+                        <span class="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500 border border-gray-200">{{ stat_total_companies }}</span>
+                        <svg class="engine-insight-chevron h-4 w-4 transition-transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="engine-tab-queues" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="queues" role="tab" aria-selected="false" aria-expanded="false" aria-controls="engine-panel-queues">
+                        <span>Work Queues</span>
+                        <span class="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500 border border-gray-200">{{ stat_attention }}</span>
+                        <svg class="engine-insight-chevron h-4 w-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="engine-tab-platforms" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="platforms" role="tab" aria-selected="false" aria-expanded="false" aria-controls="engine-panel-platforms">
+                        <span>Platform Distribution</span>
+                        <span class="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500 border border-gray-200">{{ stat_labeled }}</span>
+                        <svg class="engine-insight-chevron h-4 w-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="engine-tab-health" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="health" role="tab" aria-selected="false" aria-expanded="false" aria-controls="engine-panel-health">
+                        <span>Engine Health</span>
+                        <span class="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500 border border-gray-200">{% if portal_health_pct is not None %}{{ portal_health_pct }}%{% else %}—{% endif %}</span>
+                        <svg class="engine-insight-chevron h-4 w-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
+                    <button type="button" id="engine-tab-operations" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="operations" role="tab" aria-selected="false" aria-expanded="false" aria-controls="engine-panel-operations">
+                        <span>Recent Operations</span>
+                        <svg class="engine-insight-chevron h-4 w-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+                        </svg>
+                    </button>
                 </div>
             </div>
-        </div>
 
-        <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
-            <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+            <div id="engine-panel-overview" class="engine-insight-panel p-4 md:p-5" role="tabpanel" aria-labelledby="engine-tab-overview">
+                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4">
+                    <div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="rounded-full border border-[var(--brand-200)] bg-[var(--brand-50)] px-3 py-1 text-xs font-semibold uppercase tracking-wide text-[var(--brand-700)]">Company Engine</span>
+                            {% if running_batches or running_company_fetches %}
+                            <span class="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">Running now</span>
+                            {% else %}
+                            <span class="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-600">Idle</span>
+                            {% endif %}
+                        </div>
+                        <div class="mt-5 grid grid-cols-2 md:grid-cols-4 gap-4">
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-slate-500">Companies</div>
+                                <div class="mt-1 text-3xl font-bold text-slate-950">{{ stat_total_companies }}</div>
+                            </div>
+                            <div class="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-emerald-700">Ready</div>
+                                <div class="mt-1 text-3xl font-bold text-emerald-900">{{ stat_ready_to_fetch }}</div>
+                            </div>
+                            <div class="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-amber-700">Attention</div>
+                                <div class="mt-1 text-3xl font-bold text-amber-900">{{ stat_attention }}</div>
+                            </div>
+                            <div class="rounded-xl border border-blue-200 bg-blue-50 p-4">
+                                <div class="text-xs font-semibold uppercase tracking-wide text-blue-700">Raw jobs pending</div>
+                                <div class="mt-1 text-3xl font-bold text-blue-900">{{ raw_job_pending }}</div>
+                            </div>
+                        </div>
+                        <div class="mt-5 grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                            <a href="{% url 'company-list' %}?view=engine&ats_status=verified" class="rounded-lg border border-slate-200 bg-white px-3 py-2 hover:bg-slate-50"><span class="block text-slate-500 text-xs">Live portals</span><strong class="text-slate-950">{{ stat_live }}</strong></a>
+                            <a href="{% url 'company-list' %}?view=engine&smart=portal_down" class="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 hover:bg-rose-100"><span class="block text-rose-700 text-xs">Down</span><strong class="text-rose-900">{{ stat_down }}</strong></a>
+                            <a href="{% url 'company-list' %}?view=engine&ats_status=unchecked" class="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 hover:bg-blue-100"><span class="block text-blue-700 text-xs">Unchecked</span><strong class="text-blue-900">{{ stat_unchecked }}</strong></a>
+                            <a href="{% url 'company-list' %}?view=engine&smart=no_tenant" class="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 hover:bg-amber-100"><span class="block text-amber-700 text-xs">No tenant</span><strong class="text-amber-900">{{ stat_no_tenant }}</strong></a>
+                            <a href="{% url 'company-list' %}?view=engine&smart=no_ats" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 hover:bg-slate-100"><span class="block text-slate-600 text-xs">No ATS</span><strong class="text-slate-950">{{ stat_no_ats }}</strong></a>
+                        </div>
+                    </div>
+                    <div class="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                        <h2 class="text-sm font-bold text-slate-900">Engine operations</h2>
+                        {% if request.user.is_superuser %}
+                        <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-1 gap-3">
+                            <form method="post" action="{% url 'harvest-run-fetch-batch' %}" onsubmit="return confirmEngineAction('Fetch ready companies now? This queues background harvest tasks.');">{% csrf_token %}
+                                <input type="hidden" name="fetch_mode" value="quick">
+                                <button type="submit" {% if running_batches %}disabled{% endif %} class="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-left hover:bg-emerald-100 disabled:opacity-50 disabled:cursor-not-allowed">
+                                    <span class="block text-sm font-bold text-emerald-900">Fetch ready companies</span>
+                                    <span class="block text-xs text-emerald-700 mt-0.5">{% if running_batches %}A batch is already running. Wait for it to finish.{% else %}Incremental harvest using platform + tenant labels.{% endif %}</span>
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'harvest-run-detect' %}" onsubmit="return confirmEngineAction('Run ATS detection across companies?');">{% csrf_token %}
+                                <button type="submit" class="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-left hover:bg-blue-100">
+                                    <span class="block text-sm font-bold text-blue-900">Run detection</span>
+                                    <span class="block text-xs text-blue-700 mt-0.5">Scan company career sites and detect ATS platforms.</span>
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'harvest-run-verify-portals' %}" onsubmit="return confirmEngineAction('Verify portal live/down status now?');">{% csrf_token %}
+                                <button type="submit" class="w-full rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-left hover:bg-violet-100">
+                                    <span class="block text-sm font-bold text-violet-900">Verify portals</span>
+                                    <span class="block text-xs text-violet-700 mt-0.5">Refresh live/down status before fetches.</span>
+                                </button>
+                            </form>
+                            <form method="post" action="{% url 'harvest-run-backfill' %}" onsubmit="return confirmEngineAction('Backfill missing ATS labels from existing job URLs?');">{% csrf_token %}
+                                <button type="submit" class="w-full rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-left hover:bg-amber-100">
+                                    <span class="block text-sm font-bold text-amber-900">Backfill labels</span>
+                                    <span class="block text-xs text-amber-700 mt-0.5">Use existing job URLs to fill missing labels.</span>
+                                </button>
+                            </form>
+                        </div>
+                        {% else %}
+                        <p class="mt-3 text-sm text-slate-600">Engine operations are superuser-only. You can inspect queues, companies, ATS health, and results.</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            <div id="engine-panel-queues" class="engine-insight-panel hidden p-4 md:p-5" role="tabpanel" aria-labelledby="engine-tab-queues">
                 <div class="flex items-center justify-between gap-3 mb-3">
                     <h2 class="text-sm font-bold text-gray-900">Work queues</h2>
                     <span class="text-xs text-gray-500">{{ results_total|default:stat_total_companies }} companies in current view</span>
@@ -114,9 +157,34 @@
                     {% endfor %}
                 </div>
             </div>
-            <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+
+            <div id="engine-panel-platforms" class="engine-insight-panel hidden p-4 md:p-5" role="tabpanel" aria-labelledby="engine-tab-platforms">
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                    {% for platform in platforms_chart|slice:":4" %}
+                    <a href="{% url 'company-list' %}?view=engine&platform={{ platform.slug }}" class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 hover:bg-gray-100">
+                        <span class="block truncate text-xs font-semibold text-gray-600">{{ platform.name }}</span>
+                        <span class="mt-1 block text-lg font-bold" style="color:{{ platform.color_hex }};">{{ platform.company_count }}</span>
+                    </a>
+                    {% endfor %}
+                </div>
+                <div class="mt-4 max-h-80 overflow-y-auto border-t border-gray-100 pt-3 pr-1 space-y-2">
+                    {% for platform in platforms_chart %}
+                    <a href="{% url 'company-list' %}?view=engine&platform={{ platform.slug }}" class="grid grid-cols-[150px_minmax(0,1fr)_48px] items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+                        <span class="truncate text-sm font-medium text-gray-700">{{ platform.name }}</span>
+                        <span class="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <span class="block h-full rounded-full company-platform-bar" style="width:0;background:{{ platform.color_hex }};" data-count="{{ platform.company_count }}"></span>
+                        </span>
+                        <span class="text-right text-sm font-bold" style="color:{{ platform.color_hex }};">{{ platform.company_count }}</span>
+                    </a>
+                    {% empty %}
+                    <p class="text-sm text-gray-500">No platform labels yet. Run detection or backfill labels.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div id="engine-panel-health" class="engine-insight-panel hidden p-4 md:p-5" role="tabpanel" aria-labelledby="engine-tab-health">
                 <h2 class="text-sm font-bold text-gray-900">Engine health</h2>
-                <div class="mt-3 grid grid-cols-2 gap-2 text-sm">
+                <div class="mt-3 grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                     <div class="rounded-lg bg-gray-50 px-3 py-2">
                         <span class="block text-xs text-gray-500">Portal health</span>
                         <strong class="text-gray-950">{% if portal_health_pct is not None %}{{ portal_health_pct }}%{% else %}—{% endif %}</strong>
@@ -145,56 +213,8 @@
                 <div class="mt-2 text-xs text-gray-500">Rate: {{ engine_config.task_rate_limit }}/min · Re-fetch guard: {{ engine_config.min_hours_since_fetch }}h</div>
                 {% endif %}
             </div>
-        </div>
 
-        <div class="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
-            <div class="flex flex-col gap-3 border-b border-gray-100 bg-gray-50 px-4 py-3 md:flex-row md:items-center md:justify-between">
-                <div>
-                    <h2 class="text-sm font-bold text-gray-900">Engine insights</h2>
-                    <p class="mt-0.5 text-xs text-gray-500">Open a tab for distribution or recent engine activity. Click the active tab to collapse it.</p>
-                </div>
-                <div class="flex flex-wrap gap-2" role="tablist" aria-label="Company engine insights">
-                    <button type="button" id="engine-tab-platforms" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="platforms" role="tab" aria-selected="true" aria-expanded="true" aria-controls="engine-panel-platforms">
-                        <span>Platform Distribution</span>
-                        <span class="rounded-full bg-white px-2 py-0.5 text-xs text-gray-500 border border-gray-200">{{ stat_labeled }}</span>
-                        <svg class="engine-insight-chevron h-4 w-4 transition-transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </button>
-                    <button type="button" id="engine-tab-operations" class="engine-insight-tab inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition" data-panel="operations" role="tab" aria-selected="false" aria-expanded="false" aria-controls="engine-panel-operations">
-                        <span>Recent Operations</span>
-                        <svg class="engine-insight-chevron h-4 w-4 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
-                        </svg>
-                    </button>
-                </div>
-            </div>
-
-            <div id="engine-panel-platforms" class="engine-insight-panel p-4" role="tabpanel" aria-labelledby="engine-tab-platforms">
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
-                    {% for platform in platforms_chart|slice:":4" %}
-                    <a href="{% url 'company-list' %}?view=engine&platform={{ platform.slug }}" class="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 hover:bg-gray-100">
-                        <span class="block truncate text-xs font-semibold text-gray-600">{{ platform.name }}</span>
-                        <span class="mt-1 block text-lg font-bold" style="color:{{ platform.color_hex }};">{{ platform.company_count }}</span>
-                    </a>
-                    {% endfor %}
-                </div>
-                <div class="mt-4 max-h-80 overflow-y-auto border-t border-gray-100 pt-3 pr-1 space-y-2">
-                    {% for platform in platforms_chart %}
-                    <a href="{% url 'company-list' %}?view=engine&platform={{ platform.slug }}" class="grid grid-cols-[150px_minmax(0,1fr)_48px] items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
-                        <span class="truncate text-sm font-medium text-gray-700">{{ platform.name }}</span>
-                        <span class="h-2 rounded-full bg-gray-100 overflow-hidden">
-                            <span class="block h-full rounded-full company-platform-bar" style="width:0;background:{{ platform.color_hex }};" data-count="{{ platform.company_count }}"></span>
-                        </span>
-                        <span class="text-right text-sm font-bold" style="color:{{ platform.color_hex }};">{{ platform.company_count }}</span>
-                    </a>
-                    {% empty %}
-                    <p class="text-sm text-gray-500">No platform labels yet. Run detection or backfill labels.</p>
-                    {% endfor %}
-                </div>
-            </div>
-
-            <div id="engine-panel-operations" class="engine-insight-panel hidden p-4" role="tabpanel" aria-labelledby="engine-tab-operations">
+            <div id="engine-panel-operations" class="engine-insight-panel hidden p-4 md:p-5" role="tabpanel" aria-labelledby="engine-tab-operations">
                 <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
                     {% for op in recent_ops %}
                     <div class="rounded-lg border border-gray-100 bg-white px-3 py-2">
@@ -675,7 +695,7 @@ function confirmEngineAction(message) {
         });
     }
 
-    setOpenPanel('platforms');
+    setOpenPanel('overview');
     tabs.forEach(function(tab) {
         tab.addEventListener('click', function() {
             var currentPanel = tab.getAttribute('data-panel');
