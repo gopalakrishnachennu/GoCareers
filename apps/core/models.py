@@ -358,9 +358,45 @@ class BroadcastDelivery(models.Model):
 class AuditLog(models.Model):
     """
     Logs critical actions performed by users for compliance and tracking.
+
+    Structured fields (event_code, outcome, human_summary, correlation_id) support
+    filtering in Settings and copy/paste debugging for humans and AI tools.
     """
+
+    class Outcome(models.TextChoices):
+        SUCCESS = "success", "Success"
+        FAILURE = "failure", "Failure"
+        DENIED = "denied", "Denied"
+        PARTIAL = "partial", "Partial"
+        UNKNOWN = "unknown", "Unknown"
+
     actor = models.ForeignKey('users.User', on_delete=models.SET_NULL, null=True, related_name='audit_logs')
     action = models.CharField(max_length=255)
+    event_code = models.CharField(
+        max_length=128,
+        blank=True,
+        db_index=True,
+        help_text="Stable machine id, e.g. http.feature_flag_update or submissions.workflow.move",
+    )
+    outcome = models.CharField(
+        max_length=16,
+        choices=Outcome.choices,
+        default=Outcome.UNKNOWN,
+        db_index=True,
+    )
+    human_summary = models.TextField(
+        blank=True,
+        help_text="One-line plain-English description for dashboards and AI handoff.",
+    )
+    correlation_id = models.CharField(
+        max_length=36,
+        blank=True,
+        db_index=True,
+        help_text="Per-request UUID; ties middleware rows to explicit log_audit_event calls.",
+    )
+    view_name = models.CharField(max_length=255, blank=True, help_text="Django resolver view callable name, if known.")
+    url_name = models.CharField(max_length=128, blank=True, help_text="URL pattern name from resolver, if known.")
+    user_agent = models.CharField(max_length=512, blank=True)
     target_model = models.CharField(max_length=100, blank=True)
     target_id = models.CharField(max_length=100, blank=True)
     details = models.JSONField(default=dict, blank=True)
@@ -369,6 +405,9 @@ class AuditLog(models.Model):
 
     class Meta:
         ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['-timestamp', 'event_code']),
+        ]
 
     def __str__(self):
         return f"{self.actor} - {self.action} at {self.timestamp}"

@@ -281,13 +281,86 @@ class AuditLogListView(AdminRequiredMixin, ListView):
 
     def get_queryset(self):
         qs = super().get_queryset().select_related('actor')
-        action = self.request.GET.get('action')
-        target = self.request.GET.get('target_model')
-        if action:
-            qs = qs.filter(action__icontains=action)
-        if target:
-            qs = qs.filter(target_model__icontains=target)
+        p = self.request.GET
+        if p.get('action'):
+            qs = qs.filter(action__icontains=p['action'].strip())
+        if p.get('target_model'):
+            qs = qs.filter(target_model__icontains=p['target_model'].strip())
+        if p.get('event_code'):
+            qs = qs.filter(event_code__icontains=p['event_code'].strip())
+        if p.get('outcome'):
+            qs = qs.filter(outcome=p['outcome'].strip())
+        if p.get('correlation_id'):
+            qs = qs.filter(correlation_id=p['correlation_id'].strip())
+        actor_q = p.get('actor', '').strip()
+        if actor_q:
+            if actor_q.isdigit():
+                qs = qs.filter(actor_id=int(actor_q))
+            else:
+                qs = qs.filter(
+                    Q(actor__username__icontains=actor_q)
+                    | Q(actor__email__icontains=actor_q)
+                )
+        from django.utils.dateparse import parse_date
+
+        df = p.get('date_from')
+        dt_to = p.get('date_to')
+        if df:
+            d = parse_date(df)
+            if d:
+                qs = qs.filter(timestamp__date__gte=d)
+        if dt_to:
+            d = parse_date(dt_to)
+            if d:
+                qs = qs.filter(timestamp__date__lte=d)
         return qs
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx['outcome_choices'] = AuditLog.Outcome.choices
+        q = self.request.GET.copy()
+        q.pop('page', None)
+        ctx['filter_querystring'] = q.urlencode()
+        return ctx
+
+
+class AuditLogDetailView(AdminRequiredMixin, DetailView):
+    """Single audit row with full JSON details for debugging and AI handoff."""
+
+    model = AuditLog
+    template_name = 'settings/audit_log_detail.html'
+    context_object_name = 'log'
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        o = self.object
+        details = o.details or {}
+        ctx['details_json'] = json.dumps(details, indent=2, default=str)
+        ctx['audit_clipboard'] = {
+            "audit_log_id": o.pk,
+            "timestamp": o.timestamp.isoformat() if o.timestamp else None,
+            "actor_id": o.actor_id,
+            "actor_username": o.actor.username if o.actor else None,
+            "event_code": o.event_code or None,
+            "outcome": o.outcome,
+            "human_summary": o.human_summary or None,
+            "action": o.action,
+            "target_model": o.target_model or None,
+            "target_id": o.target_id or None,
+            "correlation_id": o.correlation_id or None,
+            "view_name": o.view_name or None,
+            "url_name": o.url_name or None,
+            "ip_address": str(o.ip_address) if o.ip_address else None,
+            "user_agent": o.user_agent or None,
+            "details": details,
+            "_glossary": {
+                "event_code": "Stable id for filtering; http.* = middleware mutation capture.",
+                "outcome": "success|failure|denied|partial|unknown — derived from HTTP status for middleware rows.",
+                "correlation_id": "Per-request UUID linking rows from the same request.",
+                "details": "Structured context; post_keys_summary redacts passwords/tokens.",
+            },
+        }
+        return ctx
 
 
 class LLMConfigView(AdminRequiredMixin, View):
@@ -1068,12 +1141,18 @@ class FeatureControlCenterView(AdminRequiredMixin, TemplateView):
                 setattr(flag, field, value)
                 flag.updated_by = request.user
                 flag.save(update_fields=[field, 'updated_by', 'updated_at'])
-                AuditLog.objects.create(
+                from .audit_utils import log_audit_event
+
+                log_audit_event(
                     actor=request.user,
                     action='feature_flag_update',
+                    event_code='settings.feature_flag_update',
+                    outcome=AuditLog.Outcome.SUCCESS,
+                    human_summary=f"Feature flag {flag.key}: set {field}={value}",
                     target_model='FeatureFlag',
                     target_id=str(flag.pk),
                     details={'key': flag.key, 'field': field, 'value': value},
+                    request=request,
                 )
                 invalidate_feature_flag_cache()
                 messages.success(request, f'Updated {flag.key}.')
@@ -1429,6 +1508,30 @@ def _build_ops_snapshot() -> dict:
         status__in=[CompanyFetchRun.Status.FAILED, CompanyFetchRun.Status.PARTIAL],
     ).count()
 
+    from harvest.models import HarvestOpsRun
+    ops_runs = []
+    for run in HarvestOpsRun.objects.order_by("-started_at")[:30]:
+        total = run.progress_total or 0
+        current = run.progress_current or 0
+        pct = int(100 * current / total) if total else (100 if run.status == HarvestOpsRun.Status.SUCCESS else 0)
+        runtime = None
+        if run.finished_at and run.started_at:
+            runtime = int((run.finished_at - run.started_at).total_seconds())
+        ops_runs.append({
+            "id": run.pk,
+            "operation": run.operation,
+            "operation_label": run.get_operation_display(),
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else "",
+            "finished_at": run.finished_at.isoformat() if run.finished_at else "",
+            "runtime_seconds": runtime,
+            "progress_current": current,
+            "progress_total": total,
+            "progress_pct": pct,
+            "progress_message": run.progress_message or "",
+            "audit_payload": run.audit_payload or {},
+        })
+
     pipeline_logs = []
     for log in PipelineRunLog.objects.order_by("-last_run_at")[:40]:
         payload = log.last_run_result if isinstance(log.last_run_result, dict) else {}
@@ -1558,6 +1661,7 @@ def _build_ops_snapshot() -> dict:
         "scheduled": schedule_rows,
         "completed": recent_results,
         "pipelines": pipeline_logs,
+        "ops_runs": ops_runs,
         "trend": trend,
     }
     cache.set(cache_key, payload, timeout=5)
@@ -1573,6 +1677,7 @@ class SystemOpsCenterView(AdminRequiredMixin, TemplateView):
         ctx["ops_summary"] = snapshot.get("summary", {})
         ctx["ops_alerts"] = snapshot.get("alerts", [])
         ctx["ops_generated_at"] = snapshot.get("generated_at", "")
+        ctx["ops_runs"] = snapshot.get("ops_runs", [])
         from harvest.models import FetchBatch
 
         ctx["latest_fetch_batch"] = FetchBatch.objects.order_by("-created_at").first()

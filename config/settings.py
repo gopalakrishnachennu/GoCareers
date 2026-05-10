@@ -296,6 +296,13 @@ if SENTRY_DSN:
         traces_sample_rate=config('SENTRY_TRACES_SAMPLE_RATE', default=0.0, cast=float),
     )
 
+# --- Audit middleware: optional extra path prefixes to skip (comma-separated in .env). Each should start with /.
+AUDIT_MIDDLEWARE_EXTRA_SKIP_PREFIXES = tuple(
+    (p if p.startswith("/") else f"/{p}")
+    for p in _csv_list(config("AUDIT_MIDDLEWARE_EXTRA_SKIP_PREFIXES", default=""))
+    if p
+)
+
 # --- Advanced Logging ---
 from config.logging_config import get_logging_config
 LOGGING = get_logging_config(debug=DEBUG)

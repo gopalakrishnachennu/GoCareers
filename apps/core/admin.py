@@ -143,7 +143,17 @@ class LLMUsageLogAdmin(admin.ModelAdmin):
 
 @admin.register(AuditLog)
 class AuditLogAdmin(admin.ModelAdmin):
-    list_display = ('actor', 'action', 'target_model', 'target_id', 'timestamp')
+    list_display = (
+        'timestamp',
+        'actor',
+        'event_code',
+        'outcome',
+        'action',
+        'target_model',
+        'target_id',
+    )
+    list_filter = ('outcome', 'timestamp')
+    search_fields = ('action', 'event_code', 'human_summary', 'correlation_id', 'url_name')
 
 
 @admin.register(Notification)

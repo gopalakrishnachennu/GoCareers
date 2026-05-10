@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8 max-w-5xl">
+    <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div>
+            <p class="text-xs font-semibold uppercase tracking-wide text-gray-500">Audit log entry</p>
+            <h1 class="text-2xl font-bold text-gray-900 mt-1">#{{ log.pk }}</h1>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <a href="{% url 'audit-log' %}" class="px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 text-sm hover:bg-gray-50">&larr; List</a>
+            <button type="button" id="copy-ai" class="px-4 py-2 rounded-lg bg-slate-800 text-white text-sm font-semibold hover:bg-slate-900">Copy JSON for AI / ticket</button>
+        </div>
+    </div>
+
+    <dl class="grid gap-3 sm:grid-cols-2 mb-6 text-sm">
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Timestamp</dt>
+            <dd class="mt-1 font-medium text-gray-900">{{ log.timestamp|date:"Y-m-d H:i:s" }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Actor</dt>
+            <dd class="mt-1 font-medium text-gray-900">{% if log.actor %}{{ log.actor.get_full_name|default:log.actor.username }} (id {{ log.actor_id }}){% else %}System / none{% endif %}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Event code</dt>
+            <dd class="mt-1 font-mono text-xs text-indigo-900 break-all">{{ log.event_code|default:"—" }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Outcome</dt>
+            <dd class="mt-1 font-medium">{{ log.get_outcome_display }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3 sm:col-span-2">
+            <dt class="text-xs uppercase text-gray-500">Action (raw)</dt>
+            <dd class="mt-1 font-mono text-xs text-gray-800 break-all">{{ log.action }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3 sm:col-span-2">
+            <dt class="text-xs uppercase text-gray-500">Human summary</dt>
+            <dd class="mt-1 text-gray-800">{{ log.human_summary|default:"—"|linebreaksbr }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Target</dt>
+            <dd class="mt-1">{{ log.target_model|default:"—" }} {% if log.target_id %}#{{ log.target_id }}{% endif %}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">Correlation ID</dt>
+            <dd class="mt-1 font-mono text-xs break-all">{{ log.correlation_id|default:"—" }}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">View / URL name</dt>
+            <dd class="mt-1 font-mono text-xs break-all">{{ log.view_name|default:"—" }} {% if log.url_name %}· {{ log.url_name }}{% endif %}</dd>
+        </div>
+        <div class="rounded-lg border border-gray-200 bg-white p-3">
+            <dt class="text-xs uppercase text-gray-500">IP</dt>
+            <dd class="mt-1 font-mono text-xs">{{ log.ip_address|default:"—" }}</dd>
+        </div>
+    </dl>
+
+    <section class="mb-6 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">
+        <h2 class="font-bold text-amber-900 mb-2">Field glossary (for humans &amp; AI)</h2>
+        <ul class="list-disc pl-5 space-y-1 text-amber-950/90">
+            <li><strong>event_code</strong> — Stable identifier; filter the list or grep. <code class="text-xs bg-white/80 px-1 rounded">http.*</code> = middleware capture of a mutating request; other prefixes (<code class="text-xs bg-white/80 px-1 rounded">submissions.</code>, <code class="text-xs bg-white/80 px-1 rounded">settings.</code>, <code class="text-xs bg-white/80 px-1 rounded">email.</code>) are explicit app events.</li>
+            <li><strong>outcome</strong> — For middleware rows, derived from HTTP status. Explicit logs usually <strong>Success</strong>.</li>
+            <li><strong>human_summary</strong> — Plain-English one-liner; use in incident descriptions.</li>
+            <li><strong>correlation_id</strong> — UUID for one browser request; multiple rows may share it if several log calls occur in the same request.</li>
+            <li><strong>details</strong> — JSON: path, method, status, query params, optional <code class="text-xs bg-white/80 px-1 rounded">post_keys_summary</code> (values truncated; passwords/tokens redacted).</li>
+        </ul>
+    </section>
+
+    <section class="rounded-xl border border-gray-200 bg-slate-900 p-4 overflow-x-auto">
+        <p class="text-xs font-semibold uppercase tracking-wide text-slate-400 mb-2">details (JSON)</p>
+        <pre id="details-json" class="text-xs text-emerald-100 font-mono whitespace-pre-wrap break-all">{{ details_json }}</pre>
+    </section>
+</div>
+
+{{ audit_clipboard|json_script:"audit-clipboard-data" }}
+<script>
+(function () {
+  var el = document.getElementById('audit-clipboard-data');
+  var btn = document.getElementById('copy-ai');
+  if (!el || !btn) return;
+  btn.addEventListener('click', function () {
+    var raw = el.textContent || '';
+    var text = raw;
+    try {
+      text = JSON.stringify(JSON.parse(raw), null, 2);
+    } catch (e) {}
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = 'Copied!';
+      setTimeout(function () { btn.textContent = 'Copy JSON for AI / ticket'; }, 2000);
+    });
+  });
+})();
+</script>
+{% endblock %}

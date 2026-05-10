@@ -272,11 +272,18 @@ def fetch_unseen_and_process(dry_run: bool = False, max_messages: int = 20) -> d
 
                 # Audit log (best-effort)
                 try:
+                    from core.audit_utils import log_audit_event
                     from core.models import AuditLog
-                    AuditLog.objects.create(
+
+                    log_audit_event(
                         actor=None,
                         action="email_ingest_auto_update",
-                        target_model="submissions.ApplicationSubmission",
+                        event_code="email.ingest_auto_update",
+                        outcome=AuditLog.Outcome.SUCCESS,
+                        human_summary=(
+                            f"Email ingestion set submission #{matched_submission.pk} to {detected_status}"
+                        ),
+                        target_model="ApplicationSubmission",
                         target_id=str(matched_submission.pk),
                         details={
                             "detected_status": detected_status,

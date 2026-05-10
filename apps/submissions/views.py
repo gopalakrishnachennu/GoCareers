@@ -1525,14 +1525,21 @@ def _get_ip(request):
 
 def _audit(request, action, target_model='', target_id='', details=None):
     try:
+        from core.audit_utils import log_audit_event
         from core.models import AuditLog
-        AuditLog.objects.create(
+
+        slug = (action.replace(" ", "_").replace("/", "_").strip("_")[:80]) or "event"
+        log_audit_event(
             actor=request.user,
-            action=action,
-            target_model=target_model,
+            action=action[:255],
+            event_code=f"submissions.{slug}"[:128],
+            outcome=AuditLog.Outcome.SUCCESS,
+            human_summary=action[:500],
+            target_model=target_model or "",
             target_id=str(target_id),
             details=details or {},
-            ip_address=_get_ip(request),
+            request=request,
+            ip_address=_get_ip(request) or None,
         )
     except Exception:
         pass
