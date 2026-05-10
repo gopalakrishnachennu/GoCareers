@@ -194,6 +194,58 @@ def get_logging_config(debug=True):
                 'level': 'DEBUG' if debug else 'INFO',
                 'propagate': False,
             },
+            # Actual app import paths in this project are top-level because
+            # settings prepends BASE_DIR / "apps" to sys.path.
+            'core': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'users': {
+                'handlers': ['console', 'app_file', 'security_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'jobs': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'submissions': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'resumes': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'messaging': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'analytics': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'harvest': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'companies': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
+            'interviews_app': {
+                'handlers': ['console', 'app_file', 'error_file'],
+                'level': 'DEBUG' if debug else 'INFO',
+                'propagate': False,
+            },
 
             # Middleware logger
             'middleware': {

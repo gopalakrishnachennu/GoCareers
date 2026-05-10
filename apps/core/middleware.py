@@ -6,6 +6,7 @@ from .audit_utils import (
     get_client_ip,
     log_audit_event,
     outcome_from_status,
+    safe_query_params,
     safe_post_summary,
     truncate_user_agent,
 )
@@ -95,14 +96,26 @@ class AuditMiddleware:
             if request.method == "POST":
                 post_summary = safe_post_summary(request)
 
+            audit_actor = request.user
+            real_user = getattr(request, "real_user", None)
+            if getattr(request, "is_impersonating", False) and real_user and real_user.is_authenticated:
+                audit_actor = real_user
+
             details = {
                 "path": request.path,
                 "method": request.method,
                 "status_code": status,
-                "query_params": dict(request.GET),
+                "query_params": safe_query_params(request.GET),
             }
             if post_summary:
                 details["post_keys_summary"] = post_summary
+            if getattr(request, "is_impersonating", False):
+                details["impersonation"] = {
+                    "real_actor_id": getattr(real_user, "pk", None),
+                    "real_actor_username": getattr(real_user, "username", ""),
+                    "effective_user_id": getattr(request.user, "pk", None),
+                    "effective_username": getattr(request.user, "username", ""),
+                }
 
             try:
                 outcome_label = AuditLog.Outcome(outcome).label
@@ -111,7 +124,7 @@ class AuditMiddleware:
             human = f"{request.method} {request.path} → HTTP {status} ({outcome_label})"
 
             log_audit_event(
-                actor=request.user,
+                actor=audit_actor,
                 action=f"{request.method} {request.path}"[:255],
                 event_code=event_code,
                 outcome=outcome,

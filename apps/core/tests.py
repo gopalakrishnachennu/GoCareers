@@ -1,4 +1,4 @@
-from django.test import TestCase, Client
+from django.test import TestCase, Client, RequestFactory
 from django.urls import reverse
 from users.models import User, UserEmailNotificationPreferences
 from .models import PlatformConfig, LLMConfig, AuditLog, Notification, BroadcastMessage
@@ -58,6 +58,45 @@ class AuditLogTests(TestCase):
             target_model="User", target_id=str(user.pk),
         )
         self.assertIn("test_action", str(log))
+
+    def test_post_summary_redacts_compound_secret_fields(self):
+        from .audit_utils import safe_post_summary
+
+        request = RequestFactory().post(
+            "/core/setup/",
+            {
+                "google_kg_api_key": "kg-secret",
+                "apollo_api_key": "apollo-secret",
+                "geocoding_provider_token": "map-token",
+                "site_name": "GoCareers",
+            },
+        )
+
+        summary = safe_post_summary(request)
+        self.assertEqual(summary["google_kg_api_key"], "[redacted]")
+        self.assertEqual(summary["apollo_api_key"], "[redacted]")
+        self.assertEqual(summary["geocoding_provider_token"], "[redacted]")
+        self.assertEqual(summary["site_name"], "GoCareers")
+
+    def test_query_params_and_full_path_redact_secret_fields(self):
+        from .audit_utils import safe_full_path, safe_query_params
+
+        request = RequestFactory().get(
+            "/core/audit/",
+            {
+                "page": "2",
+                "token": "secret-token",
+                "next": "/jobs/",
+                "signature": "signed-value",
+            },
+        )
+
+        params = safe_query_params(request.GET)
+        self.assertEqual(params["token"], "[redacted]")
+        self.assertEqual(params["signature"], "[redacted]")
+        self.assertEqual(params["page"], "2")
+        self.assertNotIn("secret-token", safe_full_path(request))
+        self.assertNotIn("signed-value", safe_full_path(request))
 
 
 class HealthCheckViewTests(TestCase):

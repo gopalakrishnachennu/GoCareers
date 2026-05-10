@@ -11,6 +11,8 @@ Output → logs/requests.log + console
 import time
 import logging
 
+from core.audit_utils import safe_full_path
+
 logger = logging.getLogger('middleware')
 
 
@@ -27,7 +29,7 @@ class RequestLoggingMiddleware:
         user = getattr(request, 'user', None)
         username = user.username if user and user.is_authenticated else 'anonymous'
         method = request.method
-        path = request.get_full_path()
+        path = safe_full_path(request)
 
         response = self.get_response(request)
 
@@ -55,7 +57,7 @@ class RequestLoggingMiddleware:
         user = getattr(request, 'user', None)
         username = user.username if user and user.is_authenticated else 'anonymous'
         logger.critical(
-            f"💥 UNHANDLED EXCEPTION: {request.method} {request.get_full_path()} "
+            f"💥 UNHANDLED EXCEPTION: {request.method} {safe_full_path(request)} "
             f"| user={username} | error={type(exception).__name__}: {exception}",
             exc_info=True
         )

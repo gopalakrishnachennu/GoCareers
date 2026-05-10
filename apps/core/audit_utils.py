@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+from urllib.parse import urlencode
 
 from django.http import HttpRequest
+from django.http import QueryDict
 
 from .models import AuditLog
 
-# POST keys never copied into details (case-insensitive match)
+# POST/query keys never copied into details (case-insensitive match + token patterns)
 _SENSITIVE_POST_KEYS = frozenset(
     k.lower()
     for k in (
@@ -30,6 +32,36 @@ _SENSITIVE_POST_KEYS = frozenset(
         "encrypted_api_key",
     )
 )
+_SENSITIVE_KEY_FRAGMENTS = (
+    "password",
+    "passwd",
+    "pwd",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "access_key",
+    "private_key",
+    "client_secret",
+    "credential",
+    "authorization",
+    "auth",
+    "signature",
+    "signed",
+    "csrf",
+    "cvv",
+    "card_number",
+)
+
+
+def is_sensitive_key(key: str | None) -> bool:
+    """Return True for exact or compound secret-looking field names."""
+    normalized = (key or "").strip().lower().replace("-", "_")
+    if not normalized:
+        return False
+    if normalized in _SENSITIVE_POST_KEYS:
+        return True
+    return any(fragment in normalized for fragment in _SENSITIVE_KEY_FRAGMENTS)
 
 
 def get_client_ip(request: HttpRequest) -> str | None:
@@ -79,6 +111,49 @@ def truncate_user_agent(ua: str | None, max_len: int = 500) -> str:
     return ua[: max_len - 1] + "…"
 
 
+def safe_query_params(query_params: QueryDict | dict | None, *, max_keys: int = 40) -> dict[str, Any]:
+    """Redacted snapshot of query params suitable for DB/file logs."""
+    if not query_params:
+        return {}
+    out: dict[str, Any] = {}
+    if hasattr(query_params, "lists"):
+        items = list(query_params.lists())
+    else:
+        items = list(query_params.items())
+
+    for i, item in enumerate(items):
+        if i >= max_keys:
+            out["_truncated"] = True
+            break
+        key, value = item
+        if is_sensitive_key(str(key)):
+            out[str(key)] = "[redacted]"
+            continue
+        values = value if isinstance(value, (list, tuple)) else [value]
+        clean_values = [_truncate_audit_value(str(v), 200) for v in values]
+        out[str(key)] = clean_values if len(clean_values) > 1 else (clean_values[0] if clean_values else "")
+    return out
+
+
+def safe_full_path(request: HttpRequest, *, max_len: int = 1000) -> str:
+    """Request path with sensitive query parameter values redacted."""
+    path = getattr(request, "path", "") or ""
+    query = safe_query_params(getattr(request, "GET", None))
+    if not query:
+        return path[:max_len]
+    parts = []
+    for key, value in query.items():
+        if key == "_truncated":
+            continue
+        values = value if isinstance(value, list) else [value]
+        for v in values:
+            parts.append((key, v))
+    if query.get("_truncated"):
+        parts.append(("_truncated", "True"))
+    full_path = f"{path}?{urlencode(parts)}" if parts else path
+    return full_path[:max_len]
+
+
 def safe_post_summary(request: HttpRequest, *, max_keys: int = 40) -> dict[str, Any]:
     """
     Snapshot of POST + FILES keys (multipart). File fields show name/size only, never content.
@@ -103,8 +178,7 @@ def safe_post_summary(request: HttpRequest, *, max_keys: int = 40) -> dict[str, 
         if i >= max_keys:
             out["_truncated"] = True
             break
-        lk = key.lower()
-        if lk in _SENSITIVE_POST_KEYS:
+        if is_sensitive_key(key):
             out[key] = "[redacted]"
             continue
         upload = request.FILES.get(key) if hasattr(request, "FILES") else None
@@ -195,13 +269,12 @@ def log_field_changes(actor, instance, old_values, new_values, ip_address=None, 
         # Avoid huge JSON rows (e.g. pasted job descriptions).
         safe_changes = []
         for c in changes:
-            safe_changes.append(
-                {
-                    "field": c["field"],
-                    "old": _truncate_audit_value(c["old"], 500),
-                    "new": _truncate_audit_value(c["new"], 500),
-                }
-            )
+            if is_sensitive_key(c["field"]):
+                old = new = "[redacted]"
+            else:
+                old = _truncate_audit_value(c["old"], 500)
+                new = _truncate_audit_value(c["new"], 500)
+            safe_changes.append({"field": c["field"], "old": old, "new": new})
         labels = ", ".join(f"{c['field']}" for c in safe_changes[:5])
         if len(safe_changes) > 5:
             labels += ", …"

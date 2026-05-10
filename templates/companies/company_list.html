@@ -8,11 +8,12 @@
     <div class="flat-page-header">
         <div>
             <h1 class="page-title">Companies</h1>
-            <p class="page-subtitle">Client organisations aggregated from all jobs and submissions.</p>
+            <p class="page-subtitle">Client organisations, ATS detection, portal health, jobs, and submission history in one workspace.</p>
         </div>
         <div class="flex items-center gap-2 flex-wrap justify-end">
             {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
             <a href="{% url 'company-duplicate-review' %}" class="btn-secondary btn-sm" style="border-color:#fde68a;background:#fffbeb;color:#92400e;">Duplicates</a>
+            <a href="{% url 'company-list' %}?view=ats" class="btn-secondary btn-sm {% if is_ats_view %}ring-2 ring-indigo-200{% endif %}">ATS Detection</a>
             <a href="{% url 'company-import-csv' %}" class="btn-secondary btn-sm">Import CSV</a>
             <a href="{% url 'company-import-domains' %}" class="btn-secondary btn-sm">Import Domains</a>
             <a href="{% url 'company-import-linkedin' %}" class="btn-secondary btn-sm">Import LinkedIn</a>
@@ -21,6 +22,92 @@
             {% endif %}
         </div>
     </div>
+
+    {% if ats_enabled %}
+    <section class="mb-5">
+        <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
+            <a href="{% url 'company-list' %}?view=ats" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:border-indigo-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Companies</div>
+                <div class="mt-2 text-2xl font-bold text-slate-950">{{ stat_total_companies }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats" class="rounded-xl border border-emerald-200 bg-emerald-50 p-4 shadow-sm hover:border-emerald-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Detected</div>
+                <div class="mt-2 text-2xl font-bold text-emerald-950">{{ stat_labeled }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats&ats_status=verified" class="rounded-xl border border-teal-200 bg-teal-50 p-4 shadow-sm hover:border-teal-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-teal-700">Live Portals</div>
+                <div class="mt-2 text-2xl font-bold text-teal-950">{{ stat_live }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats&ats_status=down" class="rounded-xl border border-rose-200 bg-rose-50 p-4 shadow-sm hover:border-rose-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Down</div>
+                <div class="mt-2 text-2xl font-bold text-rose-950">{{ stat_down }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats&ats_status=unchecked" class="rounded-xl border border-blue-200 bg-blue-50 p-4 shadow-sm hover:border-blue-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-blue-700">Unchecked</div>
+                <div class="mt-2 text-2xl font-bold text-blue-950">{{ stat_unchecked }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats&verified=yes" class="rounded-xl border border-violet-200 bg-violet-50 p-4 shadow-sm hover:border-violet-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Verified</div>
+                <div class="mt-2 text-2xl font-bold text-violet-950">{{ stat_verified }}</div>
+            </a>
+            <a href="{% url 'company-list' %}?view=ats&ats_status=unlabeled" class="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm hover:border-amber-300 transition">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Unlabeled</div>
+                <div class="mt-2 text-2xl font-bold text-amber-950">{{ stat_unlabeled }}</div>
+            </a>
+        </div>
+
+        {% if is_ats_view %}
+        <div class="mt-4 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px] gap-4">
+            <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <div class="flex items-center justify-between gap-3 mb-4">
+                    <h2 class="text-sm font-bold text-gray-900">Platform distribution</h2>
+                    <span class="text-xs text-gray-500">{{ stat_labeled }} detected labels</span>
+                </div>
+                <div class="space-y-2" id="platform-chart">
+                    {% for platform in platforms_chart %}
+                    <a href="{% url 'company-list' %}?view=ats&platform={{ platform.slug }}" class="grid grid-cols-[150px_minmax(0,1fr)_48px] items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-gray-50">
+                        <span class="truncate text-sm font-medium text-gray-700">{{ platform.name }}</span>
+                        <span class="h-2 rounded-full bg-gray-100 overflow-hidden">
+                            <span class="block h-full rounded-full company-platform-bar" style="width:0;background:{{ platform.color_hex }};" data-count="{{ platform.company_count }}"></span>
+                        </span>
+                        <span class="text-right text-sm font-bold" style="color:{{ platform.color_hex }};">{{ platform.company_count }}</span>
+                    </a>
+                    {% empty %}
+                    <p class="text-sm text-gray-500">No platform labels yet. Run detection or backfill labels.</p>
+                    {% endfor %}
+                </div>
+            </div>
+            <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+                <h2 class="text-sm font-bold text-gray-900 mb-4">ATS operations</h2>
+                {% if request.user.is_superuser %}
+                <div class="space-y-3">
+                    <form method="post" action="{% url 'harvest-run-backfill' %}">{% csrf_token %}
+                        <button type="submit" class="w-full rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-left hover:bg-emerald-100 transition">
+                            <span class="block text-sm font-bold text-emerald-900">Backfill labels</span>
+                            <span class="block text-xs text-emerald-700 mt-0.5">Use existing job URLs to fill missing ATS labels.</span>
+                        </button>
+                    </form>
+                    <form method="post" action="{% url 'harvest-run-detect' %}">{% csrf_token %}
+                        <button type="submit" class="w-full rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-left hover:bg-blue-100 transition">
+                            <span class="block text-sm font-bold text-blue-900">Run detection</span>
+                            <span class="block text-xs text-blue-700 mt-0.5">Scan company career sites and detect ATS platforms.</span>
+                        </button>
+                    </form>
+                    <form method="post" action="{% url 'harvest-run-verify-portals' %}">{% csrf_token %}
+                        <button type="submit" class="w-full rounded-lg border border-violet-200 bg-violet-50 px-4 py-3 text-left hover:bg-violet-100 transition">
+                            <span class="block text-sm font-bold text-violet-900">Verify portals</span>
+                            <span class="block text-xs text-violet-700 mt-0.5">Refresh live/down status for career portal URLs.</span>
+                        </button>
+                    </form>
+                </div>
+                {% else %}
+                <p class="text-sm text-gray-600">ATS operations are limited to superusers. Use the filters and table to inspect detection state.</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
 
     <!-- Search & Filters -->
     <form method="get" class="mb-4 space-y-3">
@@ -73,6 +160,46 @@
                     <option value="UNDETECTED" {% if selected_platform == 'UNDETECTED' %}selected{% endif %}>Not detected</option>
                 </select>
             </div>
+            {% if is_ats_view %}
+            <div class="w-40">
+                <label class="form-label">ATS health</label>
+                <select name="ats_status" class="form-select">
+                    <option value="">All</option>
+                    <option value="verified" {% if selected_ats_status == 'verified' %}selected{% endif %}>Live</option>
+                    <option value="down" {% if selected_ats_status == 'down' %}selected{% endif %}>Down</option>
+                    <option value="unchecked" {% if selected_ats_status == 'unchecked' %}selected{% endif %}>Unchecked</option>
+                    <option value="no_tenant" {% if selected_ats_status == 'no_tenant' %}selected{% endif %}>No tenant</option>
+                    <option value="no_ats" {% if selected_ats_status == 'no_ats' %}selected{% endif %}>No ATS</option>
+                    <option value="unlabeled" {% if selected_ats_status == 'unlabeled' %}selected{% endif %}>Unlabeled</option>
+                </select>
+            </div>
+            <div class="w-36">
+                <label class="form-label">Confidence</label>
+                <select name="confidence" class="form-select">
+                    <option value="">All</option>
+                    {% for val, label in confidence_choices %}
+                    <option value="{{ val }}" {% if selected_confidence == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="w-36">
+                <label class="form-label">Verified</label>
+                <select name="verified" class="form-select">
+                    <option value="">All</option>
+                    <option value="yes" {% if selected_verified == 'yes' %}selected{% endif %}>Verified</option>
+                    <option value="no" {% if selected_verified == 'no' %}selected{% endif %}>Unverified</option>
+                </select>
+            </div>
+            <div class="w-44">
+                <label class="form-label">Detection method</label>
+                <select name="method" class="form-select">
+                    <option value="">All methods</option>
+                    {% for val, label in method_choices %}
+                    <option value="{{ val }}" {% if selected_method == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% endif %}
             <div class="w-36">
                 <label class="form-label">Records</label>
                 <select name="page_size" class="form-select">
@@ -84,6 +211,7 @@
             <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Search</button>
         </div>
         <input type="hidden" name="sort" value="{{ selected_sort }}">
+        {% if is_ats_view %}<input type="hidden" name="view" value="ats">{% endif %}
     </form>
 
     <!-- Results summary -->
@@ -119,7 +247,13 @@
                     </th>
                     <th class="px-4 py-3 hidden md:table-cell">Industry</th>
                     <th class="px-4 py-3 hidden lg:table-cell">Website</th>
-                    <th class="px-4 py-3 hidden xl:table-cell">Platform</th>
+                    <th class="px-4 py-3 hidden xl:table-cell">ATS Platform</th>
+                    {% if is_ats_view %}
+                    <th class="px-4 py-3 hidden xl:table-cell">Tenant</th>
+                    <th class="px-4 py-3 hidden lg:table-cell text-center">ATS Health</th>
+                    <th class="px-4 py-3 hidden xl:table-cell text-center">Confidence</th>
+                    <th class="px-4 py-3 hidden xl:table-cell text-center">Verified</th>
+                    {% endif %}
                     <th class="px-4 py-3 text-right font-mono">
                         <a href="?{{ pagination_query }}&sort=submissions" class="hover:text-blue-600 inline-flex items-center justify-end gap-1">Submissions {% if selected_sort == 'submissions' %}<span class="text-blue-600">↓</span>{% endif %}</a>
                     </th>
@@ -139,7 +273,7 @@
             </thead>
             <tbody>
                 {% for company in companies %}
-                <tr class="border-b border-gray-100 hover:bg-gray-50/50">
+                <tr class="border-b border-gray-100 hover:bg-gray-50/50" data-company-pk="{{ company.pk }}" {% if company.platform_label %}data-label-pk="{{ company.platform_label.pk }}" data-platform-pk="{{ company.platform_label.platform.pk|default:'' }}"{% endif %}>
                     {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
                     <td class="px-4 py-3">
                         <input type="checkbox" class="company-checkbox rounded border-gray-300" value="{{ company.pk }}">
@@ -186,6 +320,86 @@
                         {% endif %}
                         {% endwith %}
                     </td>
+                    {% if is_ats_view %}
+                    <td class="px-4 py-3 hidden xl:table-cell">
+                        {% with label=company.platform_label %}
+                        {% if label %}
+                        <div class="flex items-center gap-1.5" id="tenant-display-{{ label.pk }}">
+                            {% if label.tenant_id %}
+                            <span class="font-mono text-[11px] text-gray-700 bg-gray-100 rounded px-2 py-1 max-w-[180px] truncate" title="{{ label.tenant_id }}">{{ label.tenant_id }}</span>
+                            {% else %}
+                            <span class="text-xs text-amber-700">missing</span>
+                            {% endif %}
+                            {% if request.user.is_superuser %}
+                            <button type="button" onclick="startEditTenant({{ label.pk }}, '{{ label.tenant_id|escapejs }}')" class="text-gray-400 hover:text-blue-600" title="Edit tenant ID">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                            </button>
+                            {% endif %}
+                        </div>
+                        <div class="hidden items-center gap-1.5" id="tenant-edit-{{ label.pk }}">
+                            <input type="text" id="tenant-input-{{ label.pk }}" value="{{ label.tenant_id|default:'' }}" class="w-40 rounded-md border border-blue-300 px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-100" onkeydown="handleTenantKey(event, {{ label.pk }})">
+                            <button type="button" onclick="saveTenant({{ label.pk }})" class="text-emerald-600 hover:text-emerald-800" title="Save">✓</button>
+                            <button type="button" onclick="cancelEditTenant({{ label.pk }})" class="text-gray-400 hover:text-gray-700" title="Cancel">×</button>
+                        </div>
+                        {% else %}
+                        <span class="text-xs text-gray-400">—</span>
+                        {% endif %}
+                        {% endwith %}
+                    </td>
+                    <td class="px-4 py-3 hidden lg:table-cell text-center">
+                        {% with label=company.platform_label %}
+                        {% if label %}
+                            {% with s=label.scrape_status %}
+                            {% if s == 'verified' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">● Live</span>
+                            {% elif s == 'down' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 text-xs font-medium text-rose-700">● Down</span>
+                            {% elif s == 'ready' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700">● Ready</span>
+                            {% elif s == 'needs_backfill' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Fix</span>
+                            {% elif s == 'no_tenant' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-800">No tenant</span>
+                            {% elif s == 'no_ats' %}
+                            <span class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-xs font-medium text-gray-600">No ATS</span>
+                            {% else %}
+                            <span class="text-xs text-gray-400">—</span>
+                            {% endif %}
+                            {% endwith %}
+                        {% else %}
+                        <span class="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">Unlabeled</span>
+                        {% endif %}
+                        {% endwith %}
+                    </td>
+                    <td class="px-4 py-3 hidden xl:table-cell text-center">
+                        {% with label=company.platform_label %}
+                        {% if label.confidence == 'HIGH' %}
+                        <span class="inline-flex rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-medium text-emerald-700">High</span>
+                        {% elif label.confidence == 'MEDIUM' %}
+                        <span class="inline-flex rounded-full bg-yellow-50 px-2 py-0.5 text-xs font-medium text-yellow-800">Med</span>
+                        {% elif label.confidence == 'LOW' %}
+                        <span class="inline-flex rounded-full bg-orange-50 px-2 py-0.5 text-xs font-medium text-orange-700">Low</span>
+                        {% else %}
+                        <span class="text-xs text-gray-400">—</span>
+                        {% endif %}
+                        {% endwith %}
+                    </td>
+                    <td class="px-4 py-3 hidden xl:table-cell text-center">
+                        {% with label=company.platform_label %}
+                        {% if label %}
+                        {% if request.user.is_superuser %}
+                        <button type="button" onclick="toggleVerify({{ label.pk }}, this)" data-verified="{{ label.is_verified|yesno:'true,false' }}" class="text-lg leading-none {% if not label.is_verified %}opacity-40{% endif %}" title="{% if label.is_verified %}Verified. Click to unverify.{% else %}Click to verify{% endif %}">
+                            {% if label.is_verified %}✓{% else %}□{% endif %}
+                        </button>
+                        {% else %}
+                        <span class="text-xs {% if label.is_verified %}text-emerald-700{% else %}text-gray-400{% endif %}">{% if label.is_verified %}Yes{% else %}No{% endif %}</span>
+                        {% endif %}
+                        {% else %}
+                        <span class="text-xs text-gray-400">—</span>
+                        {% endif %}
+                        {% endwith %}
+                    </td>
+                    {% endif %}
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_submissions }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_interviews }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_placements }}</td>
@@ -218,6 +432,9 @@
                     </td>
                     <td class="px-4 py-3 text-right">
                         <div class="flex items-center justify-end gap-4">
+                            {% if is_ats_view and company.platform_label and request.user.is_superuser %}
+                            <button type="button" onclick="openSetPlatform({{ company.platform_label.pk }}, {{ company.platform_label.platform.pk|default:'null' }})" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Set ATS</button>
+                            {% endif %}
                             {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
                             <a href="{% url 'company-edit' pk=company.pk %}" class="text-blue-600 hover:text-blue-800 text-xs font-medium">Edit</a>
                             {% endif %}
@@ -229,7 +446,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="11" class="px-4 py-6 text-center text-sm text-gray-500">
+                    <td colspan="16" class="px-4 py-6 text-center text-sm text-gray-500">
                         No companies yet. <a href="{% url 'company-create' %}" class="text-blue-600 hover:underline">Add a company</a> or post jobs to create them.
                     </td>
                 </tr>
@@ -302,6 +519,205 @@
     }
     updateExportBtn();
 })();
+</script>
+{% endif %}
+
+{% if is_ats_view %}
+<script>
+(function animatePlatformBars() {
+    var bars = document.querySelectorAll('.company-platform-bar');
+    var max = 0;
+    bars.forEach(function(bar) { max = Math.max(max, Number(bar.dataset.count || 0)); });
+    if (!max) return;
+    setTimeout(function() {
+        bars.forEach(function(bar) {
+            bar.style.width = Math.max(2, Math.round((Number(bar.dataset.count || 0) / max) * 100)) + '%';
+        });
+    }, 80);
+})();
+</script>
+{% endif %}
+
+{% if is_ats_view and request.user.is_superuser %}
+<div id="set-platform-modal" class="fixed inset-0 z-50 hidden" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/50" onclick="closeSetPlatform()"></div>
+    <div class="relative mx-auto mt-24 w-full max-w-lg px-4">
+        <div class="rounded-xl bg-white shadow-xl border border-gray-200 p-6">
+            <div class="flex items-start justify-between gap-4 mb-5">
+                <div>
+                    <h2 class="text-lg font-bold text-gray-900">Set ATS platform</h2>
+                    <p class="text-sm text-gray-500 mt-1">Manual override marks the label as high confidence and verified.</p>
+                </div>
+                <button type="button" onclick="closeSetPlatform()" class="rounded-lg border border-gray-200 px-2 py-1 text-gray-500 hover:bg-gray-50">×</button>
+            </div>
+            <p class="text-sm text-gray-600 mb-4">Company: <strong id="modal-company-name" class="text-gray-900"></strong></p>
+            <div class="space-y-4">
+                <div>
+                    <label class="form-label">Platform</label>
+                    <select id="modal-platform-select" class="form-select w-full">
+                        <option value="">None / Unknown</option>
+                        {% for p in platform_choices %}
+                        <option value="{{ p.pk }}" data-color="{{ p.color_hex }}">{{ p.name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div>
+                    <label class="form-label">Tenant ID</label>
+                    <input type="text" id="modal-tenant-input" class="form-input font-mono text-sm" placeholder="Optional tenant, e.g. acme or acme.wd5|External">
+                </div>
+            </div>
+            <div id="modal-error" class="hidden mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700"></div>
+            <div class="mt-6 flex justify-end gap-2">
+                <button type="button" onclick="closeSetPlatform()" class="btn-secondary btn-sm">Cancel</button>
+                <button type="button" onclick="saveSetPlatform()" class="btn-primary btn-sm">Save ATS</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="company-toast" class="fixed bottom-6 right-6 z-50 hidden rounded-lg bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-lg"></div>
+
+<script>
+const COMPANY_CSRF = '{{ csrf_token }}';
+let currentLabelPk = null;
+
+function companyToast(message, isError) {
+    var el = document.getElementById('company-toast');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('bg-rose-600', !!isError);
+    el.classList.toggle('bg-slate-900', !isError);
+    el.classList.remove('hidden');
+    clearTimeout(el._timer);
+    el._timer = setTimeout(function() { el.classList.add('hidden'); }, 2600);
+}
+
+function toggleVerify(pk, btn) {
+    fetch('/harvest/labels/' + pk + '/verify/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': COMPANY_CSRF, 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        btn.dataset.verified = data.verified ? 'true' : 'false';
+        btn.textContent = data.verified ? '✓' : '□';
+        btn.classList.toggle('opacity-40', !data.verified);
+        btn.title = data.verified ? 'Verified. Click to unverify.' : 'Click to verify';
+        companyToast(data.verified ? 'Marked verified' : 'Marked unverified');
+    })
+    .catch(function() { companyToast('Could not update verification', true); });
+}
+
+function startEditTenant(pk, current) {
+    var display = document.getElementById('tenant-display-' + pk);
+    var edit = document.getElementById('tenant-edit-' + pk);
+    var input = document.getElementById('tenant-input-' + pk);
+    if (!display || !edit || !input) return;
+    display.classList.add('hidden');
+    display.classList.remove('flex');
+    edit.classList.remove('hidden');
+    edit.classList.add('flex');
+    input.value = current || '';
+    input.focus();
+    input.select();
+}
+
+function cancelEditTenant(pk) {
+    var display = document.getElementById('tenant-display-' + pk);
+    var edit = document.getElementById('tenant-edit-' + pk);
+    if (!display || !edit) return;
+    edit.classList.add('hidden');
+    edit.classList.remove('flex');
+    display.classList.remove('hidden');
+    display.classList.add('flex');
+}
+
+function handleTenantKey(e, pk) {
+    if (e.key === 'Enter') saveTenant(pk);
+    if (e.key === 'Escape') cancelEditTenant(pk);
+}
+
+function saveTenant(pk) {
+    var input = document.getElementById('tenant-input-' + pk);
+    if (!input) return;
+    var value = input.value.trim();
+    fetch('/harvest/labels/' + pk + '/update-tenant/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': COMPANY_CSRF,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'tenant_id=' + encodeURIComponent(value)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) throw new Error('Save failed');
+        var display = document.getElementById('tenant-display-' + pk);
+        if (display) {
+            display.innerHTML = (value
+                ? '<span class="font-mono text-[11px] text-gray-700 bg-gray-100 rounded px-2 py-1 max-w-[180px] truncate" title="' + escAttr(value) + '">' + escHtml(value) + '</span>'
+                : '<span class="text-xs text-amber-700">missing</span>')
+                + '<button type="button" onclick="startEditTenant(' + pk + ', \'' + escJs(value) + '\')" class="text-gray-400 hover:text-blue-600" title="Edit tenant ID"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>';
+        }
+        cancelEditTenant(pk);
+        companyToast('Tenant saved');
+    })
+    .catch(function() { companyToast('Could not save tenant', true); });
+}
+
+function openSetPlatform(pk, platformPk) {
+    currentLabelPk = pk;
+    var row = document.querySelector('[data-label-pk="' + pk + '"]');
+    var nameEl = row ? row.querySelector('td:nth-child(2) a') : null;
+    document.getElementById('modal-company-name').textContent = nameEl ? nameEl.textContent.trim() : '';
+    document.getElementById('modal-platform-select').value = platformPk || '';
+    document.getElementById('modal-tenant-input').value = '';
+    document.getElementById('modal-error').classList.add('hidden');
+    document.getElementById('set-platform-modal').classList.remove('hidden');
+}
+
+function closeSetPlatform() {
+    currentLabelPk = null;
+    document.getElementById('set-platform-modal').classList.add('hidden');
+}
+
+function saveSetPlatform() {
+    if (!currentLabelPk) return;
+    var platformId = document.getElementById('modal-platform-select').value;
+    var tenantId = document.getElementById('modal-tenant-input').value.trim();
+    var body = new URLSearchParams();
+    if (platformId) body.append('platform_id', platformId);
+    if (tenantId) body.append('tenant_id', tenantId);
+    fetch('/harvest/labels/' + currentLabelPk + '/set-platform/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': COMPANY_CSRF,
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: body.toString()
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) throw new Error(data.error || 'Save failed');
+        closeSetPlatform();
+        companyToast('ATS platform saved');
+        window.location.reload();
+    })
+    .catch(function(err) {
+        var el = document.getElementById('modal-error');
+        el.textContent = err.message || 'Could not save platform';
+        el.classList.remove('hidden');
+    });
+}
+
+function escHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+function escAttr(s) { return escHtml(s); }
+function escJs(s) { return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'"); }
+document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeSetPlatform(); });
 </script>
 {% endif %}
 

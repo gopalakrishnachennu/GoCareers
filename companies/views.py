@@ -61,6 +61,32 @@ def _get_company_list_queryset(request):
         qs = qs.filter(platform_label__detection_method="UNDETECTED")
     elif platform_filter:
         qs = qs.filter(platform_label__platform__slug=platform_filter)
+
+    ats_status = request.GET.get("ats_status", "").strip()
+    if ats_status == "verified":
+        qs = qs.filter(platform_label__portal_alive=True)
+    elif ats_status == "down":
+        qs = qs.filter(platform_label__portal_alive=False)
+    elif ats_status == "unchecked":
+        qs = qs.filter(platform_label__portal_alive__isnull=True, platform_label__platform__isnull=False)
+    elif ats_status == "no_tenant":
+        qs = qs.filter(platform_label__platform__isnull=False, platform_label__tenant_id="")
+    elif ats_status == "no_ats":
+        qs = qs.filter(platform_label__detection_method="UNDETECTED")
+    elif ats_status == "unlabeled":
+        qs = qs.filter(platform_label__isnull=True)
+
+    confidence_filter = request.GET.get("confidence", "").strip()
+    if confidence_filter:
+        qs = qs.filter(platform_label__confidence=confidence_filter)
+    method_filter = request.GET.get("method", "").strip()
+    if method_filter:
+        qs = qs.filter(platform_label__detection_method=method_filter)
+    verified_filter = request.GET.get("verified", "").strip()
+    if verified_filter == "yes":
+        qs = qs.filter(platform_label__is_verified=True)
+    elif verified_filter == "no":
+        qs = qs.filter(platform_label__is_verified=False)
     qs = qs.prefetch_related("platform_label__platform")
     sort = request.GET.get("sort", "name")
     if sort == "submissions":
@@ -76,6 +102,71 @@ def _get_company_list_queryset(request):
     else:
         qs = qs.order_by("name")
     return qs
+
+
+def _company_ats_context(request):
+    """Shared context for the unified Companies + ATS detection view."""
+    try:
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform
+    except Exception:
+        return {
+            "ats_enabled": False,
+            "platform_choices": [],
+            "platforms_chart": [],
+            "confidence_choices": [],
+            "method_choices": [],
+        }
+
+    platforms = JobBoardPlatform.objects.annotate(company_count=Count("labels")).order_by("name")
+    platforms_chart = platforms.filter(company_count__gt=0).order_by("-company_count")
+    total_companies = Company.objects.count()
+    stat_labeled = CompanyPlatformLabel.objects.exclude(detection_method="UNDETECTED").count()
+    stat_undetected = CompanyPlatformLabel.objects.filter(detection_method="UNDETECTED").count()
+    stat_unlabeled = Company.objects.filter(platform_label__isnull=True).count()
+    stat_verified = CompanyPlatformLabel.objects.filter(is_verified=True).count()
+    stat_live = CompanyPlatformLabel.objects.filter(portal_alive=True).count()
+    stat_down = CompanyPlatformLabel.objects.filter(portal_alive=False).count()
+    stat_unchecked = CompanyPlatformLabel.objects.filter(
+        portal_alive__isnull=True,
+        platform__isnull=False,
+    ).count()
+    selected_view = request.GET.get("view", "").strip()
+    is_ats_view = selected_view == "ats" or any(
+        request.GET.get(k, "").strip()
+        for k in ("platform", "ats_status", "confidence", "method", "verified")
+    )
+
+    return {
+        "ats_enabled": True,
+        "is_ats_view": is_ats_view,
+        "platform_choices": platforms,
+        "platforms_chart": platforms_chart,
+        "stat_total_companies": total_companies,
+        "stat_labeled": stat_labeled,
+        "stat_undetected": stat_undetected,
+        "stat_unlabeled": stat_unlabeled,
+        "stat_verified": stat_verified,
+        "stat_live": stat_live,
+        "stat_down": stat_down,
+        "stat_unchecked": stat_unchecked,
+        "confidence_choices": CompanyPlatformLabel.Confidence.choices,
+        "method_choices": CompanyPlatformLabel.DetectionMethod.choices,
+        "selected_ats_status": request.GET.get("ats_status", ""),
+        "selected_confidence": request.GET.get("confidence", ""),
+        "selected_method": request.GET.get("method", ""),
+        "selected_verified": request.GET.get("verified", ""),
+        "selected_view": selected_view,
+    }
+
+
+def labels_query_to_companies_url(query_dict):
+    qd = query_dict.copy()
+    qd["view"] = "ats"
+    legacy_status = qd.get("status", "")
+    qd.pop("status", None)
+    if legacy_status and not qd.get("ats_status"):
+        qd["ats_status"] = legacy_status
+    return f"{reverse_lazy('company-list')}?{qd.urlencode()}"
 
 
 class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
@@ -104,11 +195,7 @@ class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
         context["selected_industry"] = self.request.GET.get("industry", "")
         context["selected_website_valid"] = self.request.GET.get("website_valid", "")
         context["selected_platform"] = self.request.GET.get("platform", "")
-        try:
-            from harvest.models import JobBoardPlatform
-            context["platform_choices"] = JobBoardPlatform.objects.filter(is_enabled=True).order_by("name")
-        except Exception:
-            context["platform_choices"] = []
+        context.update(_company_ats_context(self.request))
         context["relationship_statuses"] = (
             Company.objects.exclude(relationship_status="")
             .values_list("relationship_status", flat=True)

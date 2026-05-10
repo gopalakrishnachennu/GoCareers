@@ -389,6 +389,11 @@ class CompanyLabelListView(SuperuserRequiredMixin, ListView):
     context_object_name = "labels"
     paginate_by = 100
 
+    def get(self, request, *args, **kwargs):
+        from companies.views import labels_query_to_companies_url
+
+        return redirect(labels_query_to_companies_url(request.GET))
+
     def get_queryset(self):
         qs = CompanyPlatformLabel.objects.select_related(
             "company", "platform", "verified_by"
@@ -760,7 +765,12 @@ class RunBackfillNowView(SuperuserRequiredMixin, View):
         from .tasks import backfill_platform_labels_from_jobs_task
         task = backfill_platform_labels_from_jobs_task.delay()
         messages.success(request, f"Backfill started — scanning all job URLs to detect platforms (Task: {task.id[:8]}...)")
-        return redirect_with_task_progress("harvest-labels", task.id, "Platform backfill from job URLs")
+        return redirect_with_task_progress(
+            "company-list",
+            task.id,
+            "Platform backfill from job URLs",
+            extra_query={"view": "ats"},
+        )
 
 
 class RunVerifyPortalsView(SuperuserRequiredMixin, View):
@@ -772,7 +782,12 @@ class RunVerifyPortalsView(SuperuserRequiredMixin, View):
             request,
             f"Portal verification started — checking all career URLs in the background (Task: {task.id[:8]}...)"
         )
-        return redirect_with_task_progress("harvest-labels", task.id, "Verifying career portal health")
+        return redirect_with_task_progress(
+            "company-list",
+            task.id,
+            "Verifying career portal health",
+            extra_query={"view": "ats"},
+        )
 
 
 # ── Raw Jobs Views ─────────────────────────────────────────────────────────────
