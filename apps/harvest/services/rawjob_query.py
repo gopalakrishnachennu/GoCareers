@@ -62,6 +62,7 @@ FILTER_STATE_KEYS = (
     "label_pk",
     "scope_status",
     "country_code",
+    "marketing_role",
 )
 
 
@@ -413,6 +414,10 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
     country_code_f = _get(params, "country_code")
     if country_code_f:
         qs = qs.filter(country_code__iexact=country_code_f)
+
+    marketing_role_f = _get(params, "marketing_role")
+    if marketing_role_f:
+        qs = qs.filter(job_domain__iexact=marketing_role_f)
 
     return qs
 

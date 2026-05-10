@@ -1258,6 +1258,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "platform",
                 "company_id",
                 "label_pk",
+                "country_code",
+                "marketing_role",
                 "date_from",
                 "date_to",
                 "last_hours",
@@ -1323,6 +1325,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "category_confidence",
                 "resume_ready_score",
                 "raw_payload",
+                "country_code",
+                "job_domain",
                 "state",
                 "country",
             )
@@ -1431,10 +1435,19 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "pending_age_bucket": "Pending age",
                 "platform": "Platform",
                 "country": "Country",
+                "country_code": "Country Code",
                 "state": "State",
+                "marketing_role": "Marketing Role",
+            }
+            raw_role_label_by_slug = {
+                role.slug: role.name
+                for role in MarketingRole.objects.only("slug", "name")
             }
             for key, value in raw_filter_passthrough:
-                active_filter_chips.append((raw_label_map.get(key, key.replace("_", " ").title()), value))
+                display_value = value
+                if key == "marketing_role":
+                    display_value = raw_role_label_by_slug.get(value, value)
+                active_filter_chips.append((raw_label_map.get(key, key.replace("_", " ").title()), display_value))
         if tab == "pool":
             if gate_tab != "all":
                 active_filter_chips.append(("Gate", gate_tab))
@@ -1464,6 +1477,15 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'raw_next_page': raw_next_page if tab == "raw" else None,
             'raw_total_filtered': raw_total_filtered if tab == "raw" else 0,
             'vet_gate_summary': vet_gate_summary,
+            'raw_country_code_options': (
+                RawJob.objects.exclude(country_code="")
+                .values_list("country_code", flat=True)
+                .distinct()
+                .order_by("country_code")
+            ),
+            'raw_marketing_roles': MarketingRole.objects.order_by("name"),
+            'raw_selected_country_code': (request.GET.get("country_code") or "").strip(),
+            'raw_selected_marketing_role': (request.GET.get("marketing_role") or "").strip(),
         }
         if tab == 'pool':
             ctx.update(pool_extra)
