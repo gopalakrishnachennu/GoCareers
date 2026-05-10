@@ -1,10 +1,11 @@
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib import messages
 from django.views.generic import ListView, DetailView, UpdateView, CreateView, View, TemplateView
-from django.urls import reverse_lazy
-from django.shortcuts import redirect, get_object_or_404
+from django.urls import reverse, reverse_lazy
+from django.shortcuts import redirect, get_object_or_404, render
 from django.db.models import Count, Q
 from django.http import HttpResponse, JsonResponse
+from django.core.exceptions import ObjectDoesNotExist
 from django.utils import timezone
 import csv
 import json
@@ -36,7 +37,15 @@ class AdminOrEmployeeRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
 
 def _get_company_list_queryset(request):
     """Shared queryset for list and CSV export (search, filters, sort)."""
-    qs = Company.objects.annotate(job_count=Count("jobs"))
+    qs = Company.objects.annotate(
+        job_count=Count("jobs", distinct=True),
+        raw_job_count=Count("raw_jobs", distinct=True),
+        pending_raw_job_count=Count(
+            "raw_jobs",
+            filter=Q(raw_jobs__sync_status="PENDING"),
+            distinct=True,
+        ),
+    )
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(name__icontains=q) | qs.filter(alias__icontains=q)
@@ -87,6 +96,33 @@ def _get_company_list_queryset(request):
         qs = qs.filter(platform_label__is_verified=True)
     elif verified_filter == "no":
         qs = qs.filter(platform_label__is_verified=False)
+
+    smart_filter = request.GET.get("smart", "").strip()
+    if smart_filter == "attention":
+        qs = qs.filter(
+            Q(needs_review=True)
+            | Q(platform_label__isnull=True)
+            | Q(platform_label__portal_alive=False)
+            | Q(platform_label__platform__isnull=False, platform_label__tenant_id="")
+            | Q(platform_label__confidence__in=["LOW", "UNKNOWN"])
+            | Q(website__gt="", website_is_valid=False)
+        ).distinct()
+    elif smart_filter == "ready":
+        qs = qs.filter(
+            platform_label__platform__isnull=False,
+            platform_label__tenant_id__gt="",
+        ).exclude(platform_label__portal_alive=False)
+    elif smart_filter == "high_value":
+        qs = qs.filter(
+            Q(total_submissions__gt=0)
+            | Q(total_interviews__gt=0)
+            | Q(total_placements__gt=0)
+            | Q(job_count__gte=10)
+        ).distinct()
+    elif smart_filter == "duplicates":
+        qs = qs.filter(needs_review=True)
+    elif smart_filter == "blocked":
+        qs = qs.filter(is_blacklisted=True)
     qs = qs.prefetch_related("platform_label__platform")
     sort = request.GET.get("sort", "name")
     if sort == "submissions":
@@ -195,6 +231,7 @@ class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
         context["selected_industry"] = self.request.GET.get("industry", "")
         context["selected_website_valid"] = self.request.GET.get("website_valid", "")
         context["selected_platform"] = self.request.GET.get("platform", "")
+        context["selected_smart"] = self.request.GET.get("smart", "")
         context.update(_company_ats_context(self.request))
         context["relationship_statuses"] = (
             Company.objects.exclude(relationship_status="")
@@ -220,6 +257,90 @@ class CompanyListView(AdminOrEmployeeRequiredMixin, ListView):
         else:
             context["results_total"] = context["results_start"] = context["results_end"] = 0
         return context
+
+
+class CompanyIntelligenceView(AdminOrEmployeeRequiredMixin, View):
+    """One-click company intelligence panel for ATS, raw jobs, and pipeline signals."""
+
+    template_name = "companies/_company_intelligence_panel.html"
+
+    def get(self, request, pk, *args, **kwargs):
+        company = get_object_or_404(
+            Company.objects.annotate(
+                job_count=Count("jobs", distinct=True),
+                raw_job_count=Count("raw_jobs", distinct=True),
+                pending_raw_job_count=Count(
+                    "raw_jobs",
+                    filter=Q(raw_jobs__sync_status="PENDING"),
+                    distinct=True,
+                ),
+            ).select_related("platform_label__platform"),
+            pk=pk,
+        )
+        try:
+            label = company.platform_label
+        except ObjectDoesNotExist:
+            label = None
+
+        raw_jobs = []
+        latest_run = None
+        raw_job_stats = {
+            "total": getattr(company, "raw_job_count", 0),
+            "pending": getattr(company, "pending_raw_job_count", 0),
+            "synced": 0,
+            "failed": 0,
+        }
+        if label:
+            try:
+                from harvest.models import CompanyFetchRun, RawJob
+
+                latest_run = (
+                    CompanyFetchRun.objects.filter(label=label)
+                    .order_by("-started_at", "-id")
+                    .first()
+                )
+                agg = RawJob.objects.filter(company=company).aggregate(
+                    synced=Count("id", filter=Q(sync_status="SYNCED")),
+                    failed=Count("id", filter=Q(sync_status="FAILED")),
+                )
+                raw_job_stats.update({k: v or 0 for k, v in agg.items()})
+                raw_jobs = (
+                    RawJob.objects.filter(company=company)
+                    .only("id", "title", "platform_slug", "sync_status", "fetched_at", "original_url")
+                    .order_by("-fetched_at")[:5]
+                )
+            except Exception:
+                raw_jobs = []
+
+        attention_items = []
+        if company.needs_review:
+            attention_items.append(("Duplicate review", "Possible duplicate needs merge or dismiss."))
+        if company.is_blacklisted:
+            attention_items.append(("Blacklisted", company.blacklist_reason or "Submissions should stay blocked."))
+        if company.website and not company.website_is_valid:
+            attention_items.append(("Website invalid", "Website check has not passed for this company."))
+        if not label:
+            attention_items.append(("ATS unlabeled", "Run detection or add a platform label before fetching jobs."))
+        elif label.detection_method == "UNDETECTED":
+            attention_items.append(("No ATS detected", "Career site did not match a supported platform."))
+        elif label.platform and not label.tenant_id:
+            attention_items.append(("Tenant missing", "Platform is known but tenant ID is required before fetch."))
+        elif label.portal_alive is False:
+            attention_items.append(("Portal down", "Last portal health check failed. Re-verify before fetching."))
+        elif label.confidence in ("LOW", "UNKNOWN"):
+            attention_items.append(("Low confidence", "Detection should be manually reviewed."))
+
+        context = {
+            "company": company,
+            "label": label,
+            "latest_run": latest_run,
+            "raw_jobs": raw_jobs,
+            "raw_job_stats": raw_job_stats,
+            "attention_items": attention_items,
+            "raw_jobs_url": f"{reverse('harvest-rawjobs')}?company_id={company.pk}",
+            "jobs_url": f"{reverse('job-list')}?company={company.pk}",
+        }
+        return render(request, self.template_name, context)
 
 
 class CompanyDetailView(AdminOrEmployeeRequiredMixin, DetailView):

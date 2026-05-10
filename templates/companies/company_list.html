@@ -25,6 +25,14 @@
 
     {% if ats_enabled %}
     <section class="mb-5">
+        <div class="mb-4 flex items-center gap-2 overflow-x-auto pb-1">
+            <a href="{% url 'company-list' %}?view=ats" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if not selected_smart %}border-slate-900 bg-slate-900 text-white{% else %}border-gray-200 bg-white text-gray-700 hover:bg-gray-50{% endif %}">All companies</a>
+            <a href="{% url 'company-list' %}?view=ats&smart=attention" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if selected_smart == 'attention' %}border-amber-700 bg-amber-700 text-white{% else %}border-amber-200 bg-amber-50 text-amber-800 hover:bg-amber-100{% endif %}">Needs attention</a>
+            <a href="{% url 'company-list' %}?view=ats&smart=ready" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if selected_smart == 'ready' %}border-emerald-700 bg-emerald-700 text-white{% else %}border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100{% endif %}">Ready to fetch</a>
+            <a href="{% url 'company-list' %}?view=ats&smart=high_value" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if selected_smart == 'high_value' %}border-blue-700 bg-blue-700 text-white{% else %}border-blue-200 bg-blue-50 text-blue-800 hover:bg-blue-100{% endif %}">High value</a>
+            <a href="{% url 'company-list' %}?view=ats&smart=duplicates" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if selected_smart == 'duplicates' %}border-rose-700 bg-rose-700 text-white{% else %}border-rose-200 bg-rose-50 text-rose-800 hover:bg-rose-100{% endif %}">Duplicate review</a>
+            <a href="{% url 'company-list' %}?view=ats&smart=blocked" class="whitespace-nowrap rounded-lg border px-3 py-2 text-sm font-semibold {% if selected_smart == 'blocked' %}border-gray-800 bg-gray-800 text-white{% else %}border-gray-200 bg-white text-gray-700 hover:bg-gray-50{% endif %}">Blocked</a>
+        </div>
         <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3">
             <a href="{% url 'company-list' %}?view=ats" class="rounded-xl border border-slate-200 bg-white p-4 shadow-sm hover:border-indigo-300 transition">
                 <div class="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Companies</div>
@@ -212,6 +220,7 @@
         </div>
         <input type="hidden" name="sort" value="{{ selected_sort }}">
         {% if is_ats_view %}<input type="hidden" name="view" value="ats">{% endif %}
+        {% if selected_smart %}<input type="hidden" name="smart" value="{{ selected_smart }}">{% endif %}
     </form>
 
     <!-- Results summary -->
@@ -243,7 +252,7 @@
             {% endif %}
         </div>
         <div class="{% if is_ats_view %}max-h-[72vh] overflow-auto{% else %}overflow-x-auto{% endif %}" id="company-grid-scroll">
-        <table class="{% if is_ats_view %}min-w-[1960px]{% else %}min-w-[1280px]{% endif %} w-full text-sm">
+        <table class="{% if is_ats_view %}min-w-[2160px]{% else %}min-w-[1280px]{% endif %} w-full text-sm">
             <thead class="{% if is_ats_view %}sticky top-0 z-20{% endif %}">
                 <tr class="border-b border-gray-200 bg-gray-50 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
                     {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
@@ -275,6 +284,10 @@
                     <th class="px-4 py-3 w-[90px] text-right font-mono">
                         <a href="?{{ pagination_query }}&sort=jobs" class="hover:text-blue-600 inline-flex items-center justify-end gap-1">Jobs {% if selected_sort == 'jobs' %}<span class="text-blue-600">↓</span>{% endif %}</a>
                     </th>
+                    {% if is_ats_view %}
+                    <th class="px-4 py-3 w-[105px] text-right font-mono">Raw</th>
+                    <th class="px-4 py-3 w-[110px] text-right font-mono">Pending</th>
+                    {% endif %}
                     <th class="px-4 py-3 w-[150px] {% if not is_ats_view %}hidden sm:table-cell{% endif %} text-center">Status</th>
                     <th class="px-4 py-3 w-[95px] {% if not is_ats_view %}hidden md:table-cell{% endif %} text-center">Links</th>
                     <th class="px-4 py-3 w-[180px] text-right {% if is_ats_view %}sticky right-0 z-30 bg-gray-50 shadow-[-1px_0_0_#e5e7eb]{% endif %}">Actions</th>
@@ -413,6 +426,10 @@
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_interviews }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.total_placements }}</td>
                     <td class="px-4 py-3 text-right font-mono">{{ company.job_count }}</td>
+                    {% if is_ats_view %}
+                    <td class="px-4 py-3 text-right font-mono">{{ company.raw_job_count|default:0 }}</td>
+                    <td class="px-4 py-3 text-right font-mono">{{ company.pending_raw_job_count|default:0 }}</td>
+                    {% endif %}
                     <td class="px-4 py-3 {% if not is_ats_view %}hidden sm:table-cell{% endif %}">
                         <div class="flex flex-wrap gap-1 justify-center">
                             {% if company.is_blacklisted %}
@@ -440,7 +457,8 @@
                         {% endif %}
                     </td>
                     <td class="px-4 py-3 text-right {% if is_ats_view %}sticky right-0 z-10 bg-white shadow-[-1px_0_0_#f1f5f9] group-hover:bg-gray-50{% endif %}">
-                        <div class="flex items-center justify-end gap-4">
+                        <div class="flex items-center justify-end gap-3">
+                            <button type="button" onclick="openCompanyIntel({{ company.pk }})" class="text-slate-700 hover:text-slate-950 text-xs font-semibold">Intel</button>
                             {% if is_ats_view and company.platform_label and request.user.is_superuser %}
                             <button type="button" onclick="openSetPlatform({{ company.platform_label.pk }}, {{ company.platform_label.platform.pk|default:'null' }})" class="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Set ATS</button>
                             {% endif %}
@@ -455,7 +473,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="16" class="px-4 py-6 text-center text-sm text-gray-500">
+                    <td colspan="{% if is_ats_view %}18{% else %}16{% endif %}" class="px-4 py-6 text-center text-sm text-gray-500">
                         No companies yet. <a href="{% url 'company-create' %}" class="text-blue-600 hover:underline">Add a company</a> or post jobs to create them.
                     </td>
                 </tr>
@@ -494,6 +512,69 @@
     </div>
     {% endif %}
 </div>
+
+<div id="company-intel-drawer" class="fixed inset-0 z-40 hidden" aria-modal="true">
+    <div class="absolute inset-0 bg-slate-900/40" onclick="closeCompanyIntel()"></div>
+    <aside class="absolute right-0 top-0 h-full w-full max-w-xl border-l border-gray-200 bg-white shadow-2xl">
+        <div id="company-intel-content" class="h-full">
+            <div class="h-full flex items-center justify-center text-sm text-gray-500">Loading company intelligence...</div>
+        </div>
+    </aside>
+</div>
+
+<script>
+function openCompanyIntel(pk) {
+    var drawer = document.getElementById('company-intel-drawer');
+    var content = document.getElementById('company-intel-content');
+    if (!drawer || !content) return;
+    drawer.classList.remove('hidden');
+    content.innerHTML = '<div class="h-full flex items-center justify-center text-sm text-gray-500">Loading company intelligence...</div>';
+    fetch('/companies/' + pk + '/intelligence/', {
+        headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    })
+    .then(function(r) {
+        if (!r.ok) throw new Error('Could not load company intelligence');
+        return r.text();
+    })
+    .then(function(html) { content.innerHTML = html; })
+    .catch(function(err) {
+        content.innerHTML = '<div class="h-full flex items-center justify-center px-6 text-center text-sm text-rose-700">' + companyEscHtml(err.message || 'Could not load company intelligence') + '</div>';
+    });
+}
+
+function companyEscHtml(s) {
+    return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function closeCompanyIntel() {
+    var drawer = document.getElementById('company-intel-drawer');
+    if (drawer) drawer.classList.add('hidden');
+}
+
+function fetchCompanyJobs(labelPk) {
+    fetch('/harvest/run/fetch-company/', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Content-Type': 'application/x-www-form-urlencoded'
+        },
+        body: 'label_pk=' + encodeURIComponent(labelPk)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.ok) throw new Error(data.error || 'Fetch failed');
+        if (typeof companyToast === 'function') companyToast('Company fetch started');
+    })
+    .catch(function(err) {
+        if (typeof companyToast === 'function') companyToast(err.message || 'Could not start fetch', true);
+    });
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') closeCompanyIntel();
+});
+</script>
 
 {% if request.user.is_superuser or request.user.role == 'ADMIN' or request.user.role == 'EMPLOYEE' %}
 <div id="company-export-base" data-url="{% url 'company-export-csv' %}" data-query="{{ pagination_query }}"></div>
@@ -548,7 +629,7 @@
 </script>
 {% endif %}
 
-{% if is_ats_view and request.user.is_superuser %}
+{% if ats_enabled and request.user.is_superuser %}
 <div id="set-platform-modal" class="fixed inset-0 z-50 hidden" aria-modal="true">
     <div class="absolute inset-0 bg-slate-900/50" onclick="closeSetPlatform()"></div>
     <div class="relative mx-auto mt-24 w-full max-w-lg px-4">
