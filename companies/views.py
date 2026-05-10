@@ -203,7 +203,7 @@ def _company_ats_context(request):
             | Q(platform_label__isnull=True)
             | Q(platform_label__portal_alive=False)
             | Q(platform_label__platform__isnull=False, platform_label__tenant_id="")
-            | Q(platform_label__confidence__in=["LOW", "UNKNOWN"])
+            | Q(platform_label__platform__isnull=False, platform_label__confidence__in=["LOW", "UNKNOWN"])
             | Q(website__gt="", website_is_valid=False)
         )
         .distinct()
@@ -222,6 +222,7 @@ def _company_ats_context(request):
     )
     stat_duplicates = Company.objects.filter(needs_review=True).count()
     stat_blocked = Company.objects.filter(is_blacklisted=True).count()
+    stat_raw_pending_companies = Company.objects.filter(raw_jobs__sync_status="PENDING").distinct().count()
     raw_job_total = RawJob.objects.count()
     raw_job_pending = RawJob.objects.filter(sync_status="PENDING").count()
     raw_job_failed = RawJob.objects.filter(sync_status="FAILED").count()
@@ -294,8 +295,8 @@ def _company_ats_context(request):
         },
         {
             "key": "raw_pending",
-            "label": "Raw pending",
-            "count": raw_job_pending,
+            "label": "Pending raw companies",
+            "count": stat_raw_pending_companies,
             "tone": "blue",
             "description": "Companies with raw jobs waiting to sync",
             "url": f"{reverse('company-list')}?view=engine&smart=raw_pending",
@@ -346,6 +347,7 @@ def _company_ats_context(request):
         "stat_high_value": stat_high_value,
         "stat_duplicates": stat_duplicates,
         "stat_blocked": stat_blocked,
+        "stat_raw_pending_companies": stat_raw_pending_companies,
         "raw_job_total": raw_job_total,
         "raw_job_pending": raw_job_pending,
         "raw_job_failed": raw_job_failed,
