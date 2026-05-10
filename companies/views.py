@@ -123,6 +123,16 @@ def _get_company_list_queryset(request):
         qs = qs.filter(needs_review=True)
     elif smart_filter == "blocked":
         qs = qs.filter(is_blacklisted=True)
+    elif smart_filter == "portal_down":
+        qs = qs.filter(platform_label__portal_alive=False)
+    elif smart_filter == "unlabeled":
+        qs = qs.filter(platform_label__isnull=True)
+    elif smart_filter == "no_tenant":
+        qs = qs.filter(platform_label__platform__isnull=False, platform_label__tenant_id="")
+    elif smart_filter == "no_ats":
+        qs = qs.filter(platform_label__detection_method="UNDETECTED")
+    elif smart_filter == "raw_pending":
+        qs = qs.filter(raw_jobs__sync_status="PENDING").distinct()
     qs = qs.prefetch_related("platform_label__platform")
     sort = request.GET.get("sort", "name")
     if sort == "submissions":
@@ -141,9 +151,17 @@ def _get_company_list_queryset(request):
 
 
 def _company_ats_context(request):
-    """Shared context for the unified Companies + ATS detection view."""
+    """Shared context for the Company Engine command center."""
     try:
-        from harvest.models import CompanyPlatformLabel, JobBoardPlatform
+        from harvest.models import (
+            CompanyFetchRun,
+            CompanyPlatformLabel,
+            FetchBatch,
+            HarvestEngineConfig,
+            HarvestOpsRun,
+            JobBoardPlatform,
+            RawJob,
+        )
     except Exception:
         return {
             "ats_enabled": False,
@@ -166,11 +184,147 @@ def _company_ats_context(request):
         portal_alive__isnull=True,
         platform__isnull=False,
     ).count()
-    selected_view = request.GET.get("view", "").strip()
-    is_ats_view = selected_view == "ats" or any(
-        request.GET.get(k, "").strip()
-        for k in ("platform", "ats_status", "confidence", "method", "verified")
+    stat_no_tenant = CompanyPlatformLabel.objects.filter(
+        platform__isnull=False,
+        tenant_id="",
+    ).count()
+    stat_no_ats = CompanyPlatformLabel.objects.filter(detection_method="UNDETECTED").count()
+    stat_ready_to_fetch = (
+        CompanyPlatformLabel.objects.filter(
+            platform__isnull=False,
+            tenant_id__gt="",
+        )
+        .exclude(portal_alive=False)
+        .count()
     )
+    stat_attention = (
+        Company.objects.filter(
+            Q(needs_review=True)
+            | Q(platform_label__isnull=True)
+            | Q(platform_label__portal_alive=False)
+            | Q(platform_label__platform__isnull=False, platform_label__tenant_id="")
+            | Q(platform_label__confidence__in=["LOW", "UNKNOWN"])
+            | Q(website__gt="", website_is_valid=False)
+        )
+        .distinct()
+        .count()
+    )
+    stat_high_value = (
+        Company.objects.annotate(job_count=Count("jobs", distinct=True))
+        .filter(
+            Q(total_submissions__gt=0)
+            | Q(total_interviews__gt=0)
+            | Q(total_placements__gt=0)
+            | Q(job_count__gte=10)
+        )
+        .distinct()
+        .count()
+    )
+    stat_duplicates = Company.objects.filter(needs_review=True).count()
+    stat_blocked = Company.objects.filter(is_blacklisted=True).count()
+    raw_job_total = RawJob.objects.count()
+    raw_job_pending = RawJob.objects.filter(sync_status="PENDING").count()
+    raw_job_failed = RawJob.objects.filter(sync_status="FAILED").count()
+    running_batches = FetchBatch.objects.filter(status=FetchBatch.Status.RUNNING).count()
+    running_company_fetches = CompanyFetchRun.objects.filter(status=CompanyFetchRun.Status.RUNNING).count()
+    last_batch = FetchBatch.objects.order_by("-created_at").first()
+    op_labels = dict(HarvestOpsRun.Operation.choices)
+    recent_ops = [
+        {
+            "label": op_labels.get(row["operation"], row["operation"]),
+            "status": row["status"],
+            "created_at": row["created_at"],
+        }
+        for row in HarvestOpsRun.objects.order_by("-created_at").values(
+            "operation",
+            "status",
+            "created_at",
+        )[:5]
+    ]
+    engine_config = None
+    try:
+        engine_config = HarvestEngineConfig.get()
+    except Exception:
+        engine_config = None
+    health_denominator = stat_live + stat_down
+    portal_health_pct = round((stat_live / health_denominator) * 100) if health_denominator else None
+    selected_view = request.GET.get("view", "").strip()
+    is_ats_view = True
+
+    engine_queues = [
+        {
+            "key": "",
+            "label": "All companies",
+            "count": total_companies,
+            "tone": "slate",
+            "description": "Complete company universe",
+            "url": f"{reverse('company-list')}?view=engine",
+        },
+        {
+            "key": "attention",
+            "label": "Needs attention",
+            "count": stat_attention,
+            "tone": "amber",
+            "description": "Fix duplicates, down portals, missing ATS, tenants, or low confidence",
+            "url": f"{reverse('company-list')}?view=engine&smart=attention",
+        },
+        {
+            "key": "ready",
+            "label": "Ready to fetch",
+            "count": stat_ready_to_fetch,
+            "tone": "emerald",
+            "description": "Platform and tenant are available, portal is not marked down",
+            "url": f"{reverse('company-list')}?view=engine&smart=ready",
+        },
+        {
+            "key": "portal_down",
+            "label": "Portal down",
+            "count": stat_down,
+            "tone": "rose",
+            "description": "Career portals that failed the latest health check",
+            "url": f"{reverse('company-list')}?view=engine&smart=portal_down",
+        },
+        {
+            "key": "unlabeled",
+            "label": "Unlabeled",
+            "count": stat_unlabeled,
+            "tone": "yellow",
+            "description": "No ATS label exists yet",
+            "url": f"{reverse('company-list')}?view=engine&smart=unlabeled",
+        },
+        {
+            "key": "raw_pending",
+            "label": "Raw pending",
+            "count": raw_job_pending,
+            "tone": "blue",
+            "description": "Companies with raw jobs waiting to sync",
+            "url": f"{reverse('company-list')}?view=engine&smart=raw_pending",
+        },
+        {
+            "key": "high_value",
+            "label": "High value",
+            "count": stat_high_value,
+            "tone": "indigo",
+            "description": "Companies with real activity or larger job pools",
+            "url": f"{reverse('company-list')}?view=engine&smart=high_value",
+        },
+        {
+            "key": "duplicates",
+            "label": "Duplicate review",
+            "count": stat_duplicates,
+            "tone": "pink",
+            "description": "Jarvis flagged possible company duplicates",
+            "url": f"{reverse('company-list')}?view=engine&smart=duplicates",
+        },
+        {
+            "key": "blocked",
+            "label": "Blocked",
+            "count": stat_blocked,
+            "tone": "gray",
+            "description": "Blacklisted companies",
+            "url": f"{reverse('company-list')}?view=engine&smart=blocked",
+        },
+    ]
 
     return {
         "ats_enabled": True,
@@ -185,6 +339,23 @@ def _company_ats_context(request):
         "stat_live": stat_live,
         "stat_down": stat_down,
         "stat_unchecked": stat_unchecked,
+        "stat_no_tenant": stat_no_tenant,
+        "stat_no_ats": stat_no_ats,
+        "stat_ready_to_fetch": stat_ready_to_fetch,
+        "stat_attention": stat_attention,
+        "stat_high_value": stat_high_value,
+        "stat_duplicates": stat_duplicates,
+        "stat_blocked": stat_blocked,
+        "raw_job_total": raw_job_total,
+        "raw_job_pending": raw_job_pending,
+        "raw_job_failed": raw_job_failed,
+        "running_batches": running_batches,
+        "running_company_fetches": running_company_fetches,
+        "last_batch": last_batch,
+        "recent_ops": recent_ops,
+        "engine_config": engine_config,
+        "engine_queues": engine_queues,
+        "portal_health_pct": portal_health_pct,
         "confidence_choices": CompanyPlatformLabel.Confidence.choices,
         "method_choices": CompanyPlatformLabel.DetectionMethod.choices,
         "selected_ats_status": request.GET.get("ats_status", ""),
