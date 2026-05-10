@@ -1,6 +1,8 @@
 {% extends 'base.html' %}
+{% load harvest_country_tags %}
 {% block content %}
 {% include 'jobs/_pipeline_subnav.html' %}
+{% all_iso_countries as all_country_options %}
 
 <!-- Page header -->
 <div class="page-header">
@@ -154,21 +156,56 @@
         <div class="flex items-start justify-between gap-3 mb-3">
           <div>
             <h3 class="text-sm font-bold text-gray-800">Scoped Harvest Countries</h3>
-            <p class="text-xs text-gray-500 mt-0.5">Full processing runs only for selected ISO countries; everything else stays stored cold.</p>
+            <p class="text-xs text-gray-500 mt-0.5">Choose exactly which countries receive full processing. Unchecked countries stay stored cold and remain searchable in analytics.</p>
           </div>
-          <span class="badge-blue text-xs">Backfill required</span>
+          <div class="flex items-center gap-2">
+            <span id="country-selected-count" class="rounded-full border border-[var(--brand-200)] bg-[var(--brand-50)] px-2.5 py-1 text-xs font-semibold text-[var(--brand-700)]">{{ selected_countries|length }} selected</span>
+            <span class="badge-blue text-xs">Backfill required</span>
+          </div>
         </div>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {% for code, label in country_options %}
-          <label class="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700">
-            <input type="checkbox" name="target_countries" value="{{ code }}"
-                   {% if code in selected_countries %}checked{% endif %}
-                   class="w-4 h-4 rounded text-indigo-600 border-gray-300">
-            <span class="font-semibold">{{ label }}</span>
-            <span class="ml-auto text-xs text-gray-400">{{ code }}</span>
-          </label>
-          {% endfor %}
+
+        <div class="rounded-xl border border-gray-200 bg-gray-50 p-3">
+          <div class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto] gap-2">
+            <div class="relative">
+              <svg class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M10.5 18a7.5 7.5 0 100-15 7.5 7.5 0 000 15z"/>
+              </svg>
+              <input type="search" id="country-search" class="form-input w-full pl-9" placeholder="Search country name or ISO code">
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <button type="button" id="country-select-all" class="btn-secondary btn-sm">Select all</button>
+              <button type="button" id="country-clear-all" class="btn-secondary btn-sm">Clear</button>
+              <button type="button" id="country-select-common" class="btn-secondary btn-sm">Common markets</button>
+            </div>
+          </div>
+
+          <div id="country-selected-summary" class="mt-3 flex flex-wrap gap-1.5 text-[11px] text-gray-500">
+            <span class="font-semibold text-gray-700">Current:</span>
+            {% for code, label in all_country_options %}
+              {% if code in selected_countries %}
+              <span class="country-selected-pill rounded-full border border-gray-200 bg-white px-2 py-0.5" data-code="{{ code }}">{{ label }} <span class="text-gray-400">{{ code }}</span></span>
+              {% endif %}
+            {% endfor %}
+            <span id="country-empty-state" class="{% if selected_countries %}hidden{% endif %}rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">No target countries selected</span>
+          </div>
+
+          <div id="country-list" class="mt-3 max-h-80 overflow-y-auto rounded-xl border border-gray-200 bg-white p-2">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {% for code, label in all_country_options %}
+              <label class="country-option flex items-center gap-2 rounded-lg border px-3 py-2 text-sm transition cursor-pointer {% if code in selected_countries %}border-[var(--brand-300)] bg-[var(--brand-50)] text-[var(--brand-800)]{% else %}border-gray-200 bg-white text-gray-700 hover:bg-gray-50{% endif %}" data-country-search="{{ label|lower }} {{ code|lower }}" data-country-name="{{ label }}">
+                <input type="checkbox" name="target_countries" value="{{ code }}"
+                       {% if code in selected_countries %}checked{% endif %}
+                       class="country-checkbox w-4 h-4 rounded text-[var(--brand-600)] border-gray-300">
+                <span class="min-w-0 flex-1 truncate font-semibold">{{ label }}</span>
+                <span class="rounded-md bg-gray-100 px-1.5 py-0.5 text-[11px] font-mono text-gray-500">{{ code }}</span>
+              </label>
+              {% endfor %}
+            </div>
+          </div>
+
+          <p id="country-filter-empty" class="hidden mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">No countries match that search.</p>
         </div>
+
         <label class="mt-3 flex items-start gap-2 text-xs text-gray-600">
           <input type="checkbox" name="process_unknown_country_with_target_domain" value="1"
                  {% if cfg.process_unknown_country_with_target_domain %}checked{% endif %}
@@ -604,5 +641,73 @@
   }
   rateInput?.addEventListener('input', updatePreview);
   concInput?.addEventListener('input', updatePreview);
+
+  (function setupCountrySelector() {
+    const search = document.getElementById('country-search');
+    const options = Array.from(document.querySelectorAll('.country-option'));
+    const checks = Array.from(document.querySelectorAll('.country-checkbox'));
+    const count = document.getElementById('country-selected-count');
+    const summary = document.getElementById('country-selected-summary');
+    const filterEmpty = document.getElementById('country-filter-empty');
+    const commonCodes = new Set(['US', 'IN', 'GB', 'AU', 'CA']);
+
+    function refreshOption(label) {
+      const checkbox = label.querySelector('.country-checkbox');
+      const checked = Boolean(checkbox && checkbox.checked);
+      label.classList.toggle('border-[var(--brand-300)]', checked);
+      label.classList.toggle('bg-[var(--brand-50)]', checked);
+      label.classList.toggle('text-[var(--brand-800)]', checked);
+      label.classList.toggle('border-gray-200', !checked);
+      label.classList.toggle('bg-white', !checked);
+      label.classList.toggle('text-gray-700', !checked);
+    }
+
+    function refreshCount() {
+      const selected = checks.filter((box) => box.checked);
+      if (count) count.textContent = `${selected.length} selected`;
+      if (summary) {
+        const pills = selected.slice(0, 16).map((box) => {
+          const name = box.closest('.country-option')?.dataset.countryName || box.value;
+          return `<span class="rounded-full border border-gray-200 bg-white px-2 py-0.5">${name} <span class="text-gray-400">${box.value}</span></span>`;
+        }).join('');
+        const extra = selected.length > 16
+          ? `<span class="rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-gray-500">+${selected.length - 16} more</span>`
+          : '';
+        const empty = selected.length
+          ? ''
+          : '<span id="country-empty-state" class="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-amber-700">No target countries selected</span>';
+        summary.innerHTML = '<span class="font-semibold text-gray-700">Current:</span>' + pills + extra + empty;
+      }
+      options.forEach(refreshOption);
+    }
+
+    function filterCountries() {
+      const term = (search?.value || '').trim().toLowerCase();
+      let visible = 0;
+      options.forEach((label) => {
+        const match = !term || (label.dataset.countrySearch || '').includes(term);
+        label.classList.toggle('hidden', !match);
+        if (match) visible += 1;
+      });
+      if (filterEmpty) filterEmpty.classList.toggle('hidden', visible > 0);
+    }
+
+    document.getElementById('country-select-all')?.addEventListener('click', () => {
+      checks.forEach((box) => { box.checked = true; });
+      refreshCount();
+    });
+    document.getElementById('country-clear-all')?.addEventListener('click', () => {
+      checks.forEach((box) => { box.checked = false; });
+      refreshCount();
+    });
+    document.getElementById('country-select-common')?.addEventListener('click', () => {
+      checks.forEach((box) => { box.checked = commonCodes.has(box.value); });
+      refreshCount();
+    });
+    checks.forEach((box) => box.addEventListener('change', refreshCount));
+    search?.addEventListener('input', filterCountries);
+    refreshCount();
+    filterCountries();
+  })();
 </script>
 {% endblock %}
