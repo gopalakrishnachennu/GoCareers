@@ -653,32 +653,73 @@
 
 {% if tab_raw %}
 <div id="raw-jobs-table"></div>
-<div class="card-table overflow-x-auto">
-  <table class="w-full min-w-[1240px] text-sm">
+<div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+  <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+    <div>
+      <div class="text-sm font-bold text-slate-900">Raw jobs grid</div>
+      <div class="text-xs text-slate-500">Sticky job and actions columns. Scroll horizontally for extra operational fields.</div>
+    </div>
+    <div class="relative" id="raw-columns-menu">
+      <button type="button" id="raw-columns-btn" class="btn-secondary btn-sm">
+        Columns
+        <svg class="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+      </button>
+      <div id="raw-columns-panel" class="hidden absolute right-0 z-30 mt-2 w-64 rounded-xl border border-slate-200 bg-white p-2 shadow-xl">
+        <div class="px-2 pb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Optional columns</div>
+        <label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" class="raw-col-toggle h-4 w-4 rounded border-slate-300 text-indigo-600" value="location"> Location
+        </label>
+        <label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" class="raw-col-toggle h-4 w-4 rounded border-slate-300 text-indigo-600" value="work_mode"> Remote / onsite
+        </label>
+        <label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" class="raw-col-toggle h-4 w-4 rounded border-slate-300 text-indigo-600" value="salary"> Salary
+        </label>
+        <label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" class="raw-col-toggle h-4 w-4 rounded border-slate-300 text-indigo-600" value="external_id"> External ID
+        </label>
+        <label class="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-2 text-sm text-slate-700 hover:bg-slate-50">
+          <input type="checkbox" class="raw-col-toggle h-4 w-4 rounded border-slate-300 text-indigo-600" value="category"> Category
+        </label>
+      </div>
+    </div>
+  </div>
+  <div class="overflow-x-auto overflow-y-visible">
+  <table class="w-full min-w-[1780px] text-sm">
     <thead class="tbl-head">
       <tr>
-        <th class="tbl-th">Job</th>
+        <th class="tbl-th sticky left-0 z-20 min-w-[280px] bg-slate-50 shadow-[1px_0_0_#e2e8f0]">Job</th>
+        <th class="tbl-th min-w-[190px]">Company</th>
         <th class="tbl-th">Platform</th>
         <th class="tbl-th">Domain</th>
+        <th class="tbl-th">Confidence</th>
         <th class="tbl-th">Stage</th>
+        <th class="tbl-th">JD Status</th>
         <th class="tbl-th">Active</th>
-        <th class="tbl-th">Location</th>
+        <th class="tbl-th min-w-[160px]">Country / Scope</th>
         <th class="tbl-th">Gate</th>
+        <th class="tbl-th">Posted</th>
         <th class="tbl-th">Harvested</th>
-        <th class="tbl-th-right">Actions</th>
+        <th class="tbl-th min-w-[220px]" data-raw-col="location">Location</th>
+        <th class="tbl-th" data-raw-col="work_mode">Remote / Onsite</th>
+        <th class="tbl-th min-w-[180px]" data-raw-col="salary">Salary</th>
+        <th class="tbl-th min-w-[150px]" data-raw-col="external_id">External ID</th>
+        <th class="tbl-th min-w-[150px]" data-raw-col="category">Category</th>
+        <th class="tbl-th-right sticky right-0 z-20 min-w-[110px] bg-slate-50 shadow-[-1px_0_0_#e2e8f0]">Actions</th>
       </tr>
     </thead>
     <tbody id="raw-jobs-tbody" class="divide-y divide-gray-100">
       {% for raw in tab_raw %}
       <tr class="tbl-row">
-        <td class="tbl-td">
+        <td class="tbl-td sticky left-0 z-10 min-w-[280px] bg-white shadow-[1px_0_0_#e2e8f0]">
           <div class="font-semibold text-gray-900">{{ raw.title }}</div>
-          <div class="text-xs text-gray-500 mt-0.5">{{ raw.company_name|default:"—" }}</div>
-          {% if raw.job_category %}<div class="text-xs text-indigo-400 mt-0.5">{{ raw.job_category }}</div>{% endif %}
+          {% if raw.original_url %}<div class="mt-1 text-[11px] text-slate-400">Raw #{{ raw.pk }}</div>{% endif %}
+        </td>
+        <td class="tbl-td min-w-[190px]">
+          <div class="font-medium text-slate-800">{{ raw.pipeline_row.company|default:"—" }}</div>
         </td>
         <td class="tbl-td">
-          {% if raw.platform_slug %}<span class="badge-blue">{{ raw.platform_slug }}</span>
-          {% elif raw.job_platform %}<span class="badge-blue">{{ raw.job_platform.name }}</span>
+          {% if raw.pipeline_row.platform %}<span class="badge-blue">{{ raw.pipeline_row.platform }}</span>
           {% else %}<span class="text-gray-300 text-xs">—</span>{% endif %}
         </td>
         <td class="tbl-td">
@@ -689,7 +730,13 @@
           {% endif %}
         </td>
         <td class="tbl-td">
+          <span class="{% if raw.pipeline_row.confidence_level == 'high' %}badge-green{% elif raw.pipeline_row.confidence_level == 'medium' %}badge-yellow{% elif raw.pipeline_row.confidence_level == 'low' %}badge-red{% else %}badge-gray{% endif %}">{{ raw.pipeline_row.confidence_label }}</span>
+        </td>
+        <td class="tbl-td">
           <span class="badge-gray">{{ raw.pipeline_stage_label }}</span>
+        </td>
+        <td class="tbl-td">
+          <span class="{% if raw.pipeline_row.jd_level == 'good' %}badge-green{% else %}badge-yellow{% endif %}">{{ raw.pipeline_row.jd_status }}</span>
         </td>
         <td class="tbl-td">
           {% if raw.is_active %}
@@ -698,26 +745,35 @@
           <span class="badge-red">✗ Inactive</span>
           {% endif %}
         </td>
-        <td class="tbl-td text-xs text-gray-500">{{ raw.location_raw|default:"—" }}</td>
+        <td class="tbl-td text-xs text-gray-600">{{ raw.pipeline_row.country_scope|default:"—" }}</td>
         <td class="tbl-td text-xs text-gray-500">
-          {% with vg=raw.raw_payload.vet_gate %}
-            {% if vg.reason_code %}
-              <span class="{% if vg.status == 'blocked' %}badge-red{% elif vg.status == 'eligible' %}badge-green{% elif vg.status == 'duplicate' %}badge-yellow{% else %}badge-gray{% endif %}">
-                {{ vg.reason_code }}
-              </span>
-            {% else %}
-              —
-            {% endif %}
-          {% endwith %}
+          {% if raw.pipeline_row.gate_code %}
+            <span class="{% if raw.pipeline_row.gate_pass %}badge-green{% else %}badge-red{% endif %}">{{ raw.pipeline_row.gate_code }}</span>
+          {% else %}—{% endif %}
         </td>
-        <td class="tbl-td text-xs text-gray-400 whitespace-nowrap">{{ raw.fetched_at|timesince }} ago</td>
-        <td class="tbl-td-right">
+        <td class="tbl-td text-xs text-gray-500 whitespace-nowrap">{{ raw.pipeline_row.posted|default:"—" }}</td>
+        <td class="tbl-td text-xs text-gray-400 whitespace-nowrap">{{ raw.pipeline_row.harvested|default:"—" }}</td>
+        <td class="tbl-td text-xs text-gray-500 min-w-[220px]" data-raw-col="location">{{ raw.location_raw|default:"—" }}</td>
+        <td class="tbl-td text-xs text-gray-600" data-raw-col="work_mode">
+          <span class="badge-gray">{{ raw.pipeline_row.work_mode }}</span>
+        </td>
+        <td class="tbl-td text-xs text-gray-600 min-w-[180px]" data-raw-col="salary">
+          {{ raw.pipeline_row.salary|default:"—" }}
+        </td>
+        <td class="tbl-td text-xs text-gray-500 min-w-[150px]" data-raw-col="external_id">
+          {{ raw.pipeline_row.external_id|default:"—" }}
+        </td>
+        <td class="tbl-td min-w-[150px]" data-raw-col="category">
+          {% if raw.job_category %}<span class="text-xs text-indigo-500">{{ raw.job_category }}</span>{% else %}<span class="text-gray-300 text-xs">—</span>{% endif %}
+        </td>
+        <td class="tbl-td-right sticky right-0 z-10 bg-white shadow-[-1px_0_0_#e2e8f0]">
           <a href="{% url 'harvest-rawjob-detail' raw.pk %}" class="btn-ghost btn-xs">View</a>
         </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  </div>
 </div>
 <div id="raw-jobs-load-status" class="mt-3 text-center text-sm text-slate-500">
   {% if raw_has_next %}
@@ -864,6 +920,69 @@
 
 {% block extra_js %}
 {{ block.super }}
+{% if tab == 'raw' %}
+<script>
+(() => {
+  const menu = document.getElementById("raw-columns-menu");
+  const button = document.getElementById("raw-columns-btn");
+  const panel = document.getElementById("raw-columns-panel");
+  const toggles = Array.from(document.querySelectorAll(".raw-col-toggle"));
+  if (!button || !panel || toggles.length === 0) return;
+
+  const storageKey = "jobsPipelineRawColumns:v1";
+  const defaultVisible = new Set([]);
+
+  const readVisible = () => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(storageKey) || "[]");
+      return new Set(Array.isArray(saved) ? saved : []);
+    } catch {
+      return new Set(defaultVisible);
+    }
+  };
+
+  const writeVisible = (visible) => {
+    localStorage.setItem(storageKey, JSON.stringify(Array.from(visible)));
+  };
+
+  let visible = readVisible();
+
+  window.applyRawColumnVisibility = () => {
+    document.querySelectorAll("[data-raw-col]").forEach((el) => {
+      el.classList.toggle("hidden", !visible.has(el.dataset.rawCol));
+    });
+    toggles.forEach((toggle) => {
+      toggle.checked = visible.has(toggle.value);
+    });
+  };
+
+  button.addEventListener("click", () => {
+    panel.classList.toggle("hidden");
+  });
+
+  document.addEventListener("click", (event) => {
+    if (menu && !menu.contains(event.target)) {
+      panel.classList.add("hidden");
+    }
+  });
+
+  toggles.forEach((toggle) => {
+    toggle.addEventListener("change", () => {
+      visible = readVisible();
+      if (toggle.checked) {
+        visible.add(toggle.value);
+      } else {
+        visible.delete(toggle.value);
+      }
+      writeVisible(visible);
+      window.applyRawColumnVisibility();
+    });
+  });
+
+  window.applyRawColumnVisibility();
+})();
+</script>
+{% endif %}
 {% if tab == 'raw' and raw_has_next %}
 <script>
 (() => {
@@ -903,25 +1022,34 @@
   const rowHtml = (job) => {
     const platform = job.platform_slug ? `<span class="badge-blue">${esc(job.platform_slug)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
     const domain = job.job_domain ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 border border-violet-200">${esc(job.job_domain)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
+    const confidenceClass = job.confidence_level === "high" ? "badge-green" : job.confidence_level === "medium" ? "badge-yellow" : job.confidence_level === "low" ? "badge-red" : "badge-gray";
+    const jdClass = job.jd_level === "good" ? "badge-green" : "badge-yellow";
     const active = job.is_active ? `<span class="badge-green">✓ Active</span>` : `<span class="badge-red">✗ Inactive</span>`;
-    const gatePass = job.resume_jd_usable === true || String(job.resume_jd_reason_code || "").toUpperCase() === "PASS";
-    const gateBadgeClass = gatePass ? "badge-green" : "badge-red";
-    const gate = job.resume_jd_reason_code ? `<span class="${gateBadgeClass}">${esc(job.resume_jd_reason_code)}</span>` : "—";
+    const gateBadgeClass = job.gate_pass ? "badge-green" : "badge-red";
+    const gate = job.gate_code ? `<span class="${gateBadgeClass}">${esc(job.gate_code)}</span>` : "—";
     return `
       <tr class="tbl-row">
-        <td class="tbl-td">
+        <td class="tbl-td sticky left-0 z-10 min-w-[280px] bg-white shadow-[1px_0_0_#e2e8f0]">
           <div class="font-semibold text-gray-900">${esc(job.title || "—")}</div>
-          <div class="text-xs text-gray-500 mt-0.5">${esc(job.company_name || "—")}</div>
-          ${job.job_category ? `<div class="text-xs text-indigo-400 mt-0.5">${esc(job.job_category)}</div>` : ""}
+          <div class="mt-1 text-[11px] text-slate-400">Raw #${esc(job.id || "")}</div>
         </td>
+        <td class="tbl-td min-w-[190px]"><div class="font-medium text-slate-800">${esc(job.company_name || "—")}</div></td>
         <td class="tbl-td">${platform}</td>
         <td class="tbl-td">${domain}</td>
+        <td class="tbl-td"><span class="${confidenceClass}">${esc(job.confidence_label || "Unknown")}</span></td>
         <td class="tbl-td"><span class="${toBadgeClass(job.stage)}">${esc(job.stage || "—")}</span></td>
+        <td class="tbl-td"><span class="${jdClass}">${esc(job.jd_status || "—")}</span></td>
         <td class="tbl-td">${active}</td>
-        <td class="tbl-td text-xs text-gray-500">${esc(job.location_raw || "—")}</td>
+        <td class="tbl-td text-xs text-gray-600">${esc(job.country_scope || "—")}</td>
         <td class="tbl-td text-xs text-gray-500">${gate}</td>
+        <td class="tbl-td text-xs text-gray-500 whitespace-nowrap">${esc(job.posted || "—")}</td>
         <td class="tbl-td text-xs text-gray-400 whitespace-nowrap">${esc(job.fetched_at || "—")}</td>
-        <td class="tbl-td-right">
+        <td class="tbl-td text-xs text-gray-500 min-w-[220px]" data-raw-col="location">${esc(job.location_raw || "—")}</td>
+        <td class="tbl-td text-xs text-gray-600" data-raw-col="work_mode"><span class="badge-gray">${esc(job.work_mode || "Unknown")}</span></td>
+        <td class="tbl-td text-xs text-gray-600 min-w-[180px]" data-raw-col="salary">${esc(job.salary || "—")}</td>
+        <td class="tbl-td text-xs text-gray-500 min-w-[150px]" data-raw-col="external_id">${esc(job.external_id || "—")}</td>
+        <td class="tbl-td min-w-[150px]" data-raw-col="category">${job.job_category ? `<span class="text-xs text-indigo-500">${esc(job.job_category)}</span>` : `<span class="text-gray-300 text-xs">—</span>`}</td>
+        <td class="tbl-td-right sticky right-0 z-10 bg-white shadow-[-1px_0_0_#e2e8f0]">
           <a href="${esc(job.detail_url)}" class="btn-ghost btn-xs">View</a>
         </td>
       </tr>
@@ -959,6 +1087,7 @@
       for (const job of jobs) {
         tbody.insertAdjacentHTML("beforeend", rowHtml(job));
       }
+      window.applyRawColumnVisibility?.();
       loadedCount += jobs.length;
       nextPage = payload.has_next ? payload.next_page : null;
       done = !payload.has_next;

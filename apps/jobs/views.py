@@ -45,6 +45,119 @@ from .services import (
 from submissions.models import ApplicationSubmission
 
 
+def _rawjob_effective_confidence(raw_job) -> float | None:
+    value = (
+        raw_job.category_confidence
+        if raw_job.category_confidence is not None
+        else raw_job.classification_confidence
+    )
+    return float(value) if value is not None else None
+
+
+def _rawjob_salary_label(raw_job) -> str:
+    if raw_job.salary_raw:
+        return raw_job.salary_raw
+    if raw_job.salary_min is None and raw_job.salary_max is None:
+        return ""
+    currency = raw_job.salary_currency or ""
+    period = f"/{raw_job.salary_period.title()}" if raw_job.salary_period else ""
+    if raw_job.salary_min is not None and raw_job.salary_max is not None:
+        return f"{raw_job.salary_min:,.0f}-{raw_job.salary_max:,.0f} {currency}{period}".strip()
+    if raw_job.salary_min is not None:
+        return f"{raw_job.salary_min:,.0f}+ {currency}{period}".strip()
+    return f"Up to {raw_job.salary_max:,.0f} {currency}{period}".strip()
+
+
+def _rawjob_scope_label(raw_job) -> str:
+    code = (raw_job.country_code or "").upper()
+    country = raw_job.country or ""
+    base = code or country or "Unknown"
+    scope = raw_job.scope_status or "UNSCOPED"
+    scope_label = {
+        "PRIORITY_TARGET": "In scope",
+        "REVIEW_UNKNOWN_COUNTRY": "Review",
+        "COLD_NON_TARGET_COUNTRY": "Cold",
+        "COLD_NO_LOCATION": "No location",
+        "UNSCOPED": "Unscoped",
+    }.get(scope, scope.replace("_", " ").title())
+    return f"{base} · {scope_label}"
+
+
+def _rawjob_jd_label(raw_job) -> str:
+    if raw_job.has_description:
+        return "Has JD"
+    if getattr(raw_job, "jd_backfill_locked_at", None):
+        return "Fetching JD"
+    return "Missing JD"
+
+
+def _rawjob_blocker_label(raw_job, gate) -> str:
+    if raw_job.sync_skip_reason:
+        return raw_job.sync_skip_reason
+    if raw_job.sync_status == "DUPLICATE":
+        return "DUPLICATE"
+    if raw_job.sync_status == "SKIPPED":
+        return "SKIPPED"
+    if not raw_job.is_active:
+        return "INACTIVE_POSTING"
+    if not raw_job.has_description:
+        return "MISSING_JD"
+    confidence = _rawjob_effective_confidence(raw_job)
+    if confidence is not None and confidence < 0.55:
+        return "LOW_CONFIDENCE"
+    if gate and not gate.usable:
+        return gate.reason_code
+    return ""
+
+
+def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") -> dict:
+    if gate is None:
+        try:
+            from harvest.jd_gate import evaluate_raw_job_resume_gate
+
+            gate = evaluate_raw_job_resume_gate(raw_job)
+        except Exception:
+            gate = None
+
+    confidence = _rawjob_effective_confidence(raw_job)
+    confidence_pct = round(confidence * 100) if confidence is not None else None
+    scope_label = country_label or _rawjob_scope_label(raw_job)
+    blocker = _rawjob_blocker_label(raw_job, gate)
+    jd_status = _rawjob_jd_label(raw_job)
+
+    if raw_job.location_type and raw_job.location_type != "UNKNOWN":
+        work_mode = raw_job.location_type.title().replace("_", " ")
+    elif raw_job.is_remote:
+        work_mode = "Remote"
+    else:
+        work_mode = "Unknown"
+
+    return {
+        "company": raw_job.company_name or "",
+        "platform": raw_job.platform_slug or (raw_job.job_platform.name if raw_job.job_platform else ""),
+        "confidence_pct": confidence_pct,
+        "confidence_label": f"{confidence_pct}%" if confidence_pct is not None else "Unknown",
+        "confidence_level": (
+            "high" if confidence is not None and confidence >= 0.75
+            else "medium" if confidence is not None and confidence >= 0.55
+            else "low" if confidence is not None
+            else "unknown"
+        ),
+        "jd_status": jd_status,
+        "jd_level": "good" if raw_job.has_description else "warn",
+        "country_scope": scope_label,
+        "scope_status": raw_job.scope_status or "",
+        "gate_code": blocker or (gate.reason_code if gate else ""),
+        "gate_pass": bool(gate.usable) if gate else False,
+        "blocker": blocker,
+        "work_mode": work_mode,
+        "salary": _rawjob_salary_label(raw_job),
+        "external_id": raw_job.external_id or "",
+        "posted": raw_job.posted_date.strftime("%b %-d, %Y") if raw_job.posted_date else "",
+        "harvested": raw_job.fetched_at.strftime("%b %-d, %H:%M") if raw_job.fetched_at else "",
+    }
+
+
 def apply_job_list_filters(qs, request):
     """
     Shared filters for job list, HTMX partial, CSV export, and summary counts.
@@ -1100,6 +1213,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             "resume_ready_score", "classification_confidence", "quality_score",
             "jd_quality_score", "raw_payload", "job_keywords", "title_keywords",
             "company_industry", "company_size", "word_count",
+            "category_confidence", "country_code", "scope_status", "scope_reason",
+            "sync_skip_reason", "external_id", "location_type", "salary_currency",
+            "salary_period", "jd_backfill_locked_at",
         )
 
         paginator = Paginator(qs, 100)
@@ -1117,20 +1233,34 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 state=job.state or "",
                 country=job.country or "",
             )
+            row = build_rawjob_pipeline_row(job, gate=jd_gate, country_label=detected_country or "")
             jobs_data.append({
                 "id": job.pk,
-                "company_name": (job.company_name or "")[:30],
-                "platform_slug": job.platform_slug or "",
+                "company_name": (job.company_name or "")[:48],
+                "platform_slug": row["platform"],
                 "title": (job.title or "")[:60],
                 "job_category": job.job_category or "",
                 "job_domain": job.job_domain or "",
-                "location_raw": (job.location_raw or "")[:30],
-                "fetched_at": job.fetched_at.strftime("%b %d, %H:%M") if job.fetched_at else "",
+                "location_raw": (job.location_raw or "")[:64],
+                "fetched_at": row["harvested"],
                 "is_active": bool(job.is_active),
                 "stage": job.pipeline_stage_label(),
                 "resume_jd_usable": jd_gate.usable,
                 "resume_jd_reason_code": jd_gate.reason_code,
                 "country": (detected_country or "")[:48],
+                "confidence_label": row["confidence_label"],
+                "confidence_level": row["confidence_level"],
+                "jd_status": row["jd_status"],
+                "jd_level": row["jd_level"],
+                "country_scope": row["country_scope"],
+                "scope_status": row["scope_status"],
+                "gate_code": row["gate_code"],
+                "gate_pass": row["gate_pass"],
+                "blocker": row["blocker"],
+                "work_mode": row["work_mode"],
+                "salary": row["salary"],
+                "external_id": row["external_id"],
+                "posted": row["posted"],
                 "detail_url": str(reverse_lazy("harvest-rawjob-detail", args=[job.pk])),
             })
 
@@ -1311,6 +1441,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "company_name",
                 "platform_slug",
                 "title",
+                "original_url",
                 "location_raw",
                 "employment_type",
                 "experience_level",
@@ -1326,13 +1457,28 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "resume_ready_score",
                 "raw_payload",
                 "country_code",
+                "scope_status",
+                "scope_reason",
+                "sync_skip_reason",
+                "external_id",
+                "salary_min",
+                "salary_max",
+                "salary_raw",
+                "salary_currency",
+                "salary_period",
+                "location_type",
+                "is_remote",
+                "jd_backfill_locked_at",
                 "job_domain",
                 "state",
                 "country",
+                "word_count",
             )
             raw_paginator = Paginator(raw_seed_qs, 100)
             raw_page = raw_paginator.page(1)
             tab_raw = raw_page.object_list
+            for raw_job in tab_raw:
+                raw_job.pipeline_row = build_rawjob_pipeline_row(raw_job)
             raw_has_next = raw_page.has_next()
             raw_next_page = raw_page.next_page_number() if raw_page.has_next() else None
             raw_total_filtered = raw_paginator.count
