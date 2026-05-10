@@ -99,6 +99,14 @@ _PLACEHOLDER_LOCATION_VALUES = {
     "europe",
 }
 _LOCATION_COUNT_RE = re.compile(r"^\d+\s+locations?$", re.I)
+_LOCATION_LABEL_PREFIX_RE = re.compile(
+    r"^\s*(?:job\s+)?(?:work\s+)?(?:primary\s+)?(?:office|location|worksite|site)\s*[-:]\s*",
+    re.I,
+)
+_LOCATION_LABEL_SUFFIX_RE = re.compile(
+    r"\s*[-:]?\s*(?:office|location|worksite|site)\s*$",
+    re.I,
+)
 
 TARGET_DOMAIN_SLUGS = {
     # IT
@@ -205,6 +213,16 @@ def _safe_text(value) -> str:
     return ""
 
 
+def _strip_location_label_noise(value: str) -> str:
+    """Remove ATS office/location labels without treating them as countries."""
+    text = re.sub(r"\s+", " ", _safe_text(value)).strip(" ,;|")
+    if not text:
+        return ""
+    text = _LOCATION_LABEL_PREFIX_RE.sub("", text).strip(" ,;-")
+    stripped = _LOCATION_LABEL_SUFFIX_RE.sub("", text).strip(" ,;-")
+    return stripped if stripped else text
+
+
 def _dedupe_append(values: list[str], value: str) -> None:
     value = re.sub(r"\s+", " ", _safe_text(value)).strip(" ,;|")
     if not value or is_placeholder_location_value(value):
@@ -219,16 +237,21 @@ def _candidate_has_geo_signal(value: str) -> bool:
     text = _safe_text(value)
     if not text or is_placeholder_location_value(text):
         return False
+    cleaned = _strip_location_label_noise(text)
     low = text.lower()
     if any(name in low for name in COUNTRY_NAME_TO_CODE):
         return True
     if _state_prefix_parts(text):
+        return True
+    if cleaned != text and _state_prefix_parts(cleaned):
         return True
     parts = _split_location_parts(text)
     if len(parts) >= 2:
         return True
     first = parts[0] if parts else text
     if _city_country_code(first):
+        return True
+    if cleaned != text and _city_country_code(cleaned):
         return True
     return False
 
@@ -356,20 +379,27 @@ def _looks_like_location_payload_key(key: str) -> bool:
         return False
     if token in _LOCATION_PAYLOAD_KEYS:
         return True
-    return any(marker in token for marker in ("location", "address", "office"))
+    return any(marker in token for marker in ("location", "address"))
 
 
-def _payload_location_values(payload, *, _depth: int = 0) -> list[str]:
+def _payload_location_values(payload, *, _depth: int = 0, _inside_location_key: bool = False) -> list[str]:
     values: list[str] = []
     if _depth > 5:
         return values
     if isinstance(payload, list):
         for item in payload:
-            values.extend(_payload_location_values(item, _depth=_depth + 1))
+            if isinstance(item, (dict, list)) or _inside_location_key:
+                values.extend(
+                    _payload_location_values(
+                        item,
+                        _depth=_depth + 1,
+                        _inside_location_key=_inside_location_key,
+                    )
+                )
         return values
     if not isinstance(payload, dict):
         text = _safe_text(payload)
-        if text:
+        if text and _inside_location_key:
             values.extend(split_multi_location_text(text))
         return values
 
@@ -382,7 +412,7 @@ def _payload_location_values(payload, *, _depth: int = 0) -> list[str]:
                 if text:
                     values.extend(split_multi_location_text(text))
                 if isinstance(item, (dict, list)):
-                    values.extend(_payload_location_values(item, _depth=_depth + 1))
+                    values.extend(_payload_location_values(item, _depth=_depth + 1, _inside_location_key=True))
         elif isinstance(raw, (dict, list)):
             values.extend(_payload_location_values(raw, _depth=_depth + 1))
     return values
@@ -458,7 +488,10 @@ def _split_location_parts(text: str) -> list[str]:
 
 
 def _city_country_code(city: str) -> str:
-    country = getattr(country_classifier, "_CITY_COUNTRY", {}).get((city or "").lower().strip(), "")
+    city_map = getattr(country_classifier, "_CITY_COUNTRY", {})
+    country = city_map.get((city or "").lower().strip(), "")
+    if not country:
+        country = city_map.get(_strip_location_label_noise(city).lower().strip(), "")
     return _code_for_country(country)
 
 
@@ -526,6 +559,8 @@ def _resolve_from_explicit_country(country: str, raw_text: str, normalized: str)
 
 
 def _resolve_from_state_city(raw_text: str, normalized: str) -> LocationResolution | None:
+    raw_text = _safe_text(raw_text)
+    cleaned_text = _strip_location_label_noise(raw_text)
     parts = _split_location_parts(raw_text)
     if not parts:
         return None
@@ -543,9 +578,26 @@ def _resolve_from_state_city(raw_text: str, normalized: str) -> LocationResoluti
             source="state_region",
             status=LocationCache.Status.RESOLVED,
         )
+    if cleaned_text != raw_text and (prefixed := _state_prefix_parts(cleaned_text)):
+        country_code, region_code, city = prefixed
+        return LocationResolution(
+            raw_text=raw_text,
+            normalized_text=normalized,
+            country_code=country_code,
+            country_name=COUNTRY_CODE_TO_NAME.get(country_code, ""),
+            region_code=region_code,
+            city=city,
+            confidence=0.9,
+            source="state_region",
+            status=LocationCache.Status.RESOLVED,
+        )
 
     city = parts[0]
     city_code = _city_country_code(city)
+    if not city_code and cleaned_text != raw_text:
+        city_code = _city_country_code(cleaned_text)
+        if city_code:
+            city = cleaned_text
     region_code = ""
     for part in reversed(parts[1:]):
         token = re.sub(r"[^A-Za-z]", "", part).upper()
@@ -611,7 +663,10 @@ def _resolve_from_state_city(raw_text: str, normalized: str) -> LocationResoluti
 
 
 def _resolve_from_classifier(raw_text: str, normalized: str, title: str = "", description: str = "") -> LocationResolution | None:
-    country_name, region_name = country_classifier.detect_country(raw_text, title=title, description=description)
+    # Country resolution must be based on location fields only. Passing title or
+    # JD text here caused bad rows where titles like "Manager - Greenwich, CT"
+    # or description snippets were treated as location/country.
+    country_name, region_name = country_classifier.detect_country(raw_text, title="", description="")
     code = _code_for_country(country_name)
     if not code:
         return None
@@ -986,10 +1041,11 @@ def evaluate_rawjob_scope(
     }
 
     country_is_placeholder = is_placeholder_location_value(raw_job.country or "")
+    country_is_invalid = bool((raw_job.country or "").strip() and not _code_for_country(raw_job.country or ""))
     state_is_placeholder = is_placeholder_location_value(raw_job.state or "")
     city_is_placeholder = is_placeholder_location_value(raw_job.city or "")
 
-    if country_is_placeholder:
+    if country_is_placeholder or country_is_invalid:
         updates["country"] = ""
     if state_is_placeholder:
         updates["state"] = ""
@@ -1000,7 +1056,7 @@ def evaluate_rawjob_scope(
 
     current_country_code = _code_for_country(raw_job.country or "")
     country_conflicts = bool(current_country_code and resolution.country_code and current_country_code != resolution.country_code)
-    if resolution.country_name and (not raw_job.country or country_is_placeholder or country_conflicts):
+    if resolution.country_name and (not raw_job.country or country_is_placeholder or country_is_invalid or country_conflicts):
         updates["country"] = resolution.country_name[:128]
     if resolution.region_code and (not raw_job.state or state_is_placeholder):
         updates["state"] = resolution.region_code[:128]

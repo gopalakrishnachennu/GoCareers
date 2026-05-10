@@ -97,6 +97,16 @@ class IcimsHarvester(BaseHarvester):
                     posting["description"] = detail["description"]
                 if detail.get("department") and not posting.get("department"):
                     posting["department"] = detail["department"]
+                if detail.get("location_raw") and (
+                    not posting.get("location_raw") or not posting.get("location_candidates")
+                ):
+                    posting["location_raw"] = detail["location_raw"]
+                    posting["location_candidates"] = detail.get("location_candidates") or []
+                    city, state, country = _split_location(detail["location_raw"])
+                    posting["city"] = city
+                    posting["state"] = state
+                    posting["country"] = country
+                    posting["location_type"], posting["is_remote"] = _detect_location_type(detail["location_raw"])
                 if detail.get("salary_min") and not posting.get("salary_min"):
                     posting["salary_min"] = detail["salary_min"]
                     posting["salary_max"] = detail.get("salary_max")
@@ -130,6 +140,33 @@ class IcimsHarvester(BaseHarvester):
 
         result: dict = {}
 
+        def add_location(value) -> None:
+            from harvest.location_resolver import extract_location_candidates
+
+            candidates: list[str] = []
+            if isinstance(value, list):
+                for item in value:
+                    add_location(item)
+                return
+            if isinstance(value, dict):
+                address = value.get("address") if isinstance(value.get("address"), dict) else value
+                city = address.get("addressLocality") or address.get("city") or ""
+                state = address.get("addressRegion") or address.get("state") or ""
+                country = address.get("addressCountry") or address.get("country") or ""
+                name = value.get("name") or value.get("description") or ""
+                text = ", ".join(str(part).strip() for part in (city, state, country) if str(part or "").strip())
+                if not text and name:
+                    text = str(name).strip()
+            else:
+                text = str(value or "").strip()
+
+            if not text:
+                return
+            candidates = extract_location_candidates(location_raw=text)
+            if candidates:
+                result["location_candidates"] = list(dict.fromkeys((result.get("location_candidates") or []) + candidates))
+                result["location_raw"] = " | ".join(result["location_candidates"])[:512]
+
         # JSON-LD JobPosting schema (most reliable)
         for block in re.findall(
             r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>', html, re.S | re.I
@@ -150,6 +187,7 @@ class IcimsHarvester(BaseHarvester):
                     )
                     if dept:
                         result["department"] = str(dept).strip()
+                    add_location(schema.get("jobLocation") or schema.get("jobLocationType") or "")
                     # Salary
                     sal = schema.get("baseSalary")
                     if isinstance(sal, dict):
@@ -194,6 +232,11 @@ class IcimsHarvester(BaseHarvester):
                     if dept_val:
                         result["department"] = dept_val
                         break
+
+        if "location_raw" not in result:
+            loc = self._extract_location(html)
+            if loc:
+                add_location(loc)
 
         return result
 

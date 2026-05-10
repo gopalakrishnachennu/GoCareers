@@ -69,9 +69,16 @@ def _rawjob_salary_label(raw_job) -> str:
 
 
 def _rawjob_scope_label(raw_job) -> str:
+    from harvest.location_resolver import COUNTRY_CODE_TO_NAME, _code_for_country
+
     code = (raw_job.country_code or "").upper()
-    country = raw_job.country or ""
-    base = code or country or "Unknown"
+    country_code_from_name = _code_for_country(raw_job.country or "")
+    if code:
+        base = COUNTRY_CODE_TO_NAME.get(code, code)
+    elif country_code_from_name:
+        base = COUNTRY_CODE_TO_NAME.get(country_code_from_name, raw_job.country)
+    else:
+        base = "Unknown"
     scope = raw_job.scope_status or "UNSCOPED"
     scope_label = {
         "PRIORITY_TARGET": "In scope",

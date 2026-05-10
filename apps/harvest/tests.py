@@ -2095,6 +2095,59 @@ class LocationResolverScopeTests(TestCase):
         self.assertIn("Seattle, Washington", raw.location_candidates)
         self.assertIn("Los Angeles, California", raw.location_candidates)
 
+    def test_location_resolver_does_not_infer_country_from_title(self):
+        from harvest.location_resolver import resolve_location
+
+        resolved = resolve_location(
+            location_raw="",
+            title="Investment Consultant - Rancho Bernardo, CA",
+            description="Must be authorized to work in the United States.",
+        )
+
+        self.assertEqual(resolved.country_code, "")
+        self.assertEqual(resolved.status, "UNKNOWN")
+
+    def test_office_labeled_locations_resolve_without_becoming_country_names(self):
+        from harvest.location_resolver import evaluate_rawjob_scope, resolve_location
+        from harvest.models import RawJob
+
+        denver = resolve_location(location_raw="Denver Office")
+        boise = resolve_location(location_raw="Office - Boise")
+
+        self.assertEqual(denver.country_code, "US")
+        self.assertEqual(boise.country_code, "US")
+
+        raw = self._raw(
+            url_hash="scope-denver-office-country",
+            title="Software Engineer",
+            location_raw="Denver Office",
+            country="Denver Office",
+        )
+        evaluate_rawjob_scope(raw, save=True)
+        raw.refresh_from_db()
+
+        self.assertEqual(raw.country_code, "US")
+        self.assertEqual(raw.country, "United States")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+
+    def test_payload_location_scan_ignores_non_location_text_lists(self):
+        from harvest.location_resolver import extract_location_candidates
+
+        candidates = extract_location_candidates(
+            raw_payload={
+                "titleFragments": ["Client Relationship Specialist - Greenwich, CT"],
+                "officeBlurb": ["where natural wonders are our playground"],
+                "jobPostingInfo": {
+                    "postingLocations": [{"locationName": "Indianapolis, IN"}, {"locationName": "Chicago, IL"}],
+                },
+            }
+        )
+
+        self.assertIn("Indianapolis, IN", candidates)
+        self.assertIn("Chicago, IL", candidates)
+        self.assertNotIn("Client Relationship Specialist - Greenwich, CT", candidates)
+        self.assertNotIn("where natural wonders are our playground", candidates)
+
     def test_backfill_eligible_excludes_non_priority(self):
         """Slice 2 gate: JD backfill must skip non-priority jobs."""
         import hashlib
