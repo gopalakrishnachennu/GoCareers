@@ -791,6 +791,7 @@ _CATEGORY_BY_DEPARTMENT_NORMALIZED: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 CURRENT_DOMAIN_VERSION = "d2"   # bump when patterns change to trigger re-classification
+CURRENT_ENRICHMENT_VERSION = "v3"   # bump when enrichment output contract changes
 
 _DOMAIN_PATTERNS: list[tuple[str, str]] = [
     # ── IT: Named platforms (highest specificity) ─────────────────────────────
@@ -1713,7 +1714,7 @@ def extract_enrichments(job: dict) -> dict:
         "classification_confidence":  classification_confidence,
         "category_confidence":        category_confidence,
         "classification_source":      classification_source,
-        "enrichment_version":         "v3",
+        "enrichment_version":         CURRENT_ENRICHMENT_VERSION,
         "classification_provenance":  classification_provenance,
         "field_confidence":     field_confidence,
         "field_provenance":     field_provenance,

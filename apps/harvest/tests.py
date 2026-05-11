@@ -2508,3 +2508,94 @@ class LocationResolverScopeTests(TestCase):
         # Non-priority must remain PENDING — sync_harvested_to_pool never picks it up.
         self.assertEqual(cold.sync_status, "PENDING")
         self.assertFalse(Job.objects.filter(url_hash=h).exists())
+
+
+class HarvestEngineGuardrailTests(TestCase):
+    def test_build_enrichment_input_keeps_vendor_and_location_hints(self):
+        from harvest.services.enrichment_input import build_enrichment_input
+
+        payload = {
+            "vendor_job_shift": "Flexible",
+            "vendor_job_identification": "R0123",
+        }
+        result = build_enrichment_input(
+            {
+                "title": "Data Engineer",
+                "location_raw": "Indianapolis, IN | Chicago, IL",
+                "country_codes": ["US"],
+                "location_candidates": ["Indianapolis, IN", "Chicago, IL"],
+                "raw_payload": payload,
+            },
+            overrides={"description": "Build data pipelines.", "vendor_job_schedule": "Full time"},
+            company_name="Acme",
+        )
+
+        self.assertEqual(result["location_candidates"], ["Indianapolis, IN", "Chicago, IL"])
+        self.assertEqual(result["country_codes"], ["US"])
+        self.assertEqual(result["vendor_job_schedule"], "Full time")
+        self.assertEqual(result["vendor_job_shift"], "Flexible")
+        self.assertEqual(result["vendor_job_identification"], "R0123")
+        self.assertEqual(result["company_name"], "Acme")
+
+    def test_portal_health_requires_consecutive_failures_before_marking_down(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, HarvestEngineConfig, JobBoardPlatform
+        from harvest.tasks import check_portal_health_task
+
+        cfg = HarvestEngineConfig.get()
+        cfg.portal_health_failure_threshold = 2
+        cfg.save()
+        company = Company.objects.create(name="Portal Retry Co")
+        platform, _ = JobBoardPlatform.objects.get_or_create(
+            slug="greenhouse",
+            defaults={"name": "Greenhouse Retry", "is_enabled": True},
+        )
+        label = CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id="retryco",
+            confidence=CompanyPlatformLabel.Confidence.HIGH,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+        )
+
+        head_response = MagicMock(status_code=500)
+        get_response = MagicMock(status_code=500)
+        get_response.close = MagicMock()
+        with patch("requests.head", return_value=head_response), patch("requests.get", return_value=get_response):
+            check_portal_health_task.apply(args=[label.pk]).get()
+            label.refresh_from_db()
+            self.assertIsNone(label.portal_alive)
+            self.assertEqual(label.portal_consecutive_failures, 1)
+
+            check_portal_health_task.apply(args=[label.pk]).get()
+            label.refresh_from_db()
+            self.assertFalse(label.portal_alive)
+            self.assertEqual(label.portal_consecutive_failures, 2)
+
+    def test_geocoding_quota_reports_hourly_warning(self):
+        from django.utils import timezone
+        from harvest.location_resolver import provider_quota_status
+        from harvest.models import HarvestEngineConfig, LocationCache
+
+        cfg = HarvestEngineConfig.get()
+        cfg.geocoding_provider_enabled = True
+        cfg.geocoding_provider = "mapbox"
+        cfg.geocoding_monthly_limit = 10
+        cfg.geocoding_hourly_limit = 2
+        cfg.geocoding_warning_pct = 50
+        cfg.save()
+
+        cache = LocationCache.objects.create(
+            raw_text="Boise, ID",
+            normalized_text="boise id guardrail",
+            source="provider",
+            provider="mapbox",
+            request_count=1,
+        )
+        LocationCache.objects.filter(pk=cache.pk).update(looked_up_at=timezone.now())
+
+        status = provider_quota_status(cfg)
+        self.assertEqual(status["monthly_used"], 1)
+        self.assertEqual(status["hourly_used"], 1)
+        self.assertTrue(status["hourly_warning"])
+        self.assertTrue(status["available"])

@@ -3,7 +3,7 @@ import gzip
 from datetime import timedelta
 
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.db.models import Q
 from django.utils import timezone
 from django.utils.translation import gettext_lazy as _
@@ -153,6 +153,11 @@ class CompanyPlatformLabel(models.Model):
     portal_last_verified = models.DateTimeField(
         null=True, blank=True,
         help_text="When the portal URL was last HTTP-checked.",
+    )
+    portal_consecutive_failures = models.PositiveSmallIntegerField(
+        default=0,
+        db_index=True,
+        help_text="Consecutive failed health checks. Portal is marked down only after the configured threshold.",
     )
 
     class Meta:
@@ -394,6 +399,15 @@ class CompanyFetchRun(models.Model):
     jobs_total_available = models.PositiveIntegerField(
         default=0,
         help_text="Total jobs reported by the platform API (even if we only fetched a subset)",
+    )
+    is_test_run = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True when this run intentionally capped writes for a smoke/test harvest.",
+    )
+    jobs_cap_applied = models.BooleanField(
+        default=False,
+        help_text="True when the platform returned more jobs than this run was allowed to write.",
     )
     jobs_new = models.PositiveIntegerField(default=0)
     jobs_updated = models.PositiveIntegerField(default=0)
@@ -1221,6 +1235,14 @@ class HarvestEngineConfig(models.Model):
             "shutdown signal (marks run as PARTIAL). Hard kill fires 120s later."
         ),
     )
+    portal_health_failure_threshold = models.PositiveSmallIntegerField(
+        default=2,
+        verbose_name="Portal health failure threshold",
+        help_text=(
+            "Consecutive failed portal checks required before a company portal is "
+            "marked down. Prevents one transient 5xx from locking out a company."
+        ),
+    )
 
     # ── Auto-pipeline funnel toggles ──────────────────────────────────────────
     # When all three are True (the default), pressing "Fetch All" runs the full
@@ -1317,6 +1339,14 @@ class HarvestEngineConfig(models.Model):
             "a target IT/engineering route."
         ),
     )
+    rescope_on_target_country_change = models.BooleanField(
+        default=True,
+        verbose_name="Re-scope cold jobs when target countries change",
+        help_text=(
+            "Queue a safe background pass over cold/review RawJobs when the target-country "
+            "list changes so newly enabled markets do not stay cold forever."
+        ),
+    )
     geocoding_cache_enabled = models.BooleanField(
         default=True,
         verbose_name="Location cache enabled",
@@ -1338,6 +1368,16 @@ class HarvestEngineConfig(models.Model):
         default=80000,
         verbose_name="Provider monthly hard limit",
         help_text="Hard stop for provider requests per calendar month. Default 80k to stay below 100k free-tier claims.",
+    )
+    geocoding_hourly_limit = models.PositiveIntegerField(
+        default=1000,
+        verbose_name="Provider hourly hard limit",
+        help_text="Hard stop for provider requests per hour so one bad harvest cannot burn the month in a spike.",
+    )
+    geocoding_warning_pct = models.PositiveSmallIntegerField(
+        default=80,
+        verbose_name="Provider warning threshold percent",
+        help_text="Log a warning when monthly or hourly provider usage reaches this percentage.",
     )
     geocoding_provider_token = models.CharField(
         max_length=512,
@@ -1380,8 +1420,28 @@ class HarvestEngineConfig(models.Model):
         return cleaned or ["US", "IN", "CA", "GB", "AU"]
 
     def save(self, *args, **kwargs):
+        old_target_countries = None
+        try:
+            old_target_countries = type(self).objects.filter(pk=1).values_list(
+                "target_countries",
+                flat=True,
+            ).first()
+        except Exception:
+            old_target_countries = None
         self.pk = 1  # enforce singleton
         super().save(*args, **kwargs)
+        try:
+            default_countries = ["US", "IN", "CA", "GB", "AU"]
+            old_configured = [
+                str(code).strip().upper()
+                for code in (old_target_countries or [])
+                if str(code).strip()
+            ]
+            old_clean = sorted(old_configured or default_countries)
+            new_clean = sorted(self.get_target_countries())
+            target_countries_changed = old_target_countries is not None and old_clean != new_clean
+        except Exception:
+            target_countries_changed = False
         try:
             from django.core.cache import cache
 
@@ -1393,6 +1453,19 @@ class HarvestEngineConfig(models.Model):
             ])
         except Exception:
             pass
+        if target_countries_changed and self.rescope_on_target_country_change:
+            def _queue_rescope():
+                try:
+                    from .tasks import reevaluate_cold_scope_jobs_task
+                    reevaluate_cold_scope_jobs_task.apply_async(
+                        kwargs={"reason": "target_countries_changed"},
+                        countdown=5,
+                        queue="harvest",
+                    )
+                except Exception:
+                    pass
+
+            transaction.on_commit(_queue_rescope)
         # Broadcast updated rate limit to all running Celery workers immediately.
         # Workers that are offline will pick up the new rate from DB on next task start.
         try:

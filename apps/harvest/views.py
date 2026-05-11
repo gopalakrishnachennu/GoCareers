@@ -86,6 +86,105 @@ def _find_existing_live_job_for_rawjob(raw_job):
     return None
 
 
+def _build_rawjob_ops_timeline(raw_job: RawJob) -> list[dict]:
+    """Small unified timeline for raw-job debugging."""
+    from jobs.models import Job, PipelineEvent
+
+    def item(at, kind, title, status="", body="", tone="slate") -> dict:
+        return {
+            "at": at,
+            "kind": kind,
+            "title": title,
+            "status": status,
+            "body": body,
+            "tone": tone,
+        }
+
+    gate = raw_job.resume_jd_gate()
+    events: list[dict] = [
+        item(
+            raw_job.updated_at or raw_job.fetched_at,
+            "RawJob",
+            "Current raw job state",
+            raw_job.sync_status,
+            f"Scope: {raw_job.scope_status or 'unknown'} · Gate: {gate.get('reason_code', 'unknown')}",
+            "green" if raw_job.sync_status == RawJob.SyncStatus.SYNCED else "slate",
+        )
+    ]
+
+    job_q = Q()
+    if raw_job.pk:
+        job_q |= Q(source_raw_job_id=raw_job.pk)
+    if raw_job.url_hash:
+        job_q |= Q(url_hash=raw_job.url_hash)
+    linked_jobs = list(Job.objects.filter(job_q).order_by("-updated_at")[:10]) if job_q else []
+    linked_job_ids = [job.pk for job in linked_jobs]
+    for job in linked_jobs:
+        events.append(item(
+            getattr(job, "updated_at", None) or getattr(job, "created_at", None),
+            "Job",
+            "Synced vet/pool job row",
+            getattr(job, "status", "") or getattr(job, "stage", ""),
+            f"Job #{job.pk}: {job.title}",
+            "green",
+        ))
+
+    event_q = Q(pk__in=[])
+    if raw_job.url_hash:
+        event_q |= Q(url_hash=raw_job.url_hash)
+    if linked_job_ids:
+        event_q |= Q(job_id__in=linked_job_ids)
+    for ev in PipelineEvent.objects.filter(event_q).order_by("-occurred_at")[:20]:
+        title = ev.task_name or "Pipeline event"
+        stage = f"{ev.from_stage or '-'} -> {ev.to_stage or '-'}"
+        body = ev.error or stage
+        tone = "red" if ev.status == PipelineEvent.Status.FAILED else (
+            "yellow" if ev.status == PipelineEvent.Status.SKIPPED else "green"
+        )
+        events.append(item(ev.occurred_at, "PipelineEvent", title, ev.status, body, tone))
+
+    if raw_job.platform_label_id:
+        runs = CompanyFetchRun.objects.filter(label_id=raw_job.platform_label_id).order_by("-started_at")[:8]
+        for run in runs:
+            body = (
+                f"Found {run.jobs_found:,} · new {run.jobs_new:,} · "
+                f"updated {run.jobs_updated:,} · dup {run.jobs_duplicate:,}"
+            )
+            if run.is_test_run:
+                body += " · test/capped run"
+            tone = "red" if run.status == CompanyFetchRun.Status.FAILED else (
+                "yellow" if run.status in {CompanyFetchRun.Status.PARTIAL, CompanyFetchRun.Status.EMPTY} else "green"
+            )
+            events.append(item(run.completed_at or run.started_at, "CompanyFetchRun", "Company fetch run", run.status, body, tone))
+
+    for snapshot in raw_job.payload_snapshots.all()[:8]:
+        events.append(item(
+            snapshot.captured_at,
+            "Payload",
+            snapshot.get_payload_kind_display(),
+            "failure" if snapshot.is_failure else snapshot.size_label,
+            f"{snapshot.platform_slug or raw_job.platform_slug} · hash {snapshot.content_hash[:10]}",
+            "red" if snapshot.is_failure else "blue",
+        ))
+
+    pairs = RawJobDuplicatePair.objects.filter(
+        Q(primary_id=raw_job.pk) | Q(duplicate_id=raw_job.pk)
+    ).select_related("primary", "duplicate").order_by("-detected_at")[:8]
+    for pair in pairs:
+        other = pair.duplicate if pair.primary_id == raw_job.pk else pair.primary
+        events.append(item(
+            pair.detected_at,
+            "Duplicate",
+            pair.get_label_display(),
+            pair.resolution,
+            f"Matched RawJob #{other.pk} at {pair.similarity:.2f} via {pair.method or 'detector'}",
+            "yellow",
+        ))
+
+    events.sort(key=lambda row: row["at"].timestamp() if row.get("at") else 0, reverse=True)
+    return events[:40]
+
+
 def _invalidate_rawjobs_dashboard_cache() -> None:
     """Best-effort cache bust for Raw Jobs KPI cards."""
     try:
@@ -529,7 +628,13 @@ class LabelUpdateTenantView(SuperuserRequiredMixin, View):
         label.tenant_id = tenant_id
         label.portal_alive = None   # reset health — needs re-check
         label.portal_last_verified = None
-        label.save(update_fields=["tenant_id", "portal_alive", "portal_last_verified"])
+        label.portal_consecutive_failures = 0
+        label.save(update_fields=[
+            "tenant_id",
+            "portal_alive",
+            "portal_last_verified",
+            "portal_consecutive_failures",
+        ])
         from .career_url import build_career_url
         url = build_career_url(label.platform.slug if label.platform else "", tenant_id)
         return JsonResponse({
@@ -996,6 +1101,7 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
         ctx["resume_jd_gate"] = evaluate_raw_job_resume_gate(self.object)
         ctx["payload_snapshots"] = self.object.payload_snapshots.all()[:8]
         ctx["payload_snapshot_count"] = self.object.payload_snapshots.count()
+        ctx["ops_timeline"] = _build_rawjob_ops_timeline(self.object)
         return ctx
 
 
@@ -1873,6 +1979,7 @@ class BoardDrillDownView(SuperuserRequiredMixin, View):
             .values(
                 "id", "status", "error_type", "issue_code", "error_message",
                 "jobs_found", "jobs_new", "jobs_updated", "jobs_duplicate",
+                "jobs_total_available", "is_test_run", "jobs_cap_applied",
                 "started_at", "completed_at", "field_presence",
                 "label__company__name",
             )[:100]
@@ -2695,23 +2802,40 @@ class EngineConfigView(SuperuserRequiredMixin, View):
         """
         import os
         from django.db.models import Count
-        from .location_resolver import provider_requests_this_month
+        from .location_resolver import provider_quota_status
         from .models import LocationCache
 
         provider = (cfg.geocoding_provider or "none").strip().lower()
         provider_enabled = bool(cfg.geocoding_provider_enabled)
-        monthly_limit = int(cfg.geocoding_monthly_limit or 0)
 
         # Provider call counter (per calendar month) — only counts rows that
         # actually hit a provider (provider_place_id non-empty).
         try:
-            used = provider_requests_this_month(provider)
+            quota = provider_quota_status(cfg)
         except Exception:
-            used = 0
-        pct = round(100.0 * used / monthly_limit, 1) if monthly_limit else 0.0
-        if pct >= 90:
+            quota = {
+                "monthly_limit": int(cfg.geocoding_monthly_limit or 0),
+                "monthly_used": 0,
+                "monthly_pct": 0.0,
+                "hourly_limit": int(getattr(cfg, "geocoding_hourly_limit", 0) or 0),
+                "hourly_used": 0,
+                "hourly_pct": 0.0,
+                "warning_pct": int(getattr(cfg, "geocoding_warning_pct", 80) or 80),
+                "monthly_warning": False,
+                "hourly_warning": False,
+                "monthly_exhausted": False,
+                "hourly_exhausted": False,
+            }
+        monthly_limit = int(quota.get("monthly_limit") or 0)
+        used = int(quota.get("monthly_used") or 0)
+        pct = float(quota.get("monthly_pct") or 0.0)
+        hourly_limit = int(quota.get("hourly_limit") or 0)
+        hourly_used = int(quota.get("hourly_used") or 0)
+        hourly_pct = float(quota.get("hourly_pct") or 0.0)
+        warning_pct = int(quota.get("warning_pct") or 80)
+        if quota.get("monthly_exhausted") or quota.get("hourly_exhausted") or pct >= 90 or hourly_pct >= 90:
             tone = "bad"
-        elif pct >= 70:
+        elif quota.get("monthly_warning") or quota.get("hourly_warning") or pct >= 70 or hourly_pct >= 70:
             tone = "warn"
         else:
             tone = "good"
@@ -2766,6 +2890,14 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "monthly_limit": monthly_limit,
             "provider_monthly_used": used,
             "provider_monthly_pct": pct,
+            "hourly_limit": hourly_limit,
+            "provider_hourly_used": hourly_used,
+            "provider_hourly_pct": hourly_pct,
+            "warning_pct": warning_pct,
+            "monthly_warning": bool(quota.get("monthly_warning")),
+            "hourly_warning": bool(quota.get("hourly_warning")),
+            "monthly_exhausted": bool(quota.get("monthly_exhausted")),
+            "hourly_exhausted": bool(quota.get("hourly_exhausted")),
             "tone": tone,
             "token_present": token_present,
             "token_env_var": token_env_var,
@@ -2781,6 +2913,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "by_source": by_source,
             "by_country_top": by_country_top,
             "rate_remaining": max(0, monthly_limit - used) if monthly_limit else 0,
+            "hourly_remaining": max(0, hourly_limit - hourly_used) if hourly_limit else 0,
             "rate_remaining_pct": round(100.0 - pct, 1) if monthly_limit else 0.0,
         }
 
@@ -2844,7 +2977,8 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "api_stagger_ms", "scraper_stagger_ms",
             "min_hours_since_fetch", "task_soft_time_limit_secs",
             "resume_jd_min_words", "resume_jd_min_chars",
-            "geocoding_monthly_limit", "jd_backfill_lock_stale_minutes",
+            "geocoding_monthly_limit", "geocoding_hourly_limit", "geocoding_warning_pct",
+            "jd_backfill_lock_stale_minutes", "portal_health_failure_threshold",
         ]
         errors = []
         for field in int_fields:
@@ -2875,6 +3009,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "process_unknown_country_with_target_domain",
             "geocoding_cache_enabled", "geocoding_provider_enabled",
             "legacy_hash_bridge_enabled",
+            "rescope_on_target_country_change",
         ]
         for field in bool_fields:
             setattr(cfg, field, field in request.POST)

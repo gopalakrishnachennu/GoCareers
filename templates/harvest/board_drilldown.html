@@ -215,8 +215,12 @@
               {% else %}
                 <span class="text-gray-400">{{ run.status }}</span>
               {% endif %}
+              {% if run.is_test_run %}<span class="ml-1 rounded-full border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">TEST</span>{% endif %}
             </td>
-            <td class="tbl-td-right font-mono text-gray-600">{{ run.jobs_found|default:0 }}</td>
+            <td class="tbl-td-right font-mono text-gray-600">
+              {{ run.jobs_found|default:0 }}
+              {% if run.jobs_cap_applied %}<span class="block text-[10px] text-amber-700">/{{ run.jobs_total_available|default:0 }}</span>{% endif %}
+            </td>
             <td class="tbl-td-right font-mono {% if run.jobs_new > 0 %}text-green-600 font-semibold{% else %}text-gray-400{% endif %}">{{ run.jobs_new|default:0 }}</td>
             <td class="tbl-td-right font-mono text-gray-400">{{ run.jobs_duplicate|default:0 }}</td>
             <td class="tbl-td text-gray-500 font-mono text-[10px]">{{ run.issue_code|default:"—" }}</td>

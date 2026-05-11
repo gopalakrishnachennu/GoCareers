@@ -143,6 +143,7 @@ def _harvest_one_company(label: dict, since_hours: int, fetch_all: bool) -> list
     """
     from harvest.harvesters import get_harvester
     from harvest.enrichments import extract_enrichments
+    from harvest.services.enrichment_input import build_enrichment_input
 
     platform_slug = label.get("platform_slug", "")
     tenant_id = label.get("tenant_id", "")
@@ -182,12 +183,10 @@ def _harvest_one_company(label: dict, since_hours: int, fetch_all: bool) -> list
             url_hash = raw.get("url_hash") or _compute_url_hash(original_url)
 
             # Inline enrichment (pure Python, no DB, no HTTP)
-            extras = extract_enrichments({
-                "title": raw.get("title", ""),
-                "description": raw.get("description", ""),
-                "requirements": raw.get("requirements", ""),
-                "benefits": raw.get("benefits", ""),
-            })
+            extras = extract_enrichments(build_enrichment_input(
+                raw,
+                company_name=company_name,
+            ))
 
             job = {
                 "url_hash": url_hash,

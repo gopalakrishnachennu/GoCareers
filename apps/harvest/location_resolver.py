@@ -8,6 +8,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
+from django.core.cache import cache
 from django.db.models import Count, Sum
 from django.utils import timezone
 
@@ -687,25 +688,97 @@ def _month_start():
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def provider_requests_this_month(provider: str) -> int:
+def _hour_start():
+    now = timezone.now()
+    return now.replace(minute=0, second=0, microsecond=0)
+
+
+def provider_requests_since(provider: str, since) -> int:
     if not provider or provider == "none":
         return 0
     qs = LocationCache.objects.filter(
         provider=provider,
-        looked_up_at__gte=_month_start(),
+        looked_up_at__gte=since,
     )
     attempts = qs.aggregate(total=Sum("request_count"))["total"] or 0
     legacy_successes = qs.filter(request_count=0).exclude(provider_place_id="").count()
     return int(attempts) + int(legacy_successes)
 
 
-def _provider_quota_available(cfg: HarvestEngineConfig) -> bool:
+def provider_requests_this_month(provider: str) -> int:
+    return provider_requests_since(provider, _month_start())
+
+
+def provider_requests_this_hour(provider: str) -> int:
+    return provider_requests_since(provider, _hour_start())
+
+
+def provider_quota_status(cfg: HarvestEngineConfig) -> dict:
     provider = (cfg.geocoding_provider or "none").strip().lower()
-    if not cfg.geocoding_provider_enabled or provider == "none":
-        return False
-    if provider_requests_this_month(provider) >= int(cfg.geocoding_monthly_limit or 0):
-        return False
-    return True
+    enabled = bool(cfg.geocoding_provider_enabled) and provider != "none"
+    monthly_limit = int(cfg.geocoding_monthly_limit or 0)
+    hourly_limit = int(getattr(cfg, "geocoding_hourly_limit", 0) or 0)
+    warning_pct = int(getattr(cfg, "geocoding_warning_pct", 80) or 80)
+    warning_pct = min(100, max(1, warning_pct))
+
+    monthly_used = provider_requests_this_month(provider) if enabled else 0
+    hourly_used = provider_requests_this_hour(provider) if enabled else 0
+    monthly_pct = round((monthly_used / monthly_limit) * 100, 1) if monthly_limit else 0.0
+    hourly_pct = round((hourly_used / hourly_limit) * 100, 1) if hourly_limit else 0.0
+    monthly_exhausted = bool(enabled and (monthly_limit <= 0 or monthly_used >= monthly_limit))
+    hourly_exhausted = bool(enabled and hourly_limit > 0 and hourly_used >= hourly_limit)
+    status = {
+        "provider": provider,
+        "enabled": enabled,
+        "warning_pct": warning_pct,
+        "monthly_limit": monthly_limit,
+        "monthly_used": monthly_used,
+        "monthly_pct": monthly_pct,
+        "monthly_warning": bool(enabled and monthly_limit and monthly_pct >= warning_pct),
+        "monthly_exhausted": monthly_exhausted,
+        "hourly_limit": hourly_limit,
+        "hourly_used": hourly_used,
+        "hourly_pct": hourly_pct,
+        "hourly_warning": bool(enabled and hourly_limit and hourly_pct >= warning_pct),
+        "hourly_exhausted": hourly_exhausted,
+    }
+    status["available"] = bool(enabled and not monthly_exhausted and not hourly_exhausted)
+    return status
+
+
+def _warn_provider_quota_once(status: dict) -> None:
+    if not status.get("enabled"):
+        return
+    provider = status.get("provider") or "provider"
+    reasons = []
+    if status.get("monthly_exhausted"):
+        reasons.append("monthly_exhausted")
+    elif status.get("monthly_warning"):
+        reasons.append("monthly_warning")
+    if status.get("hourly_exhausted"):
+        reasons.append("hourly_exhausted")
+    elif status.get("hourly_warning"):
+        reasons.append("hourly_warning")
+    for reason in reasons:
+        key = f"harvest:geocoding-quota-warning:{provider}:{reason}:{timezone.now():%Y%m%d%H}"
+        if cache.add(key, True, timeout=3700):
+            logger.warning(
+                "Geocoding quota %s for %s: month=%s/%s (%.1f%%), hour=%s/%s (%.1f%%)",
+                reason,
+                provider,
+                status.get("monthly_used", 0),
+                status.get("monthly_limit", 0),
+                status.get("monthly_pct", 0.0),
+                status.get("hourly_used", 0),
+                status.get("hourly_limit", 0),
+                status.get("hourly_pct", 0.0),
+            )
+
+
+def _provider_quota_available(cfg: HarvestEngineConfig) -> bool:
+    status = provider_quota_status(cfg)
+    _warn_provider_quota_once(status)
+    return bool(status["available"])
 
 
 def _resolve_provider_token(provider: str, cfg: HarvestEngineConfig) -> str:

@@ -218,8 +218,16 @@
               {% else %}
               <span class="badge-red">{{ run.status }}</span>
               {% endif %}
+              {% if run.is_test_run %}<span class="ml-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">TEST</span>{% endif %}
             </td>
-            <td class="tbl-td">{{ run.jobs_found }}</td>
+            <td class="tbl-td">
+              {{ run.jobs_found }}
+              {% if run.jobs_cap_applied %}
+                <span class="block text-[10px] font-semibold text-amber-700">capped from {{ run.jobs_total_available }}</span>
+              {% elif run.is_test_run %}
+                <span class="block text-[10px] text-blue-600">test run</span>
+              {% endif %}
+            </td>
             <td class="tbl-td">{{ run.jobs_new }}</td>
             <td class="tbl-td">{{ run.jobs_updated }}</td>
             <td class="tbl-td">{{ run.jobs_duplicate }}</td>

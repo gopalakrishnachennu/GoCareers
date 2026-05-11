@@ -16,6 +16,7 @@ from .runtime_config import (
     get_jd_backfill_lock_stale_minutes,
     require_harvest_engine_config,
 )
+from .services.enrichment_input import build_enrichment_input
 
 # ─── Harvest compliance constants ────────────────────────────────────────────
 # Delay between processing each company within a platform run.
@@ -205,6 +206,140 @@ def release_stale_jd_backfill_locks_task(self):
         "cleared": cleared,
     }
     finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, completion)
+    return completion
+
+
+@shared_task(bind=True, name="harvest.reevaluate_cold_scope_jobs", max_retries=0)
+def reevaluate_cold_scope_jobs_task(
+    self,
+    batch_size: int = 1000,
+    max_jobs: int = 0,
+    reason: str = "",
+    queued_before: str = "",
+):
+    """Re-run scope evaluation for cold/review jobs after target-country changes."""
+    from django.utils.dateparse import parse_datetime
+
+    from .location_resolver import evaluate_rawjob_scope
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
+
+    cfg = require_harvest_engine_config("reevaluate_cold_scope_jobs")
+    batch_size = min(5000, max(100, int(batch_size or 1000)))
+    max_jobs = max(0, int(max_jobs or 0))
+    cutoff_dt = parse_datetime(queued_before) if queued_before else timezone.now()
+    if cutoff_dt is None:
+        cutoff_dt = timezone.now()
+    if timezone.is_naive(cutoff_dt):
+        cutoff_dt = timezone.make_aware(cutoff_dt, timezone.get_current_timezone())
+    queued_before = cutoff_dt.isoformat()
+
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.EVALUATE_SCOPE,
+        getattr(self.request, "id", "") or "",
+        queue={
+            "maintenance": "reevaluate_cold_scope_jobs",
+            "batch_size": batch_size,
+            "max_jobs": max_jobs,
+            "reason": reason,
+            "queued_before": queued_before,
+        },
+    )
+
+    statuses = [
+        RawJob.ScopeStatus.UNSCOPED,
+        RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY,
+        RawJob.ScopeStatus.COLD_NON_TARGET_COUNTRY,
+        RawJob.ScopeStatus.COLD_NO_LOCATION,
+    ]
+    qs = RawJob.objects.filter(scope_status__in=statuses).filter(
+        Q(last_scope_evaluated_at__isnull=True) |
+        Q(last_scope_evaluated_at__lt=cutoff_dt)
+    )
+    remaining_before = qs.count()
+    claim_size = min(batch_size, max_jobs) if max_jobs else batch_size
+    jobs = list(qs.order_by("pk")[:claim_size])
+    if not jobs:
+        completion = {
+            "processed": 0,
+            "remaining_before": remaining_before,
+            "promoted_priority": 0,
+            "review": 0,
+            "cold": 0,
+            "queued_next": False,
+        }
+        finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, completion)
+        return completion
+
+    update_task_progress(
+        self,
+        current=0,
+        total=len(jobs),
+        message=f"Re-evaluating scope for {len(jobs):,} cold/review jobs...",
+    )
+
+    fields = [
+        "country_code", "country_confidence", "country_source", "country_codes",
+        "location_candidates", "scope_status", "scope_reason", "is_priority",
+        "last_scope_evaluated_at", "country", "state", "city", "location_raw",
+        "updated_at",
+    ]
+    now = timezone.now()
+    promoted = review = cold = errors = 0
+    to_update: list[RawJob] = []
+    for idx, job in enumerate(jobs, start=1):
+        try:
+            updates = evaluate_rawjob_scope(job, cfg=cfg, use_provider=None, save=False)
+            for field, value in updates.items():
+                setattr(job, field, value)
+            job.updated_at = now
+            to_update.append(job)
+            if job.scope_status == RawJob.ScopeStatus.PRIORITY_TARGET:
+                promoted += 1
+            elif job.scope_status == RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY:
+                review += 1
+            else:
+                cold += 1
+        except Exception as exc:
+            errors += 1
+            logger.warning("Scope re-evaluation failed for RawJob %s: %s", job.pk, exc)
+        if idx % 200 == 0:
+            update_task_progress(
+                self,
+                current=idx,
+                total=len(jobs),
+                message=f"Re-scoped {idx:,}/{len(jobs):,} jobs...",
+            )
+
+    if to_update:
+        RawJob.objects.bulk_update(to_update, fields, batch_size=500)
+
+    processed = len(jobs)
+    queued_next = bool(max_jobs == 0 and processed >= batch_size)
+    if queued_next:
+        reevaluate_cold_scope_jobs_task.apply_async(
+            kwargs={
+                "batch_size": batch_size,
+                "max_jobs": 0,
+                "reason": reason or "continuation",
+                "queued_before": queued_before,
+            },
+            countdown=3,
+            queue="harvest",
+        )
+
+    completion = {
+        "processed": processed,
+        "remaining_before": remaining_before,
+        "promoted_priority": promoted,
+        "review": review,
+        "cold": cold,
+        "errors": errors,
+        "queued_next": queued_next,
+    }
+    status = HarvestOpsRun.Status.PARTIAL if errors else HarvestOpsRun.Status.SUCCESS
+    finish_ops_run(ops_run, status, completion)
+    _invalidate_rawjobs_dashboard_cache()
     return completion
 
 
@@ -525,23 +660,23 @@ def harvest_jobs_task(
                         description = desc_meta["clean_text"]
                         requirements = clean_job_text(normalized.get("requirements_text", ""), max_len=20000)
                         benefits = clean_job_text(normalized.get("benefits_text", ""), max_len=10000)
-                        enriched = extract_enrichments({
-                            "title": normalized.get("title", ""),
-                            "description": description,
-                            "description_clean": description[:50000],
-                            "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
-                            "has_html_content": bool(desc_meta.get("has_html_content")),
-                            "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
-                            "requirements": requirements,
-                            "benefits": benefits,
-                            "department": normalized.get("department", ""),
-                            "location_raw": normalized.get("location", ""),
-                            "employment_type": normalized.get("job_type", "UNKNOWN"),
-                            "experience_level": "UNKNOWN",
-                            "salary_raw": normalized.get("salary_raw", ""),
-                            "company_name": normalized.get("company_name", company.name),
-                            "posted_date": normalized.get("posted_date"),
-                        })
+                        enriched = extract_enrichments(build_enrichment_input(
+                            normalized,
+                            overrides={
+                                "description": description,
+                                "description_clean": description[:50000],
+                                "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                                "has_html_content": bool(desc_meta.get("has_html_content")),
+                                "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                                "requirements": requirements,
+                                "benefits": benefits,
+                                "location_raw": normalized.get("location", ""),
+                                "employment_type": normalized.get("job_type", "UNKNOWN"),
+                                "experience_level": "UNKNOWN",
+                            },
+                            company_name=normalized.get("company_name", company.name),
+                            posted_date=normalized.get("posted_date"),
+                        ))
 
                         # Map HarvestedJob-shaped dict → RawJob fields
                         rj_defaults = {
@@ -643,6 +778,13 @@ def check_portal_health_task(self, label_pk: int):
     if not url:
         return
 
+    try:
+        cfg = require_harvest_engine_config("check_portal_health")
+        failure_threshold = int(getattr(cfg, "portal_health_failure_threshold", 2) or 2)
+    except Exception:
+        failure_threshold = 2
+    failure_threshold = min(10, max(1, failure_threshold))
+
     alive = False
     try:
         resp = requests.head(
@@ -675,9 +817,27 @@ def check_portal_health_task(self, label_pk: int):
     except Exception:
         alive = False
 
-    label.portal_alive = alive
+    if alive:
+        label.portal_alive = True
+        label.portal_consecutive_failures = 0
+    else:
+        label.portal_consecutive_failures = int(label.portal_consecutive_failures or 0) + 1
+        if label.portal_consecutive_failures >= failure_threshold:
+            label.portal_alive = False
+        else:
+            logger.warning(
+                "Portal health pending failure %s/%s for label=%s url=%s",
+                label.portal_consecutive_failures,
+                failure_threshold,
+                label_pk,
+                url,
+            )
     label.portal_last_verified = timezone.now()
-    label.save(update_fields=["portal_alive", "portal_last_verified"])
+    label.save(update_fields=[
+        "portal_alive",
+        "portal_last_verified",
+        "portal_consecutive_failures",
+    ])
 
 
 @shared_task(bind=True, name="harvest.verify_all_portals")
@@ -769,6 +929,7 @@ def fetch_raw_jobs_for_company_task(
         batch = FetchBatch.objects.filter(pk=batch_id).first()
 
     # ── Create run record ─────────────────────────────────────────────────────
+    is_test_run = bool(max_jobs)
     run = CompanyFetchRun.objects.create(
         label=label,
         batch=batch,
@@ -776,6 +937,7 @@ def fetch_raw_jobs_for_company_task(
         task_id=self.request.id or "",
         started_at=timezone.now(),
         triggered_by=triggered_by,
+        is_test_run=is_test_run,
     )
     try:
         self.update_state(
@@ -964,7 +1126,9 @@ def fetch_raw_jobs_for_company_task(
     new_raw_job_pks: list[int] = []  # PKs of freshly-created RawJobs for auto-pipeline
 
     # In test mode, cap to max_jobs so we don't write hundreds of rows
+    cap_applied = False
     if max_jobs and len(raw_jobs) > max_jobs:
+        cap_applied = True
         raw_jobs = raw_jobs[:max_jobs]
 
     total_jobs = len(raw_jobs)
@@ -1008,25 +1172,21 @@ def fetch_raw_jobs_for_company_task(
             requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
             responsibilities = clean_job_text(job_dict.get("responsibilities") or "", max_len=20000)
             benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
-            enriched = extract_enrichments({
-                "title": job_dict.get("title") or "",
-                "description": description,
-                "requirements": requirements,
-                "benefits": benefits,
-                "department": job_dict.get("department") or "",
-                "location_raw": job_dict.get("location_raw") or "",
-                "employment_type": job_dict.get("employment_type") or "",
-                "experience_level": job_dict.get("experience_level") or "",
-                "salary_raw": job_dict.get("salary_raw") or "",
-                "company_name": job_dict.get("company_name") or label.company.name,
-                "country": job_dict.get("country") or "",
-                "state": job_dict.get("state") or "",
-                "posted_date": posted_date,
-                # Vendor-provided structured fields — used as extraction hints
-                # (e.g. Workday jobScheduleType, BambooHR educationLevel)
-                "vendor_degree_level": job_dict.get("vendor_degree_level") or "",
-                "vendor_job_schedule": job_dict.get("vendor_job_schedule") or "",
-            })
+            enriched = extract_enrichments(build_enrichment_input(
+                job_dict,
+                overrides={
+                    "description": description,
+                    "description_clean": description[:50000],
+                    "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                    "has_html_content": bool(desc_meta.get("has_html_content")),
+                    "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                    "requirements": requirements,
+                    "responsibilities": responsibilities,
+                    "benefits": benefits,
+                },
+                company_name=job_dict.get("company_name") or label.company.name,
+                posted_date=posted_date,
+            ))
             supplied_location_candidates = job_dict.get("location_candidates")
             if not isinstance(supplied_location_candidates, list):
                 supplied_location_candidates = []
@@ -1230,6 +1390,7 @@ def fetch_raw_jobs_for_company_task(
     run.jobs_duplicate = jobs_duplicate
     run.jobs_failed = jobs_failed
     run.field_presence = _fp
+    run.jobs_cap_applied = cap_applied
     run.completed_at = timezone.now()
     if upsert_errors and not run.error_message:
         run.error_message = "Upsert errors: " + " | ".join(upsert_errors)
@@ -1237,7 +1398,7 @@ def fetch_raw_jobs_for_company_task(
     run.save(update_fields=[
         "status", "jobs_found", "jobs_total_available", "jobs_detail_fetched", "jobs_new", "jobs_updated",
         "jobs_duplicate", "jobs_failed", "completed_at", "error_message", "error_type",
-        "issue_code", "field_presence",
+        "issue_code", "field_presence", "jobs_cap_applied",
     ])
 
     # ── Update batch counters + auto-complete ────────────────────────────────
@@ -1433,11 +1594,7 @@ def fetch_raw_jobs_for_company_task(
                         continue
                     if job.skills or job.job_category:
                         continue  # already enriched
-                    enriched_data = extract_enrichments({
-                        "title":        job.title or "",
-                        "description":  job.description or "",
-                        "requirements": job.requirements or "",
-                    })
+                    enriched_data = extract_enrichments(build_enrichment_input(job))
                     for f in ENRICH_FIELDS:
                         if f in enriched_data:
                             setattr(job, f, enriched_data[f])
@@ -1505,6 +1662,17 @@ def fetch_raw_jobs_for_company_task(
                     countdown=90,  # wait for URL validation pass first
                 )
                 logger.info("Auto-sync queued 90 s after batch #%s completion", batch.pk)
+            duplicate_limit = min(5000, max(1000, int(getattr(batch, "total_jobs_new", 0) or 0) * 2))
+            run_duplicate_detection_task.apply_async(
+                kwargs={"limit": duplicate_limit},
+                countdown=120,
+                queue="harvest",
+            )
+            logger.info(
+                "Duplicate-pair detection queued 120 s after batch #%s (limit=%s)",
+                batch.pk,
+                duplicate_limit,
+            )
         except Exception as exc:
             logger.warning("Auto-sync queue failed: %s", exc)
 
@@ -2583,20 +2751,22 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
     )
 
     # ── Run enrichment extraction ─────────────────────────────────────────
-    from .enrichments import extract_enrichments
-    enriched = extract_enrichments({
-        "title": data.get("title") or "",
-        "description": description,
-        "requirements": requirements,
-        "benefits": benefits,
-        "department": data.get("department") or "",
-        "location_raw": data.get("location_raw") or "",
-        "employment_type": data.get("employment_type") or "",
-        "experience_level": data.get("experience_level") or "",
-        "salary_raw": data.get("salary_raw") or "",
-        "company_name": company_name or "",
-        "posted_date": posted_date,
-    })
+    from .enrichments import CURRENT_DOMAIN_VERSION, CURRENT_ENRICHMENT_VERSION, extract_enrichments
+    enriched = extract_enrichments(build_enrichment_input(
+        data,
+        overrides={
+            "description": description,
+            "description_clean": description[:50000],
+            "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+            "has_html_content": bool(desc_meta.get("has_html_content")),
+            "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+            "requirements": requirements,
+            "benefits": benefits,
+            "raw_payload": raw_payload,
+        },
+        company_name=company_name or "",
+        posted_date=posted_date,
+    ))
 
     external_id = (data.get("external_id") or "").strip()[:512]
     raw_job_defaults = {
@@ -3981,19 +4151,10 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     if location_candidates:
         update_fields["location_candidates"] = location_candidates
 
-    update_fields.update(extract_enrichments({
-        "title": job.title,
-        "description": update_fields.get("description") or job.description,
-        "requirements": update_fields.get("requirements") or job.requirements,
-        "benefits": update_fields.get("benefits") or job.benefits,
-        "department": update_fields.get("department") or job.department,
-        "location_raw": update_fields.get("location_raw") or job.location_raw,
-        "employment_type": update_fields.get("employment_type") or job.employment_type,
-        "experience_level": update_fields.get("experience_level") or job.experience_level,
-        "salary_raw": update_fields.get("salary_raw") or job.salary_raw,
-        "company_name": job.company_name,
-        "posted_date": str(job.posted_date) if job.posted_date else "",
-    }))
+    update_fields.update(extract_enrichments(build_enrichment_input(
+        job,
+        overrides={**update_fields, "raw_payload": merged_payload},
+    )))
 
     for field, value in update_fields.items():
         setattr(job, field, value)
@@ -4529,7 +4690,10 @@ def enrich_existing_jobs_task(
         # (covers the 106k jobs enriched before v3 that never got category_confidence)
         from django.db.models import Q
         qs = qs.filter(
-            Q(skills=[], job_category="") | Q(category_confidence__isnull=True)
+            Q(skills=[], job_category="") |
+            Q(category_confidence__isnull=True) |
+            ~Q(enrichment_version=CURRENT_ENRICHMENT_VERSION) |
+            ~Q(domain_version=CURRENT_DOMAIN_VERSION)
         )
 
     total = qs.count()
@@ -4571,20 +4735,7 @@ def enrich_existing_jobs_task(
     ]
 
     for idx, job in enumerate(jobs, start=1):
-        enriched = extract_enrichments({
-            "title":            job.title,
-            "description":      job.description,
-            "requirements":     job.requirements or "",
-            "responsibilities": job.responsibilities or "",
-            "benefits":         job.benefits or "",
-            "department":       job.department,
-            "location_raw":     job.location_raw,
-            "employment_type":  job.employment_type,
-            "experience_level": job.experience_level,
-            "salary_raw":       job.salary_raw,
-            "company_name":     job.company_name,
-            "posted_date":      str(job.posted_date) if job.posted_date else "",
-        })
+        enriched = extract_enrichments(build_enrichment_input(job))
 
         has_change = False
         for field in ENRICH_FIELDS:
@@ -4694,23 +4845,7 @@ def backfill_resume_contract_task(
 
     for idx, job in enumerate(jobs, start=1):
         desc_meta = clean_job_content(job.description or "", max_len=50000)
-        enriched = extract_enrichments(
-            {
-                "title": job.title or "",
-                "description": job.description or "",
-                "requirements": job.requirements or "",
-                "benefits": job.benefits or "",
-                "department": job.department or "",
-                "location_raw": job.location_raw or "",
-                "employment_type": job.employment_type or "",
-                "experience_level": job.experience_level or "",
-                "salary_raw": job.salary_raw or "",
-                "company_name": job.company_name or "",
-                "country": job.country or "",
-                "state": job.state or "",
-                "posted_date": str(job.posted_date) if job.posted_date else "",
-            }
-        )
+        enriched = extract_enrichments(build_enrichment_input(job))
         company = job.company
         job.description_clean = (enriched.get("description_clean") or desc_meta["clean_text"] or "")[:50000]
         job.description_raw_html = (enriched.get("description_raw_html") or desc_meta["raw_html"] or "")[:120000]

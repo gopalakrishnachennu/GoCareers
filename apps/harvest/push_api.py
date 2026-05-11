@@ -23,6 +23,7 @@ from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
 from .normalizer import compute_content_hash, compute_url_hash
+from .services.enrichment_input import build_enrichment_input
 
 logger = logging.getLogger("harvest.push_api")
 
@@ -321,21 +322,20 @@ class PushJobsView(View):
                 description = desc_meta["clean_text"]
                 requirements = clean_job_text(job_data.get("requirements", ""), max_len=20000)
                 benefits = clean_job_text(job_data.get("benefits", ""), max_len=10000)
-                enriched = extract_enrichments({
-                    "title": job_data.get("title") or "",
-                    "description": description,
-                    "requirements": requirements,
-                    "benefits": benefits,
-                    "department": job_data.get("department") or "",
-                    "location_raw": job_data.get("location_raw") or "",
-                    "employment_type": job_data.get("employment_type") or "",
-                    "experience_level": job_data.get("experience_level") or "",
-                    "salary_raw": job_data.get("salary_raw") or "",
-                    "company_name": job_data.get("company_name") or "",
-                    "country": job_data.get("country") or "",
-                    "state": job_data.get("state") or "",
-                    "posted_date": _parse_date(job_data.get("posted_date")),
-                })
+                enriched = extract_enrichments(build_enrichment_input(
+                    job_data,
+                    overrides={
+                        "description": description,
+                        "description_clean": description[:50000],
+                        "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                        "has_html_content": bool(desc_meta.get("has_html_content")),
+                        "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                        "requirements": requirements,
+                        "benefits": benefits,
+                    },
+                    company_name=job_data.get("company_name") or "",
+                    posted_date=_parse_date(job_data.get("posted_date")),
+                ))
                 location_candidates = (
                     _safe_list(job_data.get("location_candidates"))
                     or extract_location_candidates(
