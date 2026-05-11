@@ -35,6 +35,7 @@ from .models import (
     RawJob,
     RawJobDuplicatePair,
 )
+from .platform_engine import harvester_class_name_for_slug, kind_for_slug
 from .resume_profile import build_resume_job_profile
 from .jd_gate import evaluate_raw_job_resume_gate
 from .enrichments import infer_country_from_location
@@ -405,13 +406,24 @@ class PlatformListView(SuperuserRequiredMixin, TemplateView):
 
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
-        ctx["platforms"] = JobBoardPlatform.objects.annotate(
-            company_count=Count("labels")
-        ).order_by("name")
+        platforms = list(
+            JobBoardPlatform.objects.annotate(
+                company_count=Count("labels"),
+                missing_tenant_count=Count("labels", filter=Q(labels__tenant_id="")),
+            ).order_by("name")
+        )
+        for platform in platforms:
+            platform.implementation_kind = kind_for_slug(platform.slug).value
+            platform.harvester_class_name = harvester_class_name_for_slug(platform.slug)
+        total_platforms = JobBoardPlatform.objects.count()
+        enabled_count = JobBoardPlatform.objects.filter(is_enabled=True).count()
+        ctx["platforms"] = platforms
         ctx["form"] = JobBoardPlatformForm()
         ctx["active_tab"] = "platforms"
-        ctx["total_platforms"] = JobBoardPlatform.objects.count()
-        ctx["enabled_count"] = JobBoardPlatform.objects.filter(is_enabled=True).count()
+        ctx["total_platforms"] = total_platforms
+        ctx["enabled_count"] = enabled_count
+        ctx["disabled_count"] = total_platforms - enabled_count
+        ctx["company_label_count"] = CompanyPlatformLabel.objects.count()
         return ctx
 
 
@@ -449,6 +461,18 @@ class PlatformUpdateView(SuperuserRequiredMixin, UpdateView):
 class PlatformDeleteView(SuperuserRequiredMixin, View):
     def post(self, request, pk):
         platform = get_object_or_404(JobBoardPlatform, pk=pk)
+        labels_count = platform.labels.count()
+        raw_jobs_count = platform.raw_jobs.count()
+        if labels_count or raw_jobs_count:
+            messages.error(
+                request,
+                (
+                    f"Platform '{platform.name}' is still linked to "
+                    f"{labels_count} company label(s) and {raw_jobs_count} raw job(s). "
+                    "Disable it instead, or migrate those records before deleting."
+                ),
+            )
+            return redirect("harvest-platforms")
         name = platform.name
         platform.delete()
         messages.success(request, f"Platform '{name}' deleted.")

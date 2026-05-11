@@ -30,10 +30,11 @@
     </div>
     <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Disabled</p>
-      <p class="text-2xl font-bold text-gray-400">{{ total_platforms|add:"-1"|add:"1" }}</p>
+      <p class="text-2xl font-bold text-gray-400">{{ disabled_count }}</p>
     </div>
     <div class="bg-blue-50 rounded-xl border border-blue-200 shadow-sm p-4">
       <p class="text-xs text-gray-500 uppercase tracking-wider mb-1">Company Labels</p>
+      <p class="text-2xl font-bold text-blue-900">{{ company_label_count }}</p>
       <a href="{% url 'harvest-labels' %}" class="text-sm font-semibold text-blue-600 hover:underline">View All →</a>
     </div>
   </div>
@@ -55,9 +56,12 @@
       <thead class="tbl-head">
         <tr>
           <th class="tbl-th">Platform</th>
+          <th class="tbl-th hidden lg:table-cell">Support</th>
           <th class="tbl-th hidden sm:table-cell">API Type</th>
+          <th class="tbl-th hidden xl:table-cell">Implementation</th>
           <th class="tbl-th hidden md:table-cell">URL Patterns</th>
           <th class="tbl-th-right">Companies</th>
+          <th class="tbl-th-right hidden xl:table-cell">No Tenant</th>
           <th class="tbl-th text-center hidden lg:table-cell">Rate Limit</th>
           <th class="tbl-th hidden lg:table-cell">Last Harvested</th>
           <th class="tbl-th text-center">On/Off</th>
@@ -75,6 +79,20 @@
             </div>
             <p class="text-xs text-gray-400 ml-5 mt-0.5 font-mono">{{ platform.slug }}</p>
           </td>
+          <!-- Support -->
+          <td class="tbl-td hidden lg:table-cell">
+            {% if platform.support_tier == 'healthy' %}
+            <span class="badge-green">Healthy</span>
+            {% elif platform.support_tier == 'degraded' %}
+            <span class="badge-yellow">Degraded</span>
+            {% elif platform.support_tier == 'experimental' %}
+            <span class="badge-blue">Experimental</span>
+            {% elif platform.support_tier == 'unsupported' %}
+            <span class="badge-gray">Unsupported</span>
+            {% else %}
+            <span class="badge-gray">{{ platform.support_tier }}</span>
+            {% endif %}
+          </td>
           <!-- API Type -->
           <td class="tbl-td hidden sm:table-cell">
             {% if platform.api_type == 'workday_api' or platform.api_type == 'greenhouse_api' or platform.api_type == 'lever_api' %}
@@ -86,6 +104,13 @@
             {% else %}
             <span class="badge-gray">Unknown</span>
             {% endif %}
+          </td>
+          <!-- Implementation -->
+          <td class="tbl-td hidden xl:table-cell">
+            <div class="text-xs">
+              <span class="font-semibold text-gray-700">{{ platform.implementation_kind|title }}</span>
+              <p class="text-gray-400 font-mono mt-0.5">{{ platform.harvester_class_name }}</p>
+            </div>
           </td>
           <!-- URL Patterns -->
           <td class="tbl-td hidden md:table-cell">
@@ -101,6 +126,15 @@
           <!-- Companies -->
           <td class="tbl-td-right">
             <span class="tbl-mono font-bold text-gray-900">{{ platform.company_count }}</span>
+          </td>
+          <!-- Missing Tenant -->
+          <td class="tbl-td-right hidden xl:table-cell">
+            {% if platform.missing_tenant_count %}
+            <a href="{% url 'harvest-labels' %}?platform={{ platform.slug }}&status=no_tenant"
+              class="tbl-mono font-bold text-amber-700 hover:underline">{{ platform.missing_tenant_count }}</a>
+            {% else %}
+            <span class="tbl-mono text-gray-300">0</span>
+            {% endif %}
           </td>
           <!-- Rate Limit -->
           <td class="tbl-td text-center hidden lg:table-cell">
@@ -128,7 +162,7 @@
           <td class="tbl-td-right">
             <div class="flex items-center justify-end gap-2">
               <a href="{% url 'harvest-platform-edit' platform.pk %}" class="link-action text-xs px-3 py-1 rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Edit</a>
-              <form method="post" action="{% url 'harvest-platform-delete' platform.pk %}" class="inline" onsubmit="return confirm('Delete {{ platform.name }}? This will remove all associated harvest data.');">
+              <form method="post" action="{% url 'harvest-platform-delete' platform.pk %}" class="inline" onsubmit="return confirm('Delete {{ platform.name }} only if it has no labels or raw jobs? Disable is safer for active platforms.');">
                 {% csrf_token %}
                 <button type="submit" class="btn-danger-soft text-xs px-3 py-1">Delete</button>
               </form>

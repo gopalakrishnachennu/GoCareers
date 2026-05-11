@@ -354,11 +354,13 @@ def backfill_platform_labels_from_jobs_task(self):
     from jobs.models import Job
     from companies.models import Company
     from .models import JobBoardPlatform, CompanyPlatformLabel
-    from .detectors import URL_PATTERNS, extract_tenant
+    from .detectors import extract_tenant, get_url_patterns
+    from .detectors.url_pattern import pattern_matches_url
 
     update_task_progress(self, current=0, total=0, message="Loading job URLs…")
 
     platforms = {p.slug: p for p in JobBoardPlatform.objects.filter(is_enabled=True)}
+    patterns_by_slug = get_url_patterns()
     company_best: dict = {}
 
     all_jobs = list(
@@ -375,10 +377,9 @@ def backfill_platform_labels_from_jobs_task(self):
         if cid in company_best:
             continue
         raw_url = job["original_link"]
-        url = raw_url.lower()
-        for slug, patterns in URL_PATTERNS.items():
+        for slug, patterns in patterns_by_slug.items():
             for pattern in patterns:
-                if pattern in url:
+                if pattern_matches_url(pattern, raw_url):
                     company_best[cid] = {
                         "slug": slug,
                         "tenant_id": extract_tenant(slug, raw_url),

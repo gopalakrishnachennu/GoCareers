@@ -34,6 +34,39 @@ URL_PATTERNS: dict[str, list[str]] = {
     "breezy": [".breezy.hr", "breezy.hr/p/"],
 }
 
+
+def get_url_patterns(*, enabled_only: bool = True) -> dict[str, list[str]]:
+    """
+    Return platform URL patterns from the editable DB registry.
+
+    Falls back to the static seed map when the DB is unavailable, such as during
+    early startup, migrations, or isolated tests. Normal runtime detection should
+    honor the Platform Registry rather than this module-level constant.
+    """
+    try:
+        from harvest.models import JobBoardPlatform
+
+        qs = JobBoardPlatform.objects.only("slug", "url_patterns", "is_enabled")
+        if enabled_only:
+            qs = qs.filter(is_enabled=True)
+
+        patterns: dict[str, list[str]] = {}
+        for platform in qs:
+            cleaned = [
+                str(pattern).strip().lower()
+                for pattern in (platform.url_patterns or [])
+                if str(pattern).strip()
+            ]
+            if cleaned:
+                patterns[platform.slug] = cleaned
+
+        if patterns:
+            return patterns
+    except Exception:
+        pass
+
+    return URL_PATTERNS
+
 TENANT_EXTRACTORS: dict[str, re.Pattern] = {
     # Workday is handled by _extract_workday_tenant() — not a simple regex.
     # Stored as "{tenant}|{jobboard}" e.g. "inotivco|EXT", "godirect|voya_jobs"

@@ -2,6 +2,7 @@
 
 import json
 from io import StringIO
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 from unittest.mock import MagicMock, patch
 
@@ -12,6 +13,7 @@ from django.urls import reverse
 
 from harvest.career_url import build_career_url
 from harvest.detectors import extract_tenant
+from harvest.detectors.url_pattern import URLPatternDetector, pattern_matches_url
 from harvest.harvesters import (
     TeamtailorHarvester,
     ZohoHarvester,
@@ -61,10 +63,56 @@ class HarvestUrlAndRegistryTests(SimpleTestCase):
         self.assertIn("zoho", dedicated_slugs())
         self.assertIn("teamtailor", dedicated_slugs())
 
+    def test_url_pattern_matching_respects_host_boundaries(self):
+        self.assertTrue(pattern_matches_url("lever.co", "https://jobs.lever.co/acme"))
+        self.assertFalse(pattern_matches_url("lever.co", "https://www.clever.com/careers"))
+
     def test_validate_job_domain_taxonomy_command(self):
         out = StringIO()
         call_command("validate_job_domain_taxonomy", stdout=out)
         self.assertIn("Marketing role taxonomy OK", out.getvalue())
+
+
+class PlatformRegistryDetectionTests(TestCase):
+    def test_url_pattern_detector_uses_enabled_db_registry_patterns(self):
+        from harvest.models import JobBoardPlatform
+
+        JobBoardPlatform.objects.create(
+            name="Example ATS",
+            slug="example_ats",
+            url_patterns=["careers.example-ats.test/jobs"],
+            is_enabled=True,
+        )
+        company = SimpleNamespace(
+            career_site_url="https://careers.example-ats.test/jobs/acme",
+            website="",
+        )
+
+        slug, confidence, method = URLPatternDetector().detect(company)
+
+        self.assertEqual(slug, "example_ats")
+        self.assertEqual(confidence, "HIGH")
+        self.assertEqual(method, "URL_PATTERN")
+
+    def test_url_pattern_detector_ignores_disabled_db_patterns(self):
+        from harvest.models import JobBoardPlatform
+
+        JobBoardPlatform.objects.create(
+            name="Disabled ATS",
+            slug="disabled_ats",
+            url_patterns=["disabled-ats.example"],
+            is_enabled=False,
+        )
+        company = SimpleNamespace(
+            career_site_url="https://disabled-ats.example/jobs",
+            website="",
+        )
+
+        slug, confidence, method = URLPatternDetector().detect(company)
+
+        self.assertIsNone(slug)
+        self.assertEqual(confidence, "UNKNOWN")
+        self.assertEqual(method, "UNDETECTED")
 
 
 class HarvestUrlHashDedupeTests(SimpleTestCase):

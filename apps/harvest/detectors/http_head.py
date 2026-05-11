@@ -15,7 +15,8 @@ from typing import Optional
 
 import requests
 
-from . import URL_PATTERNS
+from . import get_url_patterns
+from .url_pattern import pattern_matches_url
 from ..harvesters.base import BOT_USER_AGENT
 
 logger = logging.getLogger(__name__)
@@ -44,19 +45,21 @@ class HTTPHeadDetector:
                 "[DETECT] HEAD %s → %s (final: %s)", url, resp.status_code, resp.url
             )
 
+            patterns_by_slug = get_url_patterns()
+
             # Check final URL
             final = resp.url.lower()
-            for slug, patterns in URL_PATTERNS.items():
+            for slug, patterns in patterns_by_slug.items():
                 for pat in patterns:
-                    if pat in final:
+                    if pattern_matches_url(pat, final):
                         return slug, "MEDIUM", "HTTP_HEAD"
 
             # Check every redirect Location header
             for r in resp.history:
                 loc = r.headers.get("Location", "").lower()
-                for slug, patterns in URL_PATTERNS.items():
+                for slug, patterns in patterns_by_slug.items():
                     for pat in patterns:
-                        if pat in loc:
+                        if pattern_matches_url(pat, loc):
                             return slug, "MEDIUM", "HTTP_HEAD"
 
         except requests.exceptions.Timeout:

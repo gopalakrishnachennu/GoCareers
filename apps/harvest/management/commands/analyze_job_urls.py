@@ -10,7 +10,8 @@ from collections import defaultdict
 
 from django.core.management.base import BaseCommand
 
-from harvest.detectors import URL_PATTERNS, TENANT_EXTRACTORS, extract_tenant
+from harvest.detectors import TENANT_EXTRACTORS, extract_tenant, get_url_patterns
+from harvest.detectors.url_pattern import pattern_matches_url
 
 
 class Command(BaseCommand):
@@ -23,6 +24,7 @@ class Command(BaseCommand):
 
         platform_samples: dict[str, list[tuple[str, str]]] = defaultdict(list)
         unmatched_samples: list[str] = []
+        patterns_by_slug = get_url_patterns()
         total = 0
 
         for url in (
@@ -31,11 +33,10 @@ class Command(BaseCommand):
             .iterator()
         ):
             total += 1
-            url_lower = url.lower()
             matched = False
-            for slug, patterns in URL_PATTERNS.items():
+            for slug, patterns in patterns_by_slug.items():
                 for pattern in patterns:
-                    if pattern in url_lower:
+                    if pattern_matches_url(pattern, url):
                         if len(platform_samples[slug]) < 5:
                             tenant = extract_tenant(slug, url)
                             platform_samples[slug].append((url, tenant))

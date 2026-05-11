@@ -9,12 +9,16 @@ Usage:
 """
 from django.core.management.base import BaseCommand
 
-UNSUPPORTED = {
-    "applytojob": "No active harvester — legacy platform, no documented public API.",
-    "adp":        "ADP Workforce Now requires OAuth auth — not supported in public harvest.",
-    "applicantpro": "No documented public API; HTML scraper would be fragile.",
-    "dayforce":   "Ceridian Dayforce — authenticated API, no public job feed endpoint.",
-}
+
+def unsupported_registry_rows() -> dict[str, str]:
+    """Return planned/no-harvester rows that should stay disabled."""
+    from harvest.platform_engine import ImplementationKind, iter_openpostings_matrix
+
+    return {
+        row.slug: f"Planned platform. No verified detector, tenant extractor, or harvester yet. {row.notes}".strip()
+        for row in iter_openpostings_matrix()
+        if row.kind == ImplementationKind.PLANNED
+    }
 
 
 class Command(BaseCommand):
@@ -33,7 +37,7 @@ class Command(BaseCommand):
         updated = 0
         created = 0
 
-        for slug, note in UNSUPPORTED.items():
+        for slug, note in unsupported_registry_rows().items():
             obj, was_created = JobBoardPlatform.objects.get_or_create(
                 slug=slug,
                 defaults={

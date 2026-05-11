@@ -77,6 +77,24 @@
           {% if form.api_type.errors %}<p class="text-xs text-red-600 mt-1">{{ form.api_type.errors.0 }}</p>{% endif %}
         </div>
 
+        <!-- Support Tier -->
+        <div class="mb-5">
+          <label class="block text-sm font-semibold text-gray-700 mb-2">Support Tier <span class="text-red-500">*</span></label>
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            {% for value, label in form.support_tier.field.choices %}
+            <label class="flex items-center gap-2.5 p-3 border rounded-xl cursor-pointer transition-all hover:border-blue-300 hover:bg-blue-50/40
+              {% if form.support_tier.value == value %}border-blue-500 bg-blue-50 shadow-sm{% else %}border-gray-200{% endif %}">
+              <input type="radio" name="support_tier" value="{{ value }}"
+                {% if form.support_tier.value == value %}checked{% endif %}
+                class="text-blue-600 focus:ring-blue-500/30">
+              <span class="text-sm text-gray-700">{{ label }}</span>
+            </label>
+            {% endfor %}
+          </div>
+          {% if form.support_tier.errors %}<p class="text-xs text-red-600 mt-1">{{ form.support_tier.errors.0 }}</p>{% endif %}
+          <p class="text-xs text-gray-400 mt-1">Healthy platforms run normally. Unsupported platforms should stay disabled until a parser is verified.</p>
+        </div>
+
         <!-- URL Patterns -->
         <div class="mb-5">
           <label for="{{ form.url_patterns.id_for_label }}" class="block text-sm font-semibold text-gray-700 mb-1">
@@ -164,17 +182,20 @@
             Cancel
           </a>
           {% if is_edit %}
-          <form method="post" action="{% url 'harvest-platform-delete' object.pk %}" class="ml-auto inline"
-            onsubmit="return confirm('Delete {{ object.name }}? This cannot be undone.');">
-            {% csrf_token %}
-            <button type="submit" class="px-4 py-2.5 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors border border-red-200">
-              🗑️ Delete Platform
-            </button>
-          </form>
+          <button type="submit" form="delete-platform-form"
+            class="ml-auto px-4 py-2.5 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100 transition-colors border border-red-200">
+            🗑️ Delete Platform
+          </button>
           {% endif %}
         </div>
 
       </form>
+      {% if is_edit %}
+      <form id="delete-platform-form" method="post" action="{% url 'harvest-platform-delete' object.pk %}"
+        onsubmit="return confirm('Delete {{ object.name }} only if it has no labels or raw jobs? Disable is safer for active platforms.');">
+        {% csrf_token %}
+      </form>
+      {% endif %}
     </div>
   </div>
 </div>

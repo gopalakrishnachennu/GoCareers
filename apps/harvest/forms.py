@@ -9,7 +9,7 @@ class JobBoardPlatformForm(forms.ModelForm):
         fields = [
             "name", "slug", "url_patterns", "api_type", "fetch_endpoint_tmpl",
             "headers_json", "rate_limit_per_min", "requires_auth",
-            "is_enabled", "color_hex", "notes",
+            "is_enabled", "support_tier", "color_hex", "notes",
         ]
         widgets = {
             "url_patterns": forms.Textarea(

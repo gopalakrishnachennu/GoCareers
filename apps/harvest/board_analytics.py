@@ -29,9 +29,6 @@ from .runtime_config import get_ready_stage_min_confidence
 # Boards that harvest via Jarvis (manual paste) — excluded from ATS ranking.
 JARVIS_SLUGS = {"jarvis"}
 
-# Boards known to be operationally broken / no active harvester.
-UNSUPPORTED_SLUGS = {"applytojob", "adp", "applicantpro", "dayforce"}
-
 # Minimum runs required before we trust the risk score.
 MIN_RUNS_FOR_RISK = 5
 CURRENT_ENRICHMENT_VERSION = "v3"
@@ -612,7 +609,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
             "resume_ready_score": _score_metric(j.get("avg_resume_ready_score"), j.get("resume_ready_score_known_count", 0), total),
         }
 
-        if slug in UNSUPPORTED_SLUGS or tier == JobBoardPlatform.SupportTier.UNSUPPORTED:
+        if tier == JobBoardPlatform.SupportTier.UNSUPPORTED:
             unsupported_rows.append(row)
         else:
             ats_rows.append(row)

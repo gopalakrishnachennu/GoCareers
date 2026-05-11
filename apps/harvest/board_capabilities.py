@@ -221,19 +221,18 @@ BOARD_CAPABILITIES: dict[str, dict] = {
         "source_reliability": "semi",
     },
     "dayforce": {
-        "jd": False,                # harvester not operational
+        "jd": True,                 # detail API attempted for first DETAIL_FETCH_CAP rows
         "requirements": False,
         "responsibilities": False,
-        "department": False,
-        "geo": False,
+        "department": True,
+        "geo": True,
         "salary": False,
         "employment_type": False,
         "education": False,
         "experience_level": False,
-        "detail_fetch": False,
-        "pagination": False,
+        "detail_fetch": True,
+        "pagination": True,
         "source_reliability": "scrape",
-        "unsupported": True,
     },
     "breezy": {
         "jd": True,
@@ -290,7 +289,6 @@ BOARD_CAPABILITIES: dict[str, dict] = {
         "detail_fetch": False,
         "pagination": False,
         "source_reliability": "scrape",
-        "unsupported": True,
     },
     "adp": {
         "jd": False,
@@ -305,7 +303,6 @@ BOARD_CAPABILITIES: dict[str, dict] = {
         "detail_fetch": False,
         "pagination": False,
         "source_reliability": "scrape",
-        "unsupported": True,
     },
     "applicantpro": {
         "jd": False,
@@ -320,7 +317,6 @@ BOARD_CAPABILITIES: dict[str, dict] = {
         "detail_fetch": False,
         "pagination": False,
         "source_reliability": "scrape",
-        "unsupported": True,
     },
 }
 
