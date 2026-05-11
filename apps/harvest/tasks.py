@@ -485,7 +485,7 @@ def harvest_jobs_task(
                         enriched = extract_enrichments({
                             "title": normalized.get("title", ""),
                             "description": description,
-                            "description_clean": (enriched.get("description_clean") or description)[:50000],
+                            "description_clean": description[:50000],
                             "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
                             "has_html_content": bool(desc_meta.get("has_html_content")),
                             "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
@@ -533,14 +533,14 @@ def harvest_jobs_task(
                         )
                         try:
                             from .models import RawJobPayloadSnapshot
-                            from .payload_archive import capture_rawjob_payload_snapshot
-                            capture_rawjob_payload_snapshot(
+                            from .payload_archive import capture_rawjob_source_payloads
+                            capture_rawjob_source_payloads(
                                 raw_obj,
-                                payload=normalized.get("raw_payload", {}),
-                                payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
-                                source_url=original_url,
-                                platform_slug=platform.slug,
-                                source_metadata={"ingest": "harvest_jobs", "external_id": normalized.get("external_id", "")},
+                                normalized,
+                                default_payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                                default_source_url=original_url,
+                                default_platform_slug=platform.slug,
+                                default_source_metadata={"ingest": "harvest_jobs", "external_id": normalized.get("external_id", "")},
                             )
                         except Exception:
                             logger.exception("Failed to archive source payload for RawJob %s", url_hash)
@@ -1064,15 +1064,15 @@ def fetch_raw_jobs_for_company_task(
             def _archive_job_payload(raw_obj):
                 try:
                     from .models import RawJobPayloadSnapshot
-                    from .payload_archive import capture_rawjob_payload_snapshot
-                    capture_rawjob_payload_snapshot(
+                    from .payload_archive import capture_rawjob_source_payloads
+                    capture_rawjob_source_payloads(
                         raw_obj,
-                        payload=job_dict.get("raw_payload") or {},
-                        raw_html=desc_meta.get("raw_html") or "",
-                        payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
-                        source_url=original_url,
-                        platform_slug=(label.platform.slug if label.platform else ""),
-                        source_metadata={
+                        job_dict,
+                        default_raw_html=desc_meta.get("raw_html") or "",
+                        default_payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                        default_source_url=original_url,
+                        default_platform_slug=(label.platform.slug if label.platform else ""),
+                        default_source_metadata={
                             "ingest": "fetch_company_jobs",
                             "external_id": external_id,
                             "label_id": label.pk,
@@ -2134,8 +2134,10 @@ def sync_harvested_to_pool_task(
         max_jobs = 0
     chunk_size = max(50, min(int(chunk_size or 500), 2000))
 
-    # Scoped harvest gate: only PRIORITY (target-country) jobs sync to the Vet Queue.
-    # Cold + unknown jobs stay in RawJob until the country resolver upgrades them
+    # Scoped harvest gate: only PRIORITY (target-country) or REVIEW_UNKNOWN_COUNTRY
+    # jobs sync to the Vet Queue. Belt-and-suspenders: both is_priority and
+    # scope_status are checked so a stale flag on either field can't open the gate.
+    # Cold + UNSCOPED jobs stay in RawJob until the country resolver upgrades them
     # (or until target_countries config expands).
     base_qs = (
         RawJob.objects.filter(
@@ -2143,6 +2145,10 @@ def sync_harvested_to_pool_task(
             is_active=True,
             company__isnull=False,
             is_priority=True,
+            scope_status__in=[
+                RawJob.ScopeStatus.PRIORITY_TARGET,
+                RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY,
+            ],
         )
         .exclude(original_url="")
     )

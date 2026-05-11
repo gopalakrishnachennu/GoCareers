@@ -277,21 +277,17 @@ class PushJobsView(View):
         from harvest.models import RawJob, RawJobPayloadSnapshot
         from .enrichments import clean_job_content, clean_job_text, extract_enrichments
         from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
-        from .payload_archive import capture_rawjob_payload_snapshot
+        from .payload_archive import capture_rawjob_source_payloads
 
         def capture_incoming_payload(raw_job, job_data):
-            payload = job_data.get("raw_payload") or {}
-            raw_html = job_data.get("description_raw_html") or ""
-            if not raw_html and isinstance(payload, dict):
-                raw_html = payload.get("raw_html") or payload.get("html") or ""
-            return capture_rawjob_payload_snapshot(
+            return capture_rawjob_source_payloads(
                 raw_job,
-                payload=payload,
-                raw_html=raw_html,
-                payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
-                source_url=job_data.get("original_url") or raw_job.original_url,
-                platform_slug=job_data.get("platform_slug") or raw_job.platform_slug,
-                source_metadata={
+                job_data,
+                default_raw_html=job_data.get("description_raw_html") or "",
+                default_payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                default_source_url=job_data.get("original_url") or raw_job.original_url,
+                default_platform_slug=job_data.get("platform_slug") or raw_job.platform_slug,
+                default_source_metadata={
                     "ingest": "push_api",
                     "external_id": job_data.get("external_id") or "",
                     "has_description": bool(job_data.get("description")),

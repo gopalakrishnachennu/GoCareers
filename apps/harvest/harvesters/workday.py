@@ -43,6 +43,184 @@ PAGE_SIZE = 20
 # are caught by the background backfill task (which also uses the CXS API).
 DETAIL_FETCH_CAP = 300
 
+# Req ID patterns embedded in Workday externalPath segments.
+# Matches: JR12345, JR-001234, R-2025-98765, REQ-2024-00123, 123456789
+_REQ_ID_RE = _re.compile(
+    r'[_/]((?:[A-Z]{1,4}[-_]?\d{3,}(?:[-_]\d+)*|\d{5,12}))(?:[_/]|$|\?)',
+    _re.I,
+)
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+
+def _wd_str(val: Any, *fallback_keys: str) -> str:
+    """Safely coerce a Workday field (str / dict / list / None) to a plain string."""
+    if val is None:
+        return ""
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, dict):
+        for k in fallback_keys or ("descriptor", "displayValue", "value", "name", "id"):
+            if val.get(k):
+                return str(val[k]).strip()
+        return ""
+    if isinstance(val, list):
+        parts = [_wd_str(v) for v in val]
+        return " | ".join(p for p in parts if p)
+    return str(val).strip()
+
+
+def _wd_req_id(ext_path: str, bullet_fields: list) -> str:
+    """Extract req ID from externalPath or bulletFields."""
+    if ext_path:
+        m = _REQ_ID_RE.search(ext_path)
+        if m:
+            return m.group(1)
+        # Sometimes the path ends with just a numeric ID
+        tail = ext_path.rstrip("/").rsplit("/", 1)[-1]
+        num = _re.match(r"^(\d{4,12})$", tail)
+        if num:
+            return num.group(1)
+    if bullet_fields and isinstance(bullet_fields, list):
+        candidate = str(bullet_fields[0]).strip()
+        # bulletFields[0] is the req ID only when it looks like one
+        if _re.match(r'^[A-Z]{0,4}[\-_]?\d{3,12}$', candidate, _re.I):
+            return candidate
+    return ""
+
+
+def _wd_department(job: dict) -> str:
+    """Extract department with a prioritised fallback chain."""
+    # 1. jobFamilyGroup
+    jfg = job.get("jobFamilyGroup") or []
+    if isinstance(jfg, list) and jfg:
+        name = _wd_str(jfg[0], "jobFamilyGroupName", "descriptor", "name")
+        if name:
+            return name
+    if isinstance(jfg, str) and jfg:
+        return jfg
+    # 2. jobFamily
+    jf = job.get("jobFamily") or []
+    if isinstance(jf, list) and jf:
+        name = _wd_str(jf[0], "jobFamilyName", "descriptor", "name")
+        if name:
+            return name
+    if isinstance(jf, str) and jf:
+        return jf
+    # 3. jobCategory (can also be a list)
+    cat = job.get("jobCategory") or []
+    if isinstance(cat, list) and cat:
+        return _wd_str(cat[0], "descriptor", "name") or ""
+    if isinstance(cat, str) and cat:
+        return cat
+    # 4. hiringOrganization / department flat fields
+    return (
+        _wd_str(job.get("hiringOrganization"), "descriptor", "name")
+        or _wd_str(job.get("department"), "descriptor", "name")
+        or ""
+    )
+
+
+def _wd_parse_location(location_raw: str) -> tuple[str, str, str]:
+    """
+    Best-effort city/state/country from a Workday locationsText string.
+    Handles: "Austin, TX, USA", "Austin, TX, United States", "Remote" etc.
+    Multi-location strings ("City1, ST1, USA | City2, ST2, USA") return
+    only the first entry's components.
+    """
+    if not location_raw:
+        return "", "", ""
+    # Take only the first segment in a pipe-delimited multi-location string
+    first = location_raw.split("|")[0].strip()
+    parts = [p.strip() for p in first.split(",") if p.strip()]
+    if len(parts) >= 3:
+        city = parts[0]
+        state = parts[1]
+        country = _wd_normalize_country(parts[-1])
+        return city, state, country
+    if len(parts) == 2:
+        # Could be "City, State" or "City, Country"
+        second = parts[1]
+        if len(second) == 2 and second.isupper():
+            return parts[0], second, ""
+        if second.lower() in ("usa", "us", "united states", "canada", "uk", "united kingdom", "australia"):
+            return parts[0], "", _wd_normalize_country(second)
+        return parts[0], second, ""
+    return "", "", ""
+
+
+def _wd_normalize_country(raw: str) -> str:
+    v = (raw or "").strip()
+    _map = {"US": "United States", "USA": "United States", "UK": "United Kingdom", "GB": "United Kingdom"}
+    return _map.get(v.upper(), v)
+
+
+def _wd_employment_type(job: dict) -> str:
+    """Map Workday schedule/type fields to our canonical employment type."""
+    text = " ".join(filter(None, [
+        _wd_str(job.get("jobScheduleType")),
+        _wd_str(job.get("workerSubType")),
+        _wd_str(job.get("workerType")),
+        _wd_str(job.get("employmentType")),
+    ])).lower()
+    if not text:
+        return "UNKNOWN"
+    if "intern" in text:
+        return "INTERNSHIP"
+    if "contract" in text or "contingent" in text or "temp" in text:
+        return "CONTRACT"
+    if "part" in text:
+        return "PART_TIME"
+    if "full" in text or "regular" in text or "permanent" in text:
+        return "FULL_TIME"
+    return "UNKNOWN"
+
+
+def _wd_parse_salary(job: dict) -> tuple[float | None, float | None, str, str]:
+    """
+    Return (sal_min, sal_max, sal_period, salary_raw) from list-API job fields.
+    Tries numeric compensation fields first, then free-text.
+    """
+    # Numeric fields (detail API sometimes exposes these on list too)
+    from_amt = job.get("compensationFromAmt") or job.get("salaryFromAmt")
+    to_amt   = job.get("compensationToAmt")   or job.get("salaryToAmt")
+    if from_amt and isinstance(from_amt, (int, float)) and float(from_amt) > 0:
+        sal_min = float(from_amt)
+        sal_max = float(to_amt) if to_amt and isinstance(to_amt, (int, float)) and float(to_amt) > 0 else sal_min
+        sal_period = _wd_str(job.get("compensationPeriod") or job.get("salaryPeriod")) or "YEAR"
+        raw = f"{sal_min:,.0f}–{sal_max:,.0f}" if sal_max != sal_min else f"{sal_min:,.0f}"
+        return sal_min, sal_max, sal_period.upper(), raw
+
+    # Free-text fallback
+    raw_text = (
+        _wd_str(job.get("annualCompensationSummary"), "descriptor", "summary")
+        or _wd_str(job.get("compensationGrade"), "descriptor")
+        or _wd_str(job.get("compensationRangeStr"))
+        or ""
+    )
+    if not raw_text:
+        return None, None, "", ""
+
+    nums = _re.findall(r"[\d,]+(?:\.\d+)?", raw_text.replace(",", ""))
+    cleaned = []
+    for n in nums:
+        try:
+            v = float(n.replace(",", ""))
+            if 1_000 < v < 10_000_000:
+                cleaned.append(v)
+        except ValueError:
+            pass
+    sal_min = cleaned[0] if cleaned else None
+    sal_max = cleaned[1] if len(cleaned) > 1 else sal_min
+    tl = raw_text.lower()
+    if "hour" in tl or "/hr" in tl:
+        sal_period = "HOUR"
+    elif "month" in tl:
+        sal_period = "MONTH"
+    else:
+        sal_period = "YEAR"
+    return sal_min, sal_max, sal_period, raw_text
+
 
 def _workday_location_candidates(data: dict) -> list[str]:
     try:
@@ -50,13 +228,18 @@ def _workday_location_candidates(data: dict) -> list[str]:
     except Exception:
         return []
     info = data.get("jobPostingInfo") or data
+    loc_raw = str(info.get("locationsText") or data.get("locationsText") or "")
+    vendor_block = str(
+        info.get("location") or info.get("jobLocation") or
+        data.get("location") or data.get("jobLocation") or ""
+    )
+    city, state, country = _wd_parse_location(loc_raw)
     return extract_location_candidates(
-        location_raw=(
-            str(info.get("locationsText") or data.get("locationsText") or "")
-        ),
-        vendor_location_block=str(
-            info.get("location") or info.get("jobLocation") or data.get("location") or ""
-        ),
+        location_raw=loc_raw,
+        city=city,
+        state=state,
+        country=country,
+        vendor_location_block=vendor_block,
         raw_payload=data,
     )
 
@@ -85,18 +268,56 @@ def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: s
             return {}
         info = data.get("jobPostingInfo") or data
         result: dict[str, Any] = {"raw_payload": data}
-        for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
-            val = info.get(key) or data.get(key) or ""
-            if isinstance(val, dict):
-                val = val.get("content", "") or ""
-            val = str(val).strip()
-            if val:
-                result["description"] = val
+
+        # Description — check progressively deeper nesting
+        for src in (info, data):
+            for key in (
+                "jobDescription", "jobPostingDescription",
+                "externalJobDescription", "jobSummary", "shortDescription",
+            ):
+                val = src.get(key) or ""
+                if isinstance(val, dict):
+                    val = val.get("content", "") or val.get("descriptor", "") or ""
+                val = str(val).strip()
+                if len(val) > 80:
+                    result["description"] = val
+                    break
+            if "description" in result:
                 break
+
+        # Location
         location_candidates = _workday_location_candidates(data)
         if location_candidates:
             result["location_candidates"] = location_candidates
-            result["location_raw"] = " | ".join(location_candidates)[:512]
+            loc_raw = str(info.get("locationsText") or data.get("locationsText") or "")
+            if not loc_raw:
+                loc_raw = " | ".join(location_candidates)
+            result["location_raw"] = loc_raw[:512]
+            result["city"], result["state"], result["country"] = _wd_parse_location(loc_raw)
+
+        # Salary from detail (numeric fields are more reliable than free-text)
+        sal_min, sal_max, sal_period, sal_raw = _wd_parse_salary(info)
+        if sal_min:
+            result["salary_min"] = sal_min
+            result["salary_max"] = sal_max
+            result["salary_period"] = sal_period
+            result["salary_raw"] = sal_raw
+
+        # vendor_degree_level from detail
+        deg = (
+            _wd_str(info.get("minimumQualifications"), "descriptor")
+            or _wd_str(info.get("educationLevel"), "descriptor")
+            or _wd_str(info.get("degreeLevel"), "descriptor")
+            or ""
+        )
+        if deg:
+            result["vendor_degree_level"] = deg[:128]
+
+        # Department from detail (may be more specific than list API)
+        dept = _wd_department(info) or _wd_department(data)
+        if dept:
+            result["department"] = dept
+
         return result
     except Exception:
         pass
@@ -116,8 +337,13 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
     else:
         job_url = ""
 
-    location_raw = job.get("locationsText", "")
+    # ── External ID ───────────────────────────────────────────────────────────
+    ext_id = _wd_req_id(ext_path, job.get("bulletFields") or [])
+
+    # ── Location ──────────────────────────────────────────────────────────────
+    location_raw = _wd_str(job.get("locationsText"))
     location_candidates = _workday_location_candidates(job)
+    city, state, country = _wd_parse_location(location_raw)
     loc_lower = location_raw.lower()
     if "remote" in loc_lower:
         is_remote = True
@@ -132,90 +358,40 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         is_remote = False
         location_type = "UNKNOWN"
 
-    title = job.get("title", "")
+    # ── Title & description ───────────────────────────────────────────────────
+    title = _wd_str(job.get("title"))
 
-    # Workday search API sometimes includes a short description or full body
-    description = (
-        job.get("jobDescription", {}).get("content", "")
-        or job.get("jobPostingDescription", {}).get("content", "")
-        or job.get("shortDescription", "")
-        or ""
-    )
-    if isinstance(description, dict):
-        description = description.get("content", "") or ""
+    description = ""
+    for key in ("jobDescription", "jobPostingDescription", "externalJobDescription", "shortDescription"):
+        val = job.get(key) or ""
+        if isinstance(val, dict):
+            val = val.get("content", "") or val.get("descriptor", "") or ""
+        val = str(val).strip()
+        if val:
+            description = val
+            break
+
     exp_level = _detect_experience_level(title, description[:500])
 
-    # Workday bullet fields sometimes contain the req ID
-    ext_id = ""
-    bullet = job.get("bulletFields", [])
-    if bullet:
-        ext_id = bullet[0] if bullet else ""
+    # ── Department ────────────────────────────────────────────────────────────
+    dept = _wd_department(job)
+    vendor_job_category = dept  # preserve original before truncation
 
-    # Department from jobFamily or jobFamilyGroup
-    dept = (
-        (job.get("jobFamilyGroup") or [{}])[0].get("jobFamilyGroupName", "")
-        if isinstance(job.get("jobFamilyGroup"), list)
-        else job.get("jobFamilyGroup", "")
-        if isinstance(job.get("jobFamilyGroup"), str)
-        else ""
-    )
+    # ── Employment type ───────────────────────────────────────────────────────
+    employment_type = _wd_employment_type(job)
 
-    # ── Employment type from jobScheduleType / workerSubType ─────────────────
-    sched = (job.get("jobScheduleType") or job.get("workerSubType") or "").lower()
-    if "part" in sched:
-        employment_type = "PART_TIME"
-    elif "contract" in sched or "temp" in sched:
-        employment_type = "CONTRACT"
-    elif "intern" in sched:
-        employment_type = "INTERNSHIP"
-    elif "full" in sched or "regular" in sched:
-        employment_type = "FULL_TIME"
-    else:
-        employment_type = "UNKNOWN"
+    # ── Salary ────────────────────────────────────────────────────────────────
+    sal_min, sal_max, sal_period, salary_raw = _wd_parse_salary(job)
 
-    # ── Salary from various Workday fields ────────────────────────────────────
-    salary_raw = (
-        job.get("annualCompensationSummary")
-        or job.get("compensationGrade")
-        or job.get("compensationRangeStr")
-        or ""
-    )
-    if isinstance(salary_raw, dict):
-        salary_raw = salary_raw.get("descriptor") or salary_raw.get("summary") or ""
-    salary_raw = str(salary_raw).strip()
-
-    # Try to parse min/max from salary_raw
-    sal_min = sal_max = None
-    sal_period = ""
-    if salary_raw:
-        import re as _re
-        nums = _re.findall(r"[\d,]+(?:\.\d+)?", salary_raw.replace(",", ""))
-        cleaned = []
-        for n in nums:
-            try:
-                v = float(n.replace(",", ""))
-                if 1000 < v < 10_000_000:  # plausible salary range
-                    cleaned.append(v)
-            except ValueError:
-                pass
-        sal_min = cleaned[0] if cleaned else None
-        sal_max = cleaned[1] if len(cleaned) > 1 else sal_min
-        tl = salary_raw.lower()
-        if "hour" in tl or "/hr" in tl:
-            sal_period = "HOUR"
-        elif "month" in tl:
-            sal_period = "MONTH"
-        else:
-            sal_period = "YEAR"
-
-    # Preserve raw schedule/degree API values in vendor fields so they're
-    # stored and available for analytics even before AI enrichment runs.
-    vendor_job_schedule = str(job.get("jobScheduleType") or "")[:128]
-    vendor_degree_level = str(job.get("minimumQualifications") or
-                              job.get("educationLevel") or
-                              job.get("degreeLevel") or "")[:128]
-    if isinstance(job.get("minimumQualifications"), dict):
-        vendor_degree_level = str(job["minimumQualifications"].get("descriptor", ""))[:128]
+    # ── Vendor fields ─────────────────────────────────────────────────────────
+    vendor_job_identification = ext_id
+    vendor_job_schedule = _wd_str(job.get("jobScheduleType"))[:128]
+    vendor_degree_level = (
+        _wd_str(job.get("minimumQualifications"), "descriptor")
+        or _wd_str(job.get("educationLevel"), "descriptor")
+        or _wd_str(job.get("degreeLevel"), "descriptor")
+    )[:128]
+    vendor_location_block = location_raw[:512]
 
     return {
         "external_id": ext_id,
@@ -227,9 +403,9 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "team": "",
         "location_raw": location_raw,
         "location_candidates": location_candidates,
-        "city": "",
-        "state": "",
-        "country": "",
+        "city": city,
+        "state": state,
+        "country": country,
         "is_remote": is_remote,
         "location_type": location_type,
         "employment_type": employment_type,
@@ -243,11 +419,22 @@ def _normalize_workday_job(job: dict, job_domain: str, company_name: str, jobboa
         "requirements": "",
         "responsibilities": "",
         "benefits": "",
+        "vendor_job_identification": vendor_job_identification,
+        "vendor_job_category": vendor_job_category[:128],
         "vendor_job_schedule": vendor_job_schedule,
         "vendor_degree_level": vendor_degree_level,
-        "posted_date_raw": job.get("postedOn", ""),
-        "closing_date": "",
+        "vendor_location_block": vendor_location_block,
+        "posted_date_raw": _wd_str(job.get("postedOn")),
+        "closing_date": _wd_str(job.get("closingDate")),
         "raw_payload": job,
+        "source_payloads": [
+            {
+                "kind": "list",
+                "payload": job,
+                "source_url": job_url,
+                "metadata": {"platform": "workday", "source": "workday_search_api"},
+            }
+        ],
     }
 
 
@@ -388,11 +575,18 @@ class WorkdayHarvester(BaseHarvester):
                     self._session, full_subdomain, tenant_val, path, ext_path_val
                 )
                 detail_fetched += 1
+
                 if detail.get("description"):
                     job_dict["description"] = detail["description"]
                 if detail.get("location_raw"):
                     job_dict["location_raw"] = detail["location_raw"]
                     job_dict["location_candidates"] = detail.get("location_candidates") or []
+                    if detail.get("city"):
+                        job_dict["city"] = detail["city"]
+                    if detail.get("state"):
+                        job_dict["state"] = detail["state"]
+                    if detail.get("country"):
+                        job_dict["country"] = detail["country"]
                     loc_lower = job_dict["location_raw"].lower()
                     job_dict["is_remote"] = "remote" in loc_lower
                     job_dict["location_type"] = (
@@ -400,10 +594,31 @@ class WorkdayHarvester(BaseHarvester):
                         "HYBRID" if "hybrid" in loc_lower else
                         "ONSITE"
                     )
+                # Upgrade salary if detail has better (numeric) data
+                if detail.get("salary_min") and not job_dict.get("salary_min"):
+                    job_dict["salary_min"] = detail["salary_min"]
+                    job_dict["salary_max"] = detail.get("salary_max")
+                    job_dict["salary_period"] = detail.get("salary_period", "YEAR")
+                    job_dict["salary_raw"] = detail.get("salary_raw", "")
+                # Upgrade department from detail when list-API had nothing
+                if detail.get("department") and not job_dict.get("department"):
+                    job_dict["department"] = detail["department"]
+                    job_dict["vendor_job_category"] = detail["department"][:128]
+                # Upgrade vendor_degree_level from detail
+                if detail.get("vendor_degree_level") and not job_dict.get("vendor_degree_level"):
+                    job_dict["vendor_degree_level"] = detail["vendor_degree_level"]
                 if detail.get("raw_payload"):
-                    payload = dict(job_dict.get("raw_payload") or {})
-                    payload["detail"] = detail["raw_payload"]
-                    job_dict["raw_payload"] = payload
+                    existing = dict(job_dict.get("raw_payload") or {})
+                    existing["detail"] = detail["raw_payload"]
+                    job_dict["raw_payload"] = existing
+                    source_payloads = list(job_dict.get("source_payloads") or [])
+                    source_payloads.append({
+                        "kind": "detail",
+                        "payload": detail["raw_payload"],
+                        "source_url": job_dict.get("original_url") or "",
+                        "metadata": {"platform": self.platform_slug, "source": "workday_detail_api"},
+                    })
+                    job_dict["source_payloads"] = source_payloads
 
             self.last_detail_fetched = detail_fetched
             return results

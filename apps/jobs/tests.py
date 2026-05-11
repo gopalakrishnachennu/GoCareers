@@ -79,6 +79,18 @@ class JobListUrlHealthFilterTests(TestCase):
         self.assertNotContains(resp, 'Live role')
 
 
+class MatchScoreStringTests(TestCase):
+    def test_match_score_str_does_not_reference_missing_title(self):
+        from .models import MatchScore
+
+        score = MatchScore(job_id=11, consultant_id=22, score=0.875)
+
+        rendered = str(score)
+        self.assertIn("Job 11", rendered)
+        self.assertIn("Consultant 22", rendered)
+        self.assertIn("0.875", rendered)
+
+
 class MarketingRoleRoutingTests(TestCase):
     def setUp(self):
         clear_marketing_role_cache()

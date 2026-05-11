@@ -248,6 +248,7 @@ class AshbyHarvester(BaseHarvester):
             dept         = ""
             city = state = country = ""
             posted_date  = ""
+            detail_source_payload = None
 
             if job_id:
                 try:
@@ -283,6 +284,7 @@ class AshbyHarvester(BaseHarvester):
                             sal_min, sal_max, salary_currency, salary_period, salary_raw = (
                                 _parse_comp_summary(comp_summary)
                             )
+                        detail_source_payload = p
                 except Exception:
                     pass  # description stays empty — backfill will handle it
                 time.sleep(MIN_DELAY_API)
@@ -315,9 +317,30 @@ class AshbyHarvester(BaseHarvester):
                 "requirements":     "",
                 "responsibilities": "",
                 "benefits":         "",
+                "vendor_job_identification": job_id,
+                "vendor_job_category":  dept[:128] if dept else "",
+                "vendor_job_schedule":  brief.get("employmentType", "")[:128],
+                "vendor_location_block": loc_name[:512] if loc_name else "",
                 "posted_date_raw":  posted_date,
                 "closing_date":     "",
                 "raw_payload":      brief,
+                "source_payloads": [
+                    {
+                        "kind": "list",
+                        "payload": brief,
+                        "source_url": job_url,
+                        "metadata": {"platform": self.platform_slug, "source": "ashby_list_graphql"},
+                    },
+                    *(
+                        [{
+                            "kind": "detail",
+                            "payload": detail_source_payload,
+                            "source_url": job_url,
+                            "metadata": {"platform": self.platform_slug, "source": "ashby_detail_graphql"},
+                        }]
+                        if detail_source_payload else []
+                    ),
+                ],
             })
 
         return results

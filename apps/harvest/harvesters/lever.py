@@ -186,9 +186,21 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
         "requirements": requirements,
         "responsibilities": responsibilities,
         "benefits": benefits,
+        "vendor_job_identification": str(job.get("id", "")),
+        "vendor_job_category": str(cats.get("department", "") or cats.get("team", ""))[:128],
+        "vendor_job_schedule": str(commitment)[:128],
+        "vendor_location_block": (combined_raw or location_raw)[:512],
         "posted_date_raw": str(job.get("createdAt", "")),
         "closing_date": "",
         "raw_payload": job,
+        "source_payloads": [
+            {
+                "kind": "api_response",
+                "payload": job,
+                "source_url": job.get("hostedUrl", ""),
+                "metadata": {"platform": "lever", "source": "lever_postings_api"},
+            }
+        ],
     }
 
 

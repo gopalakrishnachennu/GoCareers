@@ -138,3 +138,113 @@ def capture_rawjob_payload_snapshot(
             payload_kind=payload_kind,
             content_hash=content_hash,
         ).first()
+
+
+def _valid_payload_kind(value: Any, default: str) -> str:
+    value = str(value or "").strip()
+    valid = {choice[0] for choice in RawJobPayloadSnapshot.PayloadKind.choices}
+    return value if value in valid else default
+
+
+def _dict_or_empty(value: Any) -> dict:
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
+def capture_rawjob_source_payloads(
+    raw_job: RawJob,
+    job_data: Mapping[str, Any],
+    *,
+    default_payload_kind: str = RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+    default_source_url: str = "",
+    default_platform_slug: str = "",
+    default_raw_html: str = "",
+    default_source_metadata: dict | None = None,
+    fetch_batch=None,
+) -> list[RawJobPayloadSnapshot]:
+    """
+    Persist every immutable source payload attached to a harvested job.
+
+    Harvester adapters may attach ``source_payloads`` entries before any
+    classification/normalization runs. If an adapter has not been upgraded yet,
+    this falls back to the legacy ``raw_payload`` field so capture still works.
+    """
+    if not isinstance(job_data, Mapping):
+        job_data = {}
+
+    default_payload_kind = _valid_payload_kind(
+        default_payload_kind,
+        RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+    )
+    base_metadata = dict(default_source_metadata or {})
+    source_payloads = job_data.get("source_payloads") or []
+    if not isinstance(source_payloads, list):
+        source_payloads = []
+
+    snapshots: list[RawJobPayloadSnapshot] = []
+    for idx, entry in enumerate(source_payloads):
+        if isinstance(entry, Mapping):
+            payload = entry.get("payload")
+            raw_html = entry.get("raw_html") or ""
+            payload_kind = _valid_payload_kind(
+                entry.get("payload_kind") or entry.get("kind"),
+                default_payload_kind,
+            )
+            source_url = entry.get("source_url") or default_source_url
+            platform_slug = entry.get("platform_slug") or default_platform_slug
+            schema_version = entry.get("schema_version") or "source-v1"
+            source_metadata = {
+                **base_metadata,
+                **_dict_or_empty(entry.get("source_metadata") or entry.get("metadata")),
+                "source_payload_index": idx,
+            }
+            is_failure = bool(entry.get("is_failure", False))
+            try:
+                http_status = int(entry["http_status"]) if entry.get("http_status") is not None else None
+            except (TypeError, ValueError):
+                http_status = None
+        else:
+            payload = entry
+            raw_html = ""
+            payload_kind = default_payload_kind
+            source_url = default_source_url
+            platform_slug = default_platform_slug
+            schema_version = "source-v1"
+            source_metadata = {**base_metadata, "source_payload_index": idx}
+            is_failure = False
+            http_status = None
+
+        snapshot = capture_rawjob_payload_snapshot(
+            raw_job,
+            payload=payload,
+            raw_html=raw_html,
+            payload_kind=payload_kind,
+            source_url=source_url,
+            fetch_batch=fetch_batch,
+            platform_slug=platform_slug,
+            schema_version=schema_version,
+            source_metadata=source_metadata,
+            is_failure=is_failure,
+            http_status=http_status,
+        )
+        if snapshot is not None:
+            snapshots.append(snapshot)
+
+    if snapshots:
+        return snapshots
+
+    payload = job_data.get("raw_payload") or {}
+    raw_html = default_raw_html or job_data.get("description_raw_html") or ""
+    if not raw_html and isinstance(payload, Mapping):
+        raw_html = payload.get("raw_html") or payload.get("html") or ""
+
+    fallback = capture_rawjob_payload_snapshot(
+        raw_job,
+        payload=payload,
+        raw_html=raw_html,
+        payload_kind=default_payload_kind,
+        source_url=default_source_url or job_data.get("original_url") or raw_job.original_url,
+        fetch_batch=fetch_batch,
+        platform_slug=default_platform_slug or job_data.get("platform_slug") or raw_job.platform_slug,
+        source_metadata={**base_metadata, "source_payload_fallback": "raw_payload"},
+    )
+    return [fallback] if fallback is not None else []

@@ -179,13 +179,19 @@
                   {% if snapshot.source_url %}<div class="break-all sm:col-span-2"><span class="font-semibold text-slate-400">Source:</span> {{ snapshot.source_url }}</div>{% endif %}
                 </dl>
                 {% if snapshot.payload %}
-                <p class="mb-2 text-[10px] font-bold uppercase tracking-wide text-slate-400">Sanitized JSON</p>
-                <pre class="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ snapshot.payload|pprint }}</pre>
+                <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+                  <p class="text-[10px] font-bold uppercase tracking-wide text-slate-400">Sanitized source JSON before classification</p>
+                  <button type="button" class="payload-copy-btn inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800" data-copy-target="payload-json-{{ snapshot.pk }}">Copy JSON</button>
+                </div>
+                <pre id="payload-json-{{ snapshot.pk }}" class="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ snapshot.payload|pprint }}</pre>
                 {% endif %}
                 {% if snapshot.raw_html_gzip %}
                 <details class="mt-3">
                   <summary class="cursor-pointer text-xs font-bold uppercase tracking-wide text-slate-500">Sanitized compressed HTML preview</summary>
-                  <pre class="mt-2 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ snapshot.raw_html_preview }}</pre>
+                  <div class="mt-2 mb-2 flex justify-end">
+                    <button type="button" class="payload-copy-btn inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800" data-copy-target="payload-html-{{ snapshot.pk }}">Copy HTML</button>
+                  </div>
+                  <pre id="payload-html-{{ snapshot.pk }}" class="max-h-80 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ snapshot.raw_html_preview }}</pre>
                 </details>
                 {% endif %}
               </div>
@@ -199,7 +205,11 @@
         <div class="p-6">
           <details>
             <summary class="cursor-pointer select-none text-xs font-bold uppercase tracking-wide text-slate-500">Legacy mutable raw payload</summary>
-            <pre class="mt-3 max-h-96 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ rawjob.raw_payload|pprint }}</pre>
+            <div class="mt-3 mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p class="text-xs text-slate-500">Older mixed payload kept for compatibility. New source evidence is stored above in Source Payload Archive.</p>
+              <button type="button" class="payload-copy-btn inline-flex items-center rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-teal-300 hover:bg-teal-50 hover:text-teal-800" data-copy-target="legacy-raw-payload">Copy legacy payload</button>
+            </div>
+            <pre id="legacy-raw-payload" class="max-h-96 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs leading-6 text-slate-700">{{ rawjob.raw_payload|pprint }}</pre>
           </details>
         </div>
         {% endif %}
@@ -455,5 +465,26 @@ function toggleDesc() {
     btn.textContent = 'Show less ▲';
   }
 }
+
+document.querySelectorAll('.payload-copy-btn').forEach(function(btn) {
+  btn.addEventListener('click', async function() {
+    var targetId = btn.getAttribute('data-copy-target');
+    var target = targetId ? document.getElementById(targetId) : null;
+    if (!target) return;
+    var original = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(target.innerText || target.textContent || '');
+      btn.textContent = 'Copied';
+      btn.classList.add('border-emerald-300', 'bg-emerald-50', 'text-emerald-800');
+      setTimeout(function() {
+        btn.textContent = original;
+        btn.classList.remove('border-emerald-300', 'bg-emerald-50', 'text-emerald-800');
+      }, 1400);
+    } catch (err) {
+      btn.textContent = 'Copy failed';
+      setTimeout(function() { btn.textContent = original; }, 1400);
+    }
+  });
+});
 </script>
 {% endblock %}

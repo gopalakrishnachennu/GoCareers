@@ -214,4 +214,5 @@ def normalize_job_data(
         "is_active": True,
         "sync_status": "PENDING",
         "raw_payload": raw_job.get("raw_payload", {}),
+        "source_payloads": raw_job.get("source_payloads") or [],
     }

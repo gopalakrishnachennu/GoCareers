@@ -299,9 +299,6 @@ class MatchScore(models.Model):
     def score_pct(self):
         return int(self.score * 100)
 
-    def __str__(self):
-        return self.title
-
 
 class PipelineEvent(models.Model):
     """Single source of truth for job lifecycle transitions.

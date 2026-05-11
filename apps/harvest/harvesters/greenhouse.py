@@ -274,10 +274,21 @@ class GreenhouseHarvester(BaseHarvester):
                 "requirements": "",
                 "responsibilities": "",
                 "benefits": "",
+                "vendor_job_identification": str(job.get("id", "")),
+                "vendor_job_category": dept[:128],
+                "vendor_location_block": location_raw[:512],
                 "vendor_degree_level": vendor_degree_level,
                 "posted_date_raw": updated_raw,
                 "closing_date": "",
                 "raw_payload": job,
+                "source_payloads": [
+                    {
+                        "kind": "api_response",
+                        "payload": job,
+                        "source_url": url,
+                        "metadata": {"platform": self.platform_slug, "source": "greenhouse_jobs_api"},
+                    }
+                ],
             })
 
         return results

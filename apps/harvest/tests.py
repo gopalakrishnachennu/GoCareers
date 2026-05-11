@@ -142,6 +142,51 @@ class RawJobPayloadArchiveTests(TestCase):
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(raw.payload_snapshots.count(), 1)
 
+    def test_source_payloads_capture_list_and_detail_before_fallback(self):
+        from harvest.models import RawJobPayloadSnapshot
+        from harvest.payload_archive import capture_rawjob_source_payloads
+
+        raw = self._raw_job()
+        snapshots = capture_rawjob_source_payloads(
+            raw,
+            {
+                "raw_payload": {"normalized": True},
+                "source_payloads": [
+                    {
+                        "kind": "list",
+                        "payload": {"id": "REQ-1", "title": "List title"},
+                        "metadata": {"source": "list_api"},
+                    },
+                    {
+                        "kind": "detail",
+                        "payload": {"id": "REQ-1", "description": "Detail body"},
+                        "metadata": {"source": "detail_api"},
+                    },
+                ],
+            },
+            default_source_url="https://jobs.example.com/role",
+            default_platform_slug="workday",
+        )
+
+        self.assertEqual(len(snapshots), 2)
+        kinds = set(raw.payload_snapshots.values_list("payload_kind", flat=True))
+        self.assertEqual(kinds, {RawJobPayloadSnapshot.PayloadKind.LIST, RawJobPayloadSnapshot.PayloadKind.DETAIL})
+        self.assertFalse(raw.payload_snapshots.filter(payload__normalized=True).exists())
+
+    def test_source_payloads_fallback_to_legacy_raw_payload(self):
+        from harvest.models import RawJobPayloadSnapshot
+        from harvest.payload_archive import capture_rawjob_source_payloads
+
+        raw = self._raw_job()
+        snapshots = capture_rawjob_source_payloads(
+            raw,
+            {"raw_payload": {"legacy": True}},
+            default_payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+        )
+
+        self.assertEqual(len(snapshots), 1)
+        self.assertTrue(raw.payload_snapshots.filter(payload__legacy=True).exists())
+
 
 class SmokeTestHarvestCommandTests(TestCase):
     """Dry-run must not require network or Celery."""

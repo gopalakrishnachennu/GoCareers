@@ -231,9 +231,29 @@ class SmartRecruitersHarvester(BaseHarvester):
             "requirements": requirements,
             "responsibilities": responsibilities,
             "benefits": benefits,
+            "vendor_job_identification": str(job_id),
+            "vendor_job_category": dept[:128],
+            "vendor_location_block": location_raw[:512],
             "vendor_degree_level": vendor_degree_level,
             "vendor_job_schedule": vendor_job_schedule,
             "posted_date_raw": p.get("releasedDate") or "",
             "closing_date": "",
             "raw_payload": raw_payload,
+            "source_payloads": [
+                {
+                    "kind": "list",
+                    "payload": p,
+                    "source_url": posting_url,
+                    "metadata": {"platform": self.platform_slug, "source": "smartrecruiters_postings_api"},
+                },
+                *(
+                    [{
+                        "kind": "detail",
+                        "payload": detail,
+                        "source_url": posting_url,
+                        "metadata": {"platform": self.platform_slug, "source": "smartrecruiters_detail_api"},
+                    }]
+                    if isinstance(detail, dict) and detail and "error" not in detail else []
+                ),
+            ],
         }
