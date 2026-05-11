@@ -105,8 +105,18 @@ def _parse_lever_salary(text: str) -> tuple:
     return sal_min, sal_max, period, raw
 
 
-def _extract_lever_sections(lists: list) -> tuple[str, str, str, str]:
-    """Parse Lever `lists` array into (requirements, responsibilities, benefits, salary_text)."""
+_LEVER_SECTION_RE = re.compile(
+    r"(?:^|\n)\s*(?P<hdr>Requirements?|Qualifications?|What You(?:'ll| Will) Do|"
+    r"Responsibilities?|The Role|Your Role|Benefits?|Perks?|Compensation|Salary)\s*:?\s*\n"
+    r"(?P<body>(?:.+\n?){1,60}?)(?=\n\s*(?:Requirements?|Qualifications?|What You|"
+    r"Responsibilities?|The Role|Your Role|Benefits?|Perks?|Compensation|Salary|$))",
+    re.I | re.M,
+)
+
+
+def _extract_lever_sections(lists: list, description: str = "") -> tuple[str, str, str, str]:
+    """Parse Lever `lists` array into (requirements, responsibilities, benefits, salary_text).
+    Falls back to description text parsing when lists is empty."""
     requirements = responsibilities = benefits = salary_text = ""
     for item in lists or []:
         label = (item.get("text") or "").lower().strip()
@@ -121,6 +131,21 @@ def _extract_lever_sections(lists: list) -> tuple[str, str, str, str]:
             benefits = plain
         elif any(k in label for k in ("compensat", "salary", "pay")):
             salary_text = plain
+
+    # Fallback: parse section headers from plain description when lists gave nothing
+    if not requirements and not responsibilities and description:
+        for m in _LEVER_SECTION_RE.finditer(description):
+            hdr = m.group("hdr").lower()
+            body = m.group("body").strip()
+            if not body:
+                continue
+            if any(k in hdr for k in ("requirement", "qualification")):
+                requirements = requirements or body
+            elif any(k in hdr for k in ("responsib", "will do", "the role", "your role")):
+                responsibilities = responsibilities or body
+            elif any(k in hdr for k in ("benefit", "perk", "compensat", "salary")):
+                benefits = benefits or body
+
     return requirements, responsibilities, benefits, salary_text
 
 
@@ -135,14 +160,13 @@ def _normalize_lever_job(job: dict, company_name: str) -> dict:
 
     # Description + section extraction
     description_blocks = job.get("descriptionPlain", "") or ""
-    lists = job.get("lists") or []
-    requirements, responsibilities, benefits, salary_text = _extract_lever_sections(lists)
-
-    # Build full description including all list sections
     lists_plain = job.get("listsPlain", "") or ""
     description = description_blocks
     if lists_plain:
         description = f"{description}\n\n{lists_plain}".strip()
+
+    lists = job.get("lists") or []
+    requirements, responsibilities, benefits, salary_text = _extract_lever_sections(lists, description)
 
     title = job.get("text", "")
     experience_level = _detect_experience_level(title, description[:500])

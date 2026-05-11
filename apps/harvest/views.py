@@ -55,7 +55,8 @@ from .services.rawjob_query import (
 logger = logging.getLogger(__name__)
 
 
-_FULL_CRAWL_COOLDOWN_HOURS = 2
+_FULL_CRAWL_COOLDOWN_HOURS = 2  # fallback; actual value from HarvestEngineConfig
+_FULL_CRAWL_LOCK_KEY = "harvest:full_crawl:cooldown_lock"  # cache-layer enforcement
 
 
 def _effective_classification_q(min_conf: float = 0.01) -> Q:
@@ -331,6 +332,15 @@ def _sync_rawjob_to_pool(raw_job, *, posted_by):
     return job, True
 
 
+def _full_crawl_cooldown_minutes() -> int:
+    """Return configured full-crawl cooldown in minutes (from HarvestEngineConfig)."""
+    try:
+        from .models import HarvestEngineConfig
+        return int(HarvestEngineConfig.get().full_fetch_cooldown_minutes)
+    except Exception:
+        return int(_FULL_CRAWL_COOLDOWN_HOURS * 60)
+
+
 def _full_crawl_cooldown_ctx() -> dict:
     """Return last_full_batch + cooldown_remaining_sec for any view that shows the Full Crawl button."""
     last_full_batch = (
@@ -340,10 +350,11 @@ def _full_crawl_cooldown_ctx() -> dict:
         .order_by("-created_at")
         .first()
     )
+    cooldown_secs = _full_crawl_cooldown_minutes() * 60
     cooldown_remaining_sec = 0
     if last_full_batch:
         elapsed = (timezone.now() - last_full_batch.created_at).total_seconds()
-        cooldown_remaining_sec = max(0, int(_FULL_CRAWL_COOLDOWN_HOURS * 3600 - elapsed))
+        cooldown_remaining_sec = max(0, int(cooldown_secs - elapsed))
     return {"last_full_batch": last_full_batch, "cooldown_remaining_sec": cooldown_remaining_sec}
 
 
@@ -674,21 +685,32 @@ class LabelUpdateTenantView(SuperuserRequiredMixin, View):
 
 class RunDetectNowView(SuperuserRequiredMixin, View):
     def post(self, request):
+        from .models import HarvestEngineConfig
         from .tasks import detect_company_platforms_task
+
+        # batch_size defaults to HarvestEngineConfig.detect_batch_size (configurable from GUI)
+        raw_batch = (request.POST.get("batch_size") or "").strip()
+        batch_size = int(raw_batch) if raw_batch.isdigit() else None  # None → task reads config
+        platform_slug = (request.POST.get("platform_slug") or "").strip() or None
+        force_recheck = request.POST.get("force_recheck", "") in ("1", "true", "True")
+
         task = detect_company_platforms_task.delay(
-            batch_size=200,
+            batch_size=batch_size,
+            force_recheck=force_recheck,
             triggered_user_id=request.user.id,
+            platform_slug=platform_slug,
         )
+        platform_label = f" ({platform_slug})" if platform_slug else ""
         messages.success(
             request,
-            "Platform detection is running on the server. "
+            f"Platform detection{platform_label} is running on the server. "
             f"Refresh Run Monitor to see progress (task {task.id[:8]}…). "
             "Switching tabs does not stop this job.",
         )
         return redirect_with_task_progress(
             "ops-center",
             task.id,
-            "Platform detection",
+            f"Platform detection{platform_label}",
         )
 
 
@@ -798,15 +820,30 @@ class RunRetryFailedFetchesView(SuperuserRequiredMixin, View):
 
 
 class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
-    """POST — run robust link-health validation on active raw jobs."""
+    """POST — run robust link-health validation on active raw jobs.
+
+    Defaults for pending_only and recent_hours fall back to HarvestEngineConfig
+    so they're tunable from the GUI:
+      validate_links_include_synced → pending_only default
+      validate_links_recent_hours   → recent_hours default
+    """
 
     def post(self, request):
+        from .models import HarvestEngineConfig
         from .tasks import validate_raw_job_urls_task
 
+        cfg = HarvestEngineConfig.get()
         platform = (request.POST.get("platform_slug") or "").strip() or None
-        recent_hours = request.POST.get("recent_hours", "").strip()
-        pending_only = (request.POST.get("pending_only", "1").strip() != "0")
+        recent_hours_raw = request.POST.get("recent_hours", "").strip()
         max_jobs = request.POST.get("max_jobs", "").strip()
+
+        # pending_only: if caller explicitly passes 0/1 use it; otherwise use config
+        pending_only_raw = request.POST.get("pending_only", "")
+        if pending_only_raw in ("0", "1"):
+            pending_only = (pending_only_raw == "1")
+        else:
+            # include_synced=True → pending_only=False
+            pending_only = not cfg.validate_links_include_synced
 
         kwargs = {
             "batch_size": 250,
@@ -815,19 +852,20 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
         }
         if platform:
             kwargs["platform_slug"] = platform
-        if recent_hours.isdigit():
-            kwargs["recent_hours"] = int(recent_hours)
+        if recent_hours_raw.isdigit():
+            kwargs["recent_hours"] = int(recent_hours_raw)
         else:
-            kwargs["recent_hours"] = 168
+            kwargs["recent_hours"] = cfg.validate_links_recent_hours or 168
         if max_jobs.isdigit():
             kwargs["max_jobs"] = int(max_jobs)
         else:
             kwargs["max_jobs"] = 0
 
+        scope = "PENDING only" if pending_only else "PENDING + SYNCED"
         task = validate_raw_job_urls_task.delay(**kwargs)
         messages.success(
             request,
-            f"Link-health validation queued (Task: {task.id[:8]}…). "
+            f"Link-health validation queued ({scope}, Task: {task.id[:8]}…). "
             "Soft-404 pages will be marked inactive before vet sync.",
         )
         return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
@@ -1109,6 +1147,9 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
         ctx["has_running_batch"] = FetchBatch.objects.filter(status="RUNNING").exists()
 
         ctx.update(_full_crawl_cooldown_ctx())
+        # Engine config: expose to template so Raw Controls tooltips show live values
+        from .models import HarvestEngineConfig
+        ctx["engine_config"] = HarvestEngineConfig.get()
         return ctx
 
 
@@ -1569,23 +1610,50 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
                 extra_query=extra_query,
             )
 
-        # ── Mode: Full Crawl — enforce 2-hour cooldown ────────────────────────
+        # ── Mode: Full Crawl — enforce configurable cooldown ─────────────────
         if fetch_mode == "full":
+            cooldown_mins = _full_crawl_cooldown_minutes()
+            cooldown_secs = cooldown_mins * 60
+
+            # Cache-layer guard: enforced even on direct API calls (bypasses view cooldown check)
+            from django.core.cache import cache as _cache
+            if not _cache.add(_FULL_CRAWL_LOCK_KEY, "1", cooldown_secs):
+                # Already in cooldown — check DB for human-readable message
+                cd = _full_crawl_cooldown_ctx()
+                last_full = cd["last_full_batch"]
+                remaining = cd["cooldown_remaining_sec"]
+                elapsed_sec = (timezone.now() - last_full.created_at).total_seconds() if last_full else 0
+                mins = remaining // 60
+                secs = remaining % 60
+                messages.error(
+                    request,
+                    f"⏱ Full Crawl on cooldown — last batch ran {int(elapsed_sec // 60)} min ago. "
+                    f"Wait {mins}m {secs}s before starting another full crawl "
+                    f"(configured cooldown: {cooldown_mins} min). "
+                    f"Use Quick Sync (25h) for an incremental update now.",
+                )
+                return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
+                return redirect(return_to)
+
+            # Also check DB-level cooldown for any stale cache
             cd = _full_crawl_cooldown_ctx()
             last_full = cd["last_full_batch"]
             remaining = cd["cooldown_remaining_sec"]
             if last_full and remaining > 0:
+                _cache.delete(_FULL_CRAWL_LOCK_KEY)  # release cache lock since we're blocking on DB
                 elapsed_sec = (timezone.now() - last_full.created_at).total_seconds()
                 mins = remaining // 60
                 secs = remaining % 60
                 messages.error(
                     request,
                     f"⏱ Full Crawl on cooldown — last batch ran {int(elapsed_sec // 60)} min ago. "
-                    f"Wait {mins}m {secs}s before starting another full crawl. "
+                    f"Wait {mins}m {secs}s before starting another full crawl "
+                    f"(configured cooldown: {cooldown_mins} min). "
                     f"Use Quick Sync (25h) for an incremental update now.",
                 )
                 return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
                 return redirect(return_to)
+
             ts = timezone.now().strftime("%Y-%m-%d %H:%M")
             task = fetch_raw_jobs_batch_task.delay(
                 platform_slug=platform_slug or None,
@@ -1788,17 +1856,33 @@ class RunBackfillResumeContractView(SuperuserRequiredMixin, View):
 
 
 class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
-    """POST — launch backfill_descriptions_task to fetch JDs for jobs that have none."""
+    """POST — launch backfill_descriptions_task to fetch JDs for jobs that have none.
+
+    All parameters fall back to HarvestEngineConfig values when not supplied:
+      parallel_workers → config.backfill_jd_workers
+      reset_locks      → config.backfill_jd_reset_locks
+      include_cold     → config.backfill_jd_include_cold
+    """
 
     def post(self, request):
+        from .models import HarvestEngineConfig
         from .tasks import backfill_descriptions_task
 
+        cfg = HarvestEngineConfig.get()
         platform_slug = request.POST.get("platform_slug", "").strip() or None
         batch_size = int(request.POST.get("batch_size", "200") or "200")
-        parallel_workers = int(request.POST.get("parallel_workers", "4") or "4")
         offset = int(request.POST.get("offset", "0") or "0")
         force_jarvis = request.POST.get("force_jarvis", "") in ("1", "true", "True")
-        reset_locks = request.POST.get("reset_locks", "") in ("1", "true", "True")
+
+        # If caller didn't supply these, pass None → task reads config
+        raw_workers = (request.POST.get("parallel_workers") or "").strip()
+        parallel_workers = int(raw_workers) if raw_workers.isdigit() else None
+
+        raw_reset = request.POST.get("reset_locks", "")
+        reset_locks = None if raw_reset == "" else (raw_reset in ("1", "true", "True"))
+
+        raw_cold = request.POST.get("include_cold", "")
+        include_cold = None if raw_cold == "" else (raw_cold in ("1", "true", "True"))
 
         task = backfill_descriptions_task.delay(
             batch_size=batch_size,
@@ -1807,12 +1891,16 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
             offset=offset,
             force_jarvis=force_jarvis,
             reset_locks=reset_locks,
+            include_cold=include_cold,
         )
         label = f"platform={platform_slug}" if platform_slug else "all platforms"
         mode = "Deep Scan (Jarvis)" if force_jarvis else "backfill"
+        # Display resolved worker count (config default if not supplied)
+        display_workers = parallel_workers if parallel_workers is not None else cfg.backfill_jd_workers
+        cold_note = " +cold" if (include_cold if include_cold is not None else cfg.backfill_jd_include_cold) else ""
         messages.success(
             request,
-            f"Description {mode} started ({label}, batch={batch_size}, workers={parallel_workers}) — Task {task.id[:8]}…",
+            f"Description {mode} started ({label}, batch={batch_size}, workers={display_workers}{cold_note}) — Task {task.id[:8]}…",
         )
         return_to, extra_query = _resolve_return_target(request, default_view="jobs-pipeline")
         return redirect_with_task_progress(

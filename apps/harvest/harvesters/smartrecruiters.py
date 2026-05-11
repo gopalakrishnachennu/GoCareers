@@ -161,10 +161,11 @@ class SmartRecruitersHarvester(BaseHarvester):
                     # Salary from compensation data
                     comp = detail.get("compensation") or {}
                     if comp:
-                        salary_min = comp.get("min") or None
-                        salary_max = comp.get("max") or None
+                        # SR API uses "from"/"to"; older docs also show "min"/"max"
+                        salary_min = comp.get("from") or comp.get("min") or None
+                        salary_max = comp.get("to") or comp.get("max") or None
                         salary_currency = comp.get("currency") or "USD"
-                        sal_period_raw = (comp.get("payPeriod") or "YEAR").upper()
+                        sal_period_raw = (comp.get("payPeriod") or comp.get("period") or "YEAR").upper()
                         salary_period = sal_period_raw if sal_period_raw in ("HOUR", "MONTH", "YEAR") else "YEAR"
                         if salary_min:
                             salary_raw = (

@@ -1392,6 +1392,126 @@ class HarvestEngineConfig(models.Model):
         ),
     )
 
+    # ── Full-fetch cooldown ───────────────────────────────────────────────────
+    full_fetch_cooldown_minutes = models.PositiveSmallIntegerField(
+        default=120,
+        verbose_name="Full fetch cooldown (minutes)",
+        help_text=(
+            "Minimum minutes between two Full Crawl runs. "
+            "Enforced both in the UI and in the task via a cache key so direct API "
+            "calls also respect the limit. Default 120 (2 h)."
+        ),
+    )
+
+    # ── JD backfill controls ──────────────────────────────────────────────────
+    backfill_jd_workers = models.PositiveSmallIntegerField(
+        default=4,
+        verbose_name="JD backfill parallel workers",
+        help_text=(
+            "Concurrent chunk-worker threads for description backfill. "
+            "Hard-capped at 8 internally. Keep ≤ half your Celery pool size to "
+            "avoid starving other tasks. Takes effect on next Backfill JD run."
+        ),
+    )
+    backfill_jd_reset_locks = models.BooleanField(
+        default=True,
+        verbose_name="Reset stale JD locks by default",
+        help_text=(
+            "When True the Backfill JD button automatically clears locks older "
+            "than BACKFILL_LOCK_STALE_MINUTES before claiming rows. "
+            "Prevents stale worker-crash locks from silently blocking re-runs."
+        ),
+    )
+    backfill_jd_include_cold = models.BooleanField(
+        default=False,
+        verbose_name="Include COLD / REVIEW jobs in JD backfill",
+        help_text=(
+            "When False (default) only PRIORITY (target-country) jobs get JD backfill. "
+            "Enable to also fetch descriptions for COLD and REVIEW_* jobs — "
+            "useful after expanding target_countries or for full-coverage audits."
+        ),
+    )
+
+    # ── Link validation controls ──────────────────────────────────────────────
+    validate_links_include_synced = models.BooleanField(
+        default=False,
+        verbose_name="Validate links for SYNCED pool jobs too",
+        help_text=(
+            "When False (default) the Validate Live Links button only checks jobs "
+            "still in PENDING sync state. Enable to also re-validate jobs already "
+            "promoted to the pool — catches URLs that expired after sync."
+        ),
+    )
+    validate_links_recent_hours = models.PositiveSmallIntegerField(
+        default=168,
+        verbose_name="Validate links — recent hours window",
+        help_text=(
+            "Only check jobs fetched within this many hours. "
+            "Default 168 (7 days). Set 0 to validate all active jobs regardless of age."
+        ),
+    )
+
+    # ── Cleanup controls ──────────────────────────────────────────────────────
+    cleanup_inactive_age_days = models.PositiveSmallIntegerField(
+        default=7,
+        verbose_name="Cleanup — inactive row max age (days)",
+        help_text=(
+            "Inactive rows older than this are purged by Phase 3 of cleanup. "
+            "Default 7 days. Rows that are inactive+PENDING are always purged "
+            "immediately (Phase 2) regardless of age."
+        ),
+    )
+    cleanup_pending_safe_minutes = models.PositiveSmallIntegerField(
+        default=10,
+        verbose_name="Cleanup — PENDING safe buffer (minutes)",
+        help_text=(
+            "Phase 2 only deletes inactive+PENDING rows fetched more than this "
+            "many minutes ago. Prevents a race where cleanup deletes a row that a "
+            "sync task just picked up. Default 10 minutes."
+        ),
+    )
+
+    # ── Classify controls ─────────────────────────────────────────────────────
+    classify_chunk_limit = models.PositiveIntegerField(
+        default=0,
+        verbose_name="Classify chunk limit (0 = unlimited)",
+        help_text=(
+            "Maximum RawJobs processed per classify run. "
+            "Set >0 to prevent timeouts on very large backlogs (e.g. 50000). "
+            "Remaining rows are processed on the next scheduled run. "
+            "0 means process everything in one shot (original behaviour)."
+        ),
+    )
+    classify_lock_ttl_minutes = models.PositiveSmallIntegerField(
+        default=180,
+        verbose_name="Classify lock TTL (minutes)",
+        help_text=(
+            "How long the classify singleton lock is held. If the worker crashes "
+            "the lock self-expires after this many minutes. Default 180 (3 h). "
+            "Staff can also clear it manually via the Force Unlock button."
+        ),
+    )
+
+    # ── Detection controls ────────────────────────────────────────────────────
+    detect_batch_size = models.PositiveSmallIntegerField(
+        default=200,
+        verbose_name="Detection batch size",
+        help_text=(
+            "How many companies are processed per Run Detection task. "
+            "Takes effect on next Run Detection trigger."
+        ),
+    )
+
+    # ── Retry-failed controls ─────────────────────────────────────────────────
+    retry_failed_days = models.PositiveSmallIntegerField(
+        default=7,
+        verbose_name="Retry failed — look-back window (days)",
+        help_text=(
+            "Retry Failed re-queues company fetch tasks that FAILED within this "
+            "many days. Default 7. Increase to recover from longer outages."
+        ),
+    )
+
     updated_at = models.DateTimeField(auto_now=True)
     updated_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,

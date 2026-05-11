@@ -1740,9 +1740,23 @@ class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
 
     def post(self, request, *args, **kwargs):
         from django.core.cache import cache
-        from .tasks import classify_jobs_task, CLASSIFY_ACTIVE_TASK_KEY, CLASSIFY_LOCK_KEY
+        from .tasks import classify_jobs_task, CLASSIFY_ACTIVE_TASK_KEY, CLASSIFY_LOCK_KEY, _classify_lock_ttl
 
+        action = request.POST.get("action", "")
         force = request.POST.get("force") == "1"
+
+        # ── Force-unlock: staff can clear a ghost lock from the UI ────────────
+        if action == "unlock":
+            if not request.user.is_superuser:
+                return JsonResponse({"status": "forbidden"}, status=403)
+            stale_id = cache.get(CLASSIFY_ACTIVE_TASK_KEY) or cache.get(CLASSIFY_LOCK_KEY)
+            cache.delete(CLASSIFY_LOCK_KEY)
+            cache.delete(CLASSIFY_ACTIVE_TASK_KEY)
+            return JsonResponse({
+                "status": "unlocked",
+                "cleared_task_id": stale_id or "",
+                "message": "Classify lock cleared. You can now start a new classify run.",
+            })
 
         active_task_id = cache.get(CLASSIFY_ACTIVE_TASK_KEY) or cache.get(CLASSIFY_LOCK_KEY)
         if active_task_id:
@@ -1753,7 +1767,7 @@ class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
             })
 
         result = classify_jobs_task.apply_async(kwargs={"force_reclassify": force})
-        cache.set(CLASSIFY_ACTIVE_TASK_KEY, result.id, 60 * 180)
+        cache.set(CLASSIFY_ACTIVE_TASK_KEY, result.id, _classify_lock_ttl())
         return JsonResponse({"status": "started", "task_id": result.id})
 
     def get(self, request, *args, **kwargs):
