@@ -1,5 +1,5 @@
 """
-0044_harvestengineconfig_ops_controls
+0050_harvestengineconfig_ops_controls
 ======================================
 Add configurable operation-control fields to HarvestEngineConfig so every
 previously-hardcoded constant in the harvest pipeline is tunable from the GUI
@@ -27,7 +27,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("harvest", "0043_rawjob_location_candidates_country_codes"),
+        ("harvest", "0049_platform_registry_metadata_cleanup"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 
