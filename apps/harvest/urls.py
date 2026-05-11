@@ -11,6 +11,7 @@ from .views import (
     FetchBatchDetailView,
     HarvestBatchActivityView,
     HarvestOpsRunDetailView,
+    OpsRunLiveApiView,
     JarvisReScrapeView,
     JarvisApproveView,
     JarvisFetchCompanyJobsView,
@@ -82,6 +83,7 @@ urlpatterns = [
     # Raw Jobs — note: static paths before <int:pk>
     path("raw-jobs/", RawJobListView.as_view(), name="harvest-rawjobs"),
     path("raw-jobs/batch-activity/", HarvestBatchActivityView.as_view(), name="harvest-batch-activity"),
+    path("raw-jobs/ops-runs/api/live/", OpsRunLiveApiView.as_view(), name="harvest-ops-runs-live-api"),
     path("raw-jobs/ops-runs/<int:pk>/", HarvestOpsRunDetailView.as_view(), name="harvest-ops-run-detail"),
     path("raw-jobs/batches/<int:pk>/", FetchBatchDetailView.as_view(), name="harvest-batch-detail"),
     path("raw-jobs/batches/", FetchBatchListView.as_view(), name="harvest-rawjobs-batches"),

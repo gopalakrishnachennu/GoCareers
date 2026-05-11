@@ -11,6 +11,7 @@ from django.db.models.functions import Coalesce, Length, Mod, Trim
 from django.utils import timezone
 
 from core.task_progress import update_task_progress
+from .ops_audit import tick_ops_run_progress
 from .runtime_config import (
     DEFAULT_JD_BACKFILL_LOCK_STALE_MINUTES,
     get_jd_backfill_lock_stale_minutes,
@@ -507,6 +508,7 @@ def detect_company_platforms_task(
         HarvestOpsRun.Operation.DETECT_PLATFORMS,
         getattr(self.request, "id", "") or "",
         user_id=triggered_user_id,
+        progress_total=len(company_ids),
         queue={
             "batch_size": batch_size,
             "force_recheck": force_recheck,
@@ -531,6 +533,7 @@ def detect_company_platforms_task(
     errors: list[str] = []
 
     update_task_progress(self, current=0, total=total_n, message="Starting platform detection…")
+    tick_ops_run_progress(ops_run, 0, total_n, "Starting platform detection…", force=True)
 
     try:
         for idx, company in enumerate(company_list, start=1):
@@ -563,10 +566,12 @@ def detect_company_platforms_task(
                 errors.append(msg[:300])
 
             time.sleep(2.0)
+            _det_msg = f"{idx}/{total_n} · {(company.name or str(company.pk))[:60]}"
             update_task_progress(
                 self, current=idx, total=total_n,
-                message=f"{idx}/{total_n} · {(company.name or str(company.pk))[:60]}",
+                message=_det_msg,
             )
+            tick_ops_run_progress(ops_run, idx, total_n, _det_msg)
 
         status = "SUCCESS" if not errors else ("PARTIAL" if detected else "FAILED")
         PipelineEvent.record(
@@ -2014,6 +2019,7 @@ def validate_raw_job_urls_task(
     ops_run = begin_ops_run(
         HarvestOpsRun.Operation.VALIDATE_URLS,
         getattr(self.request, "id", "") or "",
+        progress_total=total,
         queue={
             "platform_slug": platform_slug or "",
             "batch_size": batch_size,
@@ -2030,6 +2036,7 @@ def validate_raw_job_urls_task(
 
     try:
         update_task_progress(self, current=0, total=total, message=f"Checking {total:,} URLs…")
+        tick_ops_run_progress(ops_run, 0, total, f"Checking {total:,} URLs…", force=True)
 
         def check_url(job_id: int, url: str, slug: str) -> tuple[int, object]:
             """Returns (job_id, LinkHealthResult)."""
@@ -2127,10 +2134,12 @@ def validate_raw_job_urls_task(
                         logger.warning("validate_raw_job_urls: failed to stamp live status on Jobs", exc_info=True)
 
             offset += batch_size
+            _val_msg = f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive"
             update_task_progress(
                 self, current=checked, total=total,
-                message=f"Checked {checked:,}/{total:,} — {alive:,} live, {dead:,} inactive, {inconclusive:,} inconclusive",
+                message=_val_msg,
             )
+            tick_ops_run_progress(ops_run, checked, total, _val_msg)
 
         logger.info(
             "validate_raw_job_urls: checked=%d live=%d inactive=%d inconclusive=%d errors=%d reasons=%s",
@@ -4563,6 +4572,7 @@ def backfill_descriptions_task(
     ops_run = begin_ops_run(
         HarvestOpsRun.Operation.BACKFILL_JD,
         getattr(self.request, "id", "") or "",
+        progress_total=total,
         queue={
             "eligible_total": total,
             "claim_size": claim_size,
@@ -4574,6 +4584,7 @@ def backfill_descriptions_task(
             "use_pk_sharding": use_pk_sharding,
         },
     )
+    tick_ops_run_progress(ops_run, 0, total, start_msg, force=True)
 
     try:
         while True:
@@ -4671,17 +4682,19 @@ def backfill_descriptions_task(
                 if last_pk:
                     last_job = RawJob.objects.filter(pk=last_pk).first()
 
+            _bf_msg = (
+                f"Round {round_num} — {parallelism} workers — "
+                f"{updated} updated, {skipped} skipped, {failed} failed "
+                f"(claimed {round_claimed} this round)"
+            )
             update_task_progress(
                 self,
                 current=processed,
                 total=total,
-                message=(
-                    f"Round {round_num} — {parallelism} workers — "
-                    f"{updated} updated, {skipped} skipped, {failed} failed "
-                    f"(claimed {round_claimed} this round)"
-                ),
+                message=_bf_msg,
                 detail=_make_detail(last_job),
             )
+            tick_ops_run_progress(ops_run, processed, total, _bf_msg)
 
             if round_claimed == 0:
                 break

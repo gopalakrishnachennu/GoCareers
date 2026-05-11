@@ -585,6 +585,185 @@
 {% endif %}
 
 {% if tab == 'raw' %}
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<!-- LIVE OPS MONITOR                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════════════ -->
+<div id="live-ops-panel" class="mb-3 rounded-xl border border-slate-700 bg-slate-900 overflow-hidden shadow-lg">
+  <!-- Header row -->
+  <div class="flex items-center justify-between px-4 py-2.5 border-b border-slate-700">
+    <div class="flex items-center gap-2">
+      <span id="live-ops-pulse" class="inline-block w-2 h-2 rounded-full bg-slate-500"></span>
+      <span class="text-xs font-bold uppercase tracking-widest text-slate-300">Live Ops Monitor</span>
+      <span id="live-ops-active-badge" class="hidden text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-500 text-white">0 active</span>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="live-ops-ts" class="text-[10px] text-slate-500 font-mono">–</span>
+      <button id="live-ops-toggle" onclick="liveOpsToggle()" class="text-[10px] text-slate-400 hover:text-slate-200 transition">▼ collapse</button>
+    </div>
+  </div>
+  <!-- Body -->
+  <div id="live-ops-body" class="divide-y divide-slate-800">
+    <div id="live-ops-empty" class="flex items-center justify-center py-5 text-xs text-slate-500 font-mono gap-2">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      No recent ops — all quiet.
+    </div>
+  </div>
+</div>
+
+<script>
+(function() {
+  const OPS_API = "{% url 'harvest-ops-runs-live-api' %}";
+  const POLL_ACTIVE   = 3000;   // ms when tasks are running
+  const POLL_IDLE     = 10000;  // ms when nothing is running
+  let _timer = null;
+  let _collapsed = false;
+
+  const OP_COLORS = {
+    backfill_jd:        { bg: "bg-amber-500",   text: "text-white",  bar: "#f59e0b" },
+    detect_platforms:   { bg: "bg-blue-500",    text: "text-white",  bar: "#3b82f6" },
+    validate_urls:      { bg: "bg-teal-500",    text: "text-white",  bar: "#14b8a6" },
+    cleanup:            { bg: "bg-rose-500",    text: "text-white",  bar: "#f43f5e" },
+    classify:           { bg: "bg-purple-500",  text: "text-white",  bar: "#a855f7" },
+    sync_pool:          { bg: "bg-emerald-500", text: "text-white",  bar: "#10b981" },
+    evaluate_scope:     { bg: "bg-sky-500",     text: "text-white",  bar: "#0ea5e9" },
+    backfill_roles:     { bg: "bg-indigo-500",  text: "text-white",  bar: "#6366f1" },
+    backfill_enrichment:{ bg: "bg-violet-500",  text: "text-white",  bar: "#8b5cf6" },
+    refetch_locations:  { bg: "bg-orange-500",  text: "text-white",  bar: "#f97316" },
+    classify_domains:   { bg: "bg-fuchsia-500", text: "text-white",  bar: "#d946ef" },
+    llm_classify:       { bg: "bg-pink-500",    text: "text-white",  bar: "#ec4899" },
+    config_failure:     { bg: "bg-red-600",     text: "text-white",  bar: "#dc2626" },
+  };
+  const STATUS_COLORS = {
+    RUNNING: { dot: "bg-emerald-400 animate-pulse", text: "text-emerald-300" },
+    SUCCESS: { dot: "bg-slate-500",                 text: "text-slate-400"   },
+    PARTIAL: { dot: "bg-amber-400",                 text: "text-amber-300"   },
+    FAILED:  { dot: "bg-red-500",                   text: "text-red-400"     },
+    SKIPPED: { dot: "bg-slate-600",                 text: "text-slate-500"   },
+  };
+
+  function fmtDuration(secs) {
+    if (secs === null || secs === undefined) return "–";
+    if (secs < 60) return `${secs}s`;
+    const m = Math.floor(secs / 60), s = secs % 60;
+    if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+    const h = Math.floor(m / 60), rm = m % 60;
+    return `${h}h ${rm}m`;
+  }
+
+  function fmtStats(completion) {
+    if (!completion || typeof completion !== "object") return "";
+    const keys = ["updated","created","synced","detected","checked","processed","classified","purged"];
+    const parts = [];
+    keys.forEach(k => { if (completion[k] > 0) parts.push(`${k}: ${completion[k].toLocaleString()}`); });
+    if (completion.failed > 0) parts.push(`failed: ${completion.failed}`);
+    return parts.slice(0, 5).join(" · ");
+  }
+
+  function renderRun(run) {
+    const op    = run.operation || "";
+    const color = OP_COLORS[op] || { bg: "bg-slate-600", text: "text-white", bar: "#64748b" };
+    const st    = STATUS_COLORS[run.status] || STATUS_COLORS.SKIPPED;
+    const isRunning = run.status === "RUNNING";
+    const pct   = run.progress_pct || 0;
+    const total = run.progress_total || 0;
+    const cur   = run.progress_current || 0;
+    const msg   = run.progress_message || "";
+    const elapsed = isRunning ? fmtDuration(run.elapsed_seconds) : fmtDuration(run.runtime_seconds);
+    const stats = isRunning ? "" : fmtStats(run.completion);
+    const progressTxt = total ? `${cur.toLocaleString()} / ${total.toLocaleString()}` : (pct ? `${pct}%` : "");
+    const link  = run.detail_url ? `<a href="${run.detail_url}" class="text-[10px] text-slate-500 hover:text-slate-300 font-mono transition" title="Audit detail">#${run.id}</a>` : `<span class="text-[10px] text-slate-600 font-mono">#${run.id}</span>`;
+
+    return `<div class="flex flex-col gap-1.5 px-4 py-3 hover:bg-slate-800/50 transition">
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${color.bg} ${color.text}">${run.operation_label || op}</span>
+        <span class="flex items-center gap-1 text-[11px] ${st.text} font-semibold">
+          <span class="w-1.5 h-1.5 rounded-full ${st.dot}"></span>${run.status}
+        </span>
+        ${isRunning && elapsed ? `<span class="text-[10px] text-slate-400 font-mono">⏱ ${elapsed}</span>` : ""}
+        ${!isRunning && elapsed ? `<span class="text-[10px] text-slate-500 font-mono">ran ${elapsed}</span>` : ""}
+        ${link}
+        ${run.celery_task_id ? `<span class="text-[10px] text-slate-600 font-mono hidden sm:inline">${run.celery_task_id}…</span>` : ""}
+      </div>
+      ${(isRunning || pct > 0) ? `
+        <div class="flex items-center gap-2">
+          <div class="flex-1 h-1.5 bg-slate-700 rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500 ${isRunning ? 'animate-none' : ''}" style="width:${pct}%;background:${color.bar}"></div>
+          </div>
+          <span class="text-[10px] text-slate-400 font-mono w-10 text-right">${pct}%</span>
+        </div>` : ""}
+      ${msg ? `<p class="text-[11px] text-slate-300 font-mono leading-snug break-all">${msg.slice(0, 200)}</p>` : ""}
+      ${stats ? `<p class="text-[10px] text-slate-500 font-mono">${stats}</p>` : ""}
+      ${(isRunning && progressTxt) ? `<p class="text-[10px] text-slate-500 font-mono">${progressTxt}</p>` : ""}
+    </div>`;
+  }
+
+  function poll() {
+    if (_timer) clearTimeout(_timer);
+    fetch(OPS_API, { credentials: "same-origin" })
+      .then(r => r.json())
+      .then(data => {
+        const runs   = data.runs || [];
+        const active = data.active_count || 0;
+        const ts     = data.ts ? new Date(data.ts).toLocaleTimeString() : "–";
+
+        // Update header
+        const pulse = document.getElementById("live-ops-pulse");
+        const badge = document.getElementById("live-ops-active-badge");
+        const tsEl  = document.getElementById("live-ops-ts");
+        if (pulse) {
+          pulse.className = `inline-block w-2 h-2 rounded-full ${active > 0 ? "bg-emerald-400 animate-pulse" : "bg-slate-500"}`;
+        }
+        if (badge) {
+          if (active > 0) {
+            badge.classList.remove("hidden");
+            badge.textContent = `${active} active`;
+          } else {
+            badge.classList.add("hidden");
+          }
+        }
+        if (tsEl) tsEl.textContent = ts;
+
+        // Render rows
+        const body  = document.getElementById("live-ops-body");
+        const empty = document.getElementById("live-ops-empty");
+        if (!body) return;
+        if (runs.length === 0) {
+          if (empty) empty.classList.remove("hidden");
+        } else {
+          if (empty) empty.classList.add("hidden");
+          // Rebuild rows (only re-render if data changed to avoid flicker)
+          const key = JSON.stringify(runs.map(r => `${r.id}:${r.status}:${r.progress_pct}:${r.progress_message}`));
+          if (body.dataset.lastKey !== key) {
+            body.dataset.lastKey = key;
+            body.innerHTML = runs.map(renderRun).join("");
+          }
+        }
+
+        // Schedule next poll
+        _timer = setTimeout(poll, active > 0 ? POLL_ACTIVE : POLL_IDLE);
+      })
+      .catch(() => {
+        _timer = setTimeout(poll, POLL_IDLE);
+      });
+  }
+
+  window.liveOpsToggle = function() {
+    _collapsed = !_collapsed;
+    const body  = document.getElementById("live-ops-body");
+    const empty = document.getElementById("live-ops-empty");
+    const btn   = document.getElementById("live-ops-toggle");
+    if (body)  body.classList.toggle("hidden", _collapsed);
+    if (empty && !_collapsed) empty.classList.toggle("hidden", false);
+    if (btn)   btn.textContent = _collapsed ? "▶ expand" : "▼ collapse";
+  };
+
+  // Kick off
+  poll();
+})();
+</script>
+{% endif %}
+
+{% if tab == 'raw' %}
 <form method="get" class="mb-3 rounded-xl border border-slate-200 bg-white p-3">
   <input type="hidden" name="tab" value="raw">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}

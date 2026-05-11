@@ -1510,19 +1510,19 @@ def _build_ops_snapshot() -> dict:
 
     from harvest.models import HarvestOpsRun
     ops_runs = []
-    for run in HarvestOpsRun.objects.order_by("-started_at")[:30]:
+    for run in HarvestOpsRun.objects.order_by("-created_at")[:30]:
         total = run.progress_total or 0
         current = run.progress_current or 0
         pct = int(100 * current / total) if total else (100 if run.status == HarvestOpsRun.Status.SUCCESS else 0)
         runtime = None
-        if run.finished_at and run.started_at:
-            runtime = int((run.finished_at - run.started_at).total_seconds())
+        if run.finished_at and run.created_at:
+            runtime = int((run.finished_at - run.created_at).total_seconds())
         ops_runs.append({
             "id": run.pk,
             "operation": run.operation,
             "operation_label": run.get_operation_display(),
             "status": run.status,
-            "started_at": run.started_at.isoformat() if run.started_at else "",
+            "started_at": run.created_at.isoformat() if run.created_at else "",
             "finished_at": run.finished_at.isoformat() if run.finished_at else "",
             "runtime_seconds": runtime,
             "progress_current": current,

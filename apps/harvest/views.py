@@ -1487,6 +1487,86 @@ class HarvestOpsRunDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailVie
         return ctx
 
 
+class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
+    """
+    JSON feed for the Live Ops Monitor panel.
+
+    Returns the 20 most-recent HarvestOpsRun rows, with live Celery PROGRESS
+    state merged in for any RUNNING run.  Polls every 3 s from the front-end.
+    """
+
+    def test_func(self):
+        u = self.request.user
+        return u.is_superuser or getattr(u, "role", None) in (
+            User.Role.ADMIN,
+            User.Role.EMPLOYEE,
+        )
+
+    def get(self, request, *args, **kwargs):
+        from celery.result import AsyncResult
+        from django.utils import timezone as _tz
+
+        now = _tz.now()
+        runs = []
+        for run in HarvestOpsRun.objects.order_by("-created_at")[:20]:
+            total = run.progress_total or 0
+            current = run.progress_current or 0
+            message = run.progress_message or ""
+            pct = int(100 * current / total) if total else (100 if run.status == HarvestOpsRun.Status.SUCCESS else 0)
+
+            # For RUNNING runs, also try the Celery result backend for finer-grained live data
+            live_pct = pct
+            live_msg = message
+            if run.status == HarvestOpsRun.Status.RUNNING and run.celery_task_id:
+                try:
+                    res = AsyncResult(run.celery_task_id)
+                    if res.state == "PROGRESS" and isinstance(res.info, dict):
+                        info = res.info
+                        c = int(info.get("current") or current)
+                        t = int(info.get("total") or total) or total
+                        live_pct = int(100 * c / t) if t else live_pct
+                        live_msg = (info.get("message") or message)[:200]
+                        # Update DB with what Celery knows (best-effort, non-blocking)
+                        if c != current or live_msg != message:
+                            HarvestOpsRun.objects.filter(pk=run.pk).update(
+                                progress_current=c,
+                                progress_total=t,
+                                progress_message=live_msg[:256],
+                            )
+                            current, total, message, pct = c, t, live_msg, live_pct
+                except Exception:
+                    pass
+
+            elapsed = None
+            if run.created_at:
+                elapsed = int((now - run.created_at).total_seconds())
+            runtime = None
+            if run.finished_at and run.created_at:
+                runtime = int((run.finished_at - run.created_at).total_seconds())
+
+            completion = (run.audit_payload or {}).get("completion") or {}
+            runs.append({
+                "id": run.pk,
+                "operation": run.operation,
+                "operation_label": run.get_operation_display(),
+                "status": run.status,
+                "celery_task_id": (run.celery_task_id or "")[:16],
+                "created_at": run.created_at.isoformat() if run.created_at else "",
+                "finished_at": run.finished_at.isoformat() if run.finished_at else "",
+                "elapsed_seconds": elapsed,
+                "runtime_seconds": runtime,
+                "progress_current": current,
+                "progress_total": total,
+                "progress_pct": live_pct,
+                "progress_message": live_msg[:200],
+                "completion": completion,
+                "detail_url": f"/harvest/raw-jobs/ops-runs/{run.pk}/",
+            })
+
+        active_count = sum(1 for r in runs if r["status"] == HarvestOpsRun.Status.RUNNING)
+        return JsonResponse({"runs": runs, "active_count": active_count, "ts": now.isoformat()})
+
+
 class CompanyFetchStatusView(SuperuserRequiredMixin, View):
     """
     Legacy compatibility endpoint.
