@@ -13,6 +13,7 @@ from users.models import MarketingRole
 from users.models import ConsultantProfile
 from companies.models import Company
 from harvest.models import RawJob
+from harvest.models import RawJobPayloadSnapshot
 from harvest.enrichments import detect_job_category
 from .models import Job
 from .marketing_role_routing import (
@@ -23,6 +24,43 @@ from .marketing_role_routing import (
 from .services import match_jobs_for_consultant
 from .tasks import classify_jobs_task
 from .tasks import validate_job_urls_task, auto_close_jobs_task
+
+
+@patch("jobs.tasks.run_job_validation.delay")
+@patch("jobs.views.ensure_parsed_jd")
+class JobManualRawBridgeTests(TestCase):
+    def setUp(self):
+        self.client = Client()
+        self.employee = User.objects.create_user(
+            username="emp_manual_bridge", password="testpass", role=User.Role.EMPLOYEE
+        )
+
+    def test_manual_job_create_links_rawjob_evidence_and_scope(self, _ensure, _delay):
+        self.client.login(username="emp_manual_bridge", password="testpass")
+        resp = self.client.post(
+            reverse("job-create"),
+            {
+                "title": "Platform Engineer",
+                "company": "Bridge Manual Co",
+                "location": "Austin, TX",
+                "description": "Build cloud automation, CI/CD, observability, Python services, and infrastructure.",
+                "original_link": "https://example.com/manual/platform-engineer",
+                "salary_range": "",
+                "job_type": Job.JobType.FULL_TIME,
+                "job_source": "manual entry",
+            },
+        )
+        self.assertEqual(resp.status_code, 302)
+
+        job = Job.objects.select_related("source_raw_job", "company_obj").get(title="Platform Engineer")
+        raw = job.source_raw_job
+        self.assertIsNotNone(raw)
+        self.assertEqual(job.company_obj.name, "Bridge Manual")
+        self.assertEqual(raw.platform_slug, "manual")
+        self.assertEqual(raw.sync_status, RawJob.SyncStatus.SYNCED)
+        self.assertEqual(raw.country_code, "US")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+        self.assertTrue(RawJobPayloadSnapshot.objects.filter(raw_job=raw).exists())
 
 
 class JobListUrlHealthFilterTests(TestCase):
@@ -304,6 +342,9 @@ class JobBulkUploadViewTests(TestCase):
         self.assertEqual(resp.status_code, 302)
         job = Job.objects.get(title="SRE")
         self.assertEqual(job.original_link, "https://example.com/scraped/1")
+        self.assertIsNotNone(job.source_raw_job)
+        self.assertEqual(job.source_raw_job.platform_slug, "bulk_upload")
+        self.assertEqual(job.source_raw_job.sync_status, RawJob.SyncStatus.SYNCED)
 
     def test_skips_row_when_posting_url_already_exists(self, _ensure, _delay):
         Job.objects.create(

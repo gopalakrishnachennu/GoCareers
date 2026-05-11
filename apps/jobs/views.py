@@ -449,6 +449,12 @@ class JobCreateView(LoginRequiredMixin, EmployeeRequiredMixin, CreateView):
                 f"Possible duplicate detected: \"{top['job'].title}\" at {top['job'].company} (score {top['overall_score']:.0%}). Review before approving.",
             )
         resp = super().form_valid(form)
+        try:
+            from harvest.services.manual_job_bridge import ensure_rawjob_for_job
+
+            ensure_rawjob_for_job(self.object, source="manual")
+        except Exception:
+            logger.exception("Manual job RawJob bridge failed for job %s", self.object.pk)
         # Rules-first JD parse (no AI tokens)
         ensure_parsed_jd(self.object, actor=self.request.user)
         # Kick off async validation scoring
@@ -699,6 +705,12 @@ class JobBulkUploadView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                                 posted_by=request.user,
                                 status=bulk_target_status,
                             )
+                            try:
+                                from harvest.services.manual_job_bridge import ensure_rawjob_for_job
+
+                                ensure_rawjob_for_job(job, source="bulk_upload")
+                            except Exception:
+                                logger.exception("Bulk upload RawJob bridge failed for job %s", job.pk)
                             ensure_parsed_jd(job, actor=request.user)
                             try:
                                 from .tasks import run_job_validation
