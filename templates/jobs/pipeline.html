@@ -463,18 +463,29 @@
 </div>
 
 {% if request.user.is_superuser %}
-<div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white">
-  <div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold mb-2">Raw Controls</div>
+<div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white" id="raw-controls-panel">
+  <div class="flex items-center justify-between mb-2">
+    <div class="text-[11px] uppercase tracking-wide text-slate-500 font-semibold">Raw Controls</div>
+    {% if cooldown_remaining_sec > 0 %}
+    <div class="text-[11px] text-amber-600 font-medium" id="full-crawl-cooldown-badge">
+      ⏱ Full Crawl cooldown: <span id="cooldown-timer">{{ cooldown_remaining_sec|floatformat:0 }}s</span>
+    </div>
+    {% endif %}
+  </div>
   <div class="flex flex-wrap gap-2">
+    {# ── Full Fetch Jobs — configurable cooldown enforced server-side ────── #}
     <form method="post" action="{% url 'harvest-run-fetch-batch' %}">
       {% csrf_token %}
       <input type="hidden" name="fetch_mode" value="full">
       <input type="hidden" name="return_to" value="jobs-pipeline">
       <input type="hidden" name="return_tab" value="raw">
-      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-emerald-600 hover:bg-emerald-700{% if cooldown_remaining_sec > 0 %} opacity-50 cursor-not-allowed{% endif %}"
+        {% if cooldown_remaining_sec > 0 %}title="Cooldown active — {{ cooldown_remaining_sec }}s remaining"{% endif %}>
         Full Fetch Jobs
       </button>
     </form>
+
+    {# ── Quick Fetch — incremental 25h window ───────────────────────────── #}
     <form method="post" action="{% url 'harvest-run-fetch-batch' %}">
       {% csrf_token %}
       <input type="hidden" name="fetch_mode" value="quick">
@@ -484,33 +495,43 @@
         Quick Fetch (25h)
       </button>
     </form>
+
+    {# ── Run Detection — batch size from config ─────────────────────────── #}
     <form method="post" action="{% url 'harvest-run-detect' %}">
       {% csrf_token %}
-      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-indigo-600 hover:bg-indigo-700"
+        title="Batch size: {{ engine_config.detect_batch_size }} (set in Engine Config)">
         Run Detection
       </button>
     </form>
+
+    {# ── Backfill JD — workers / reset_locks / include_cold from config ── #}
     <form method="post" action="{% url 'harvest-run-backfill-descriptions' %}">
       {% csrf_token %}
-      <input type="hidden" name="batch_size" value="300">
-      <input type="hidden" name="parallel_workers" value="8">
+      <input type="hidden" name="batch_size" value="200">
+      {# parallel_workers intentionally omitted → task reads from HarvestEngineConfig #}
       <input type="hidden" name="return_to" value="jobs-pipeline">
       <input type="hidden" name="return_tab" value="raw">
-      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-amber-600 hover:bg-amber-700">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-amber-600 hover:bg-amber-700"
+        title="Workers: {{ engine_config.backfill_jd_workers }} | Reset locks: {{ engine_config.backfill_jd_reset_locks }} | Include cold: {{ engine_config.backfill_jd_include_cold }} (all configurable in Engine Config)">
         Backfill JD
       </button>
     </form>
+
+    {# ── Validate Live Links — pending_only / recent_hours from config ─── #}
     <form method="post" action="{% url 'harvest-run-validate-urls' %}">
       {% csrf_token %}
-      <input type="hidden" name="pending_only" value="1">
-      <input type="hidden" name="recent_hours" value="168">
+      {# pending_only and recent_hours intentionally omitted → view reads from HarvestEngineConfig #}
       <input type="hidden" name="max_jobs" value="0">
       <input type="hidden" name="return_to" value="jobs-pipeline">
       <input type="hidden" name="return_tab" value="raw">
-      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-rose-600 hover:bg-rose-700">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-rose-600 hover:bg-rose-700"
+        title="Validates {% if engine_config.validate_links_include_synced %}PENDING + SYNCED{% else %}PENDING only{% endif %} | Window: {{ engine_config.validate_links_recent_hours }}h (configurable in Engine Config)">
         Validate Live Links
       </button>
     </form>
+
+    {# ── Sync Qualified — qualified_only + unlimited from config ────────── #}
     <form method="post" action="{% url 'harvest-run-sync' %}">
       {% csrf_token %}
       <input type="hidden" name="qualified_only" value="1">
@@ -522,17 +543,42 @@
         Sync Qualified to Vet
       </button>
     </form>
+
+    {# ── Retry Failed — look-back window from config ─────────────────────── #}
+    <form method="post" action="{% url 'harvest-run-retry-failed-fetches' %}">
+      {% csrf_token %}
+      <input type="hidden" name="return_to" value="jobs-pipeline">
+      <input type="hidden" name="return_tab" value="raw">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-orange-600 hover:bg-orange-700"
+        title="Retries FAILED fetches from last {{ engine_config.retry_failed_days }} days (configurable in Engine Config)">
+        Retry Failed
+      </button>
+    </form>
+
+    {# ── Cleanup — thresholds from config ────────────────────────────────── #}
     <form method="post" action="{% url 'harvest-run-cleanup' %}">
       {% csrf_token %}
-      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-red-700 hover:bg-red-800">
+      <button type="submit" class="btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-red-700 hover:bg-red-800"
+        title="Inactive age: {{ engine_config.cleanup_inactive_age_days }}d | PENDING safe buffer: {{ engine_config.cleanup_pending_safe_minutes }}min (configurable in Engine Config)">
         Cleanup
       </button>
     </form>
-    <button onclick="triggerClassify(false)" class="classify-trigger-btn btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700">
+
+    {# ── Classify Jobs — lock TTL / chunk limit from config ──────────────── #}
+    <button onclick="triggerClassify(false)" class="classify-trigger-btn btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-purple-600 hover:bg-purple-700"
+      title="Lock TTL: {{ engine_config.classify_lock_ttl_minutes }}min | Chunk limit: {% if engine_config.classify_chunk_limit %}{{ engine_config.classify_chunk_limit }}{% else %}unlimited{% endif %} (configurable in Engine Config)">
       Classify Jobs
     </button>
     <button onclick="confirmForceClassify()" class="classify-trigger-btn btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-purple-900 hover:bg-purple-950">
       Force Re-classify
+    </button>
+
+    {# ── Force Unlock Classify — only shown when lock is active ─────────── #}
+    <button id="classify-unlock-btn"
+      onclick="forceUnlockClassify()"
+      class="classify-trigger-btn btn-sm rounded-lg px-3 py-2 font-semibold text-white bg-gray-500 hover:bg-gray-600 hidden"
+      title="Clear a stuck classify lock (e.g. after worker crash)">
+      🔓 Unlock Classify
     </button>
   </div>
 </div>

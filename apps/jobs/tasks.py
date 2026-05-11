@@ -305,7 +305,16 @@ def auto_close_jobs_task():
 
 CLASSIFY_LOCK_KEY = "jobs:classify_all:lock"
 CLASSIFY_ACTIVE_TASK_KEY = "jobs:classify_all:active_task"
-CLASSIFY_LOCK_TTL = 60 * 180  # 3 hours max for 135k RawJobs
+CLASSIFY_LOCK_TTL = 60 * 180  # fallback — actual TTL read from HarvestEngineConfig
+
+
+def _classify_lock_ttl() -> int:
+    """Return lock TTL in seconds from HarvestEngineConfig (configurable from GUI)."""
+    try:
+        from harvest.models import HarvestEngineConfig
+        return int(HarvestEngineConfig.get().classify_lock_ttl_minutes) * 60
+    except Exception:
+        return CLASSIFY_LOCK_TTL
 
 
 @shared_task(bind=True, name="jobs.classify_all", max_retries=0, soft_time_limit=10800, time_limit=11100)
@@ -314,6 +323,9 @@ def classify_jobs_task(self, force_reclassify: bool = False):
     Full taxonomy backfill for harvested jobs.
     Updates RawJob taxonomy fields and then backfills Job.marketing_roles for
     synced jobs so the UI can route consultants immediately after completion.
+
+    Lock TTL is configurable via HarvestEngineConfig.classify_lock_ttl_minutes.
+    Staff can force-clear the lock via the Force Unlock button in Raw Controls.
     """
     from django.core.cache import cache
 
@@ -321,7 +333,8 @@ def classify_jobs_task(self, force_reclassify: bool = False):
     from harvest.ops_audit import begin_ops_run, finish_ops_run
 
     task_id = getattr(self.request, "id", "") or "running"
-    acquired = cache.add(CLASSIFY_LOCK_KEY, task_id, CLASSIFY_LOCK_TTL)
+    lock_ttl = _classify_lock_ttl()
+    acquired = cache.add(CLASSIFY_LOCK_KEY, task_id, lock_ttl)
     if not acquired:
         logger.warning("classify_jobs_task: already running, aborting duplicate.")
         dup_op = begin_ops_run(
@@ -331,7 +344,7 @@ def classify_jobs_task(self, force_reclassify: bool = False):
         )
         finish_ops_run(dup_op, HarvestOpsRun.Status.SKIPPED, {"reason": "lock_held"})
         return {"status": "skipped", "reason": "lock_held"}
-    cache.set(CLASSIFY_ACTIVE_TASK_KEY, task_id, CLASSIFY_LOCK_TTL)
+    cache.set(CLASSIFY_ACTIVE_TASK_KEY, task_id, lock_ttl)
 
     ops_run = begin_ops_run(
         HarvestOpsRun.Operation.CLASSIFY,
@@ -353,7 +366,7 @@ def classify_jobs_task(self, force_reclassify: bool = False):
 
 def _run_classify_raw(task_self, *, force_reclassify: bool) -> dict:
     from django.db import transaction
-    from harvest.models import RawJob
+    from harvest.models import HarvestEngineConfig, RawJob
     from harvest.enrichments import (
         CURRENT_DOMAIN_VERSION,
         detect_job_category,
@@ -362,11 +375,23 @@ def _run_classify_raw(task_self, *, force_reclassify: bool) -> dict:
     from jobs.marketing_role_routing import assign_marketing_roles_to_job, infer_marketing_role_slugs
     from .models import Job
 
+    # Configurable chunk limit prevents task timeouts on very large backlogs.
+    # 0 = unlimited (original behaviour).
+    try:
+        chunk_limit = int(HarvestEngineConfig.get().classify_chunk_limit)
+    except Exception:
+        chunk_limit = 0
+
     raw_qs = RawJob.objects.exclude(title="").order_by("pk")
     if not force_reclassify:
         raw_qs = raw_qs.exclude(domain_version=CURRENT_DOMAIN_VERSION)
+    if chunk_limit > 0:
+        raw_qs = raw_qs[:chunk_limit]
 
     synced_qs = RawJob.objects.filter(sync_status=RawJob.SyncStatus.SYNCED).order_by("pk")
+    if chunk_limit > 0:
+        # Proportional split: spend half the limit on synced roles
+        synced_qs = synced_qs[:chunk_limit // 2]
 
     raw_total = raw_qs.count()
     synced_total = synced_qs.count()

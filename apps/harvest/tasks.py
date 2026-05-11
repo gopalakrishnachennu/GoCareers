@@ -109,18 +109,25 @@ def _supports_select_for_update_skip_locked() -> bool:
     return getattr(connection.features, "supports_select_for_update_skip_locked", False)
 
 
-def _backfill_eligible_queryset(platform_slug: str | None):
+def _backfill_eligible_queryset(platform_slug: str | None, include_cold: bool = False):
     """Rows that still need a JD and are not actively claimed (unless lock is stale).
 
-    Scoped harvest gate: only PRIORITY (target-country) jobs get JD backfill.
-    Cold + unknown-country jobs stay as cheap discovery rows. They become
-    eligible later if/when the country resolver upgrades them.
+    Scoped harvest gate: only PRIORITY (target-country) jobs get JD backfill by
+    default. Cold + unknown-country jobs stay as cheap discovery rows and become
+    eligible later when the country resolver upgrades them.
+
+    When ``include_cold=True`` (controlled by HarvestEngineConfig.backfill_jd_include_cold)
+    COLD and REVIEW_* jobs are also included — useful for full-coverage audits.
     """
     from .models import RawJob
 
-    q = RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes()).filter(
-        is_priority=True,
-    )
+    stale_mins = get_jd_backfill_lock_stale_minutes()
+    if include_cold:
+        q = RawJob.objects.missing_jd(stale_minutes=stale_mins)
+    else:
+        q = RawJob.objects.missing_jd(stale_minutes=stale_mins).filter(
+            is_priority=True,
+        )
     if platform_slug:
         q = q.filter(platform_slug=platform_slug)
     return q
@@ -132,6 +139,7 @@ def _claim_backfill_job_batch(
     *,
     shard_index: int = 0,
     shard_count: int = 1,
+    include_cold: bool = False,
 ) -> list:
     """
     Claim up to *claim_size* rows for JD backfill.
@@ -144,7 +152,7 @@ def _claim_backfill_job_batch(
     """
     from .models import RawJob
 
-    eligible = _backfill_eligible_queryset(platform_slug)
+    eligible = _backfill_eligible_queryset(platform_slug, include_cold=include_cold)
     sc = max(1, int(shard_count))
     si = int(shard_index) % sc
     if sc > 1:
@@ -444,37 +452,55 @@ def backfill_platform_labels_from_jobs_task(self):
 @shared_task(bind=True, max_retries=2, name="harvest.detect_company_platforms")
 def detect_company_platforms_task(
     self,
-    batch_size: int = 200,
+    batch_size: int | None = None,
     force_recheck: bool = False,
     triggered_user_id: int | None = None,
+    platform_slug: str | None = None,
 ):
     """
     Run 3-step platform detection for companies without labels (or stale ones).
     Step 1: URL Pattern → Step 2: HTTP HEAD → Step 3: HTML Parse
     Phase 5: audit goes to PipelineEvent instead of HarvestRun.
+
+    batch_size — defaults to HarvestEngineConfig.detect_batch_size (configurable from GUI)
+    platform_slug — optional: limit detection to companies already labeled with this platform
     """
     from django.contrib.auth import get_user_model
     from jobs.models import PipelineEvent
 
     from companies.models import Company
-    from .models import HarvestOpsRun, JobBoardPlatform, CompanyPlatformLabel
+    from .models import HarvestEngineConfig, HarvestOpsRun, JobBoardPlatform, CompanyPlatformLabel
     from .detectors import run_detection_pipeline, extract_tenant
     from .ops_audit import begin_ops_run, finish_ops_run
+
+    # Use config value when caller doesn't specify
+    if batch_size is None:
+        batch_size = HarvestEngineConfig.get().detect_batch_size
 
     stale_threshold = timezone.now() - timedelta(days=7)
 
     if force_recheck:
-        company_ids = list(Company.objects.values_list("id", flat=True)[:batch_size])
+        base_qs = Company.objects.all()
+        if platform_slug:
+            base_qs = base_qs.filter(platform_label__platform__slug=platform_slug)
+        company_ids = list(base_qs.values_list("id", flat=True)[:batch_size])
     else:
+        label_filter = {}
+        if platform_slug:
+            label_filter["platform__slug"] = platform_slug
         stale_ids = list(
             CompanyPlatformLabel.objects.filter(
                 last_checked_at__lt=stale_threshold,
                 detection_method__in=["UNDETECTED", "HTML_PARSE"],
+                **label_filter,
             ).values_list("company_id", flat=True)
         )
-        unlabeled_ids = list(
-            Company.objects.exclude(platform_label__isnull=False).values_list("id", flat=True)
-        )
+        unlabeled_qs = Company.objects.exclude(platform_label__isnull=False)
+        if platform_slug:
+            # For unlabeled companies filtering by platform doesn't apply
+            # (they have no label yet) — just include all unlabeled
+            pass
+        unlabeled_ids = list(unlabeled_qs.values_list("id", flat=True))
         company_ids = list(set(stale_ids + unlabeled_ids))[:batch_size]
 
     ops_run = begin_ops_run(
@@ -484,6 +510,7 @@ def detect_company_platforms_task(
         queue={
             "batch_size": batch_size,
             "force_recheck": force_recheck,
+            "platform_slug": platform_slug or "",
             "companies_planned": len(company_ids),
         },
     )
@@ -1915,10 +1942,15 @@ def fetch_raw_jobs_batch_task(
 
 @shared_task(bind=True, name="harvest.retry_failed_raw_jobs")
 def retry_failed_raw_jobs_task(self):
-    """Re-queue fetch_raw_jobs_for_company_task for all FAILED runs in the last 7 days."""
-    from .models import CompanyFetchRun
+    """Re-queue fetch_raw_jobs_for_company_task for all FAILED runs.
 
-    cutoff = timezone.now() - timedelta(days=7)
+    Look-back window is configurable via HarvestEngineConfig.retry_failed_days
+    (default 7 days). Increase to recover from longer outages.
+    """
+    from .models import CompanyFetchRun, HarvestEngineConfig
+
+    days = HarvestEngineConfig.get().retry_failed_days
+    cutoff = timezone.now() - timedelta(days=days)
     failed_runs = CompanyFetchRun.objects.filter(
         status=CompanyFetchRun.Status.FAILED,
         started_at__gte=cutoff,
@@ -2133,14 +2165,27 @@ def validate_raw_job_urls_task(
 
 @shared_task(bind=True, name="harvest.cleanup_harvested_jobs")
 def cleanup_harvested_jobs_task(self):
-    """Phase 5: clean expired RawJob rows (HarvestedJob/HarvestRun removed)."""
-    from .models import HarvestOpsRun, RawJob
+    """Phase 5: clean expired RawJob rows (HarvestedJob/HarvestRun removed).
+
+    All thresholds are read from HarvestEngineConfig so they're tunable from the
+    GUI without a code deploy:
+      cleanup_inactive_age_days     — Phase 3 age threshold (default 7 days)
+      cleanup_pending_safe_minutes  — Phase 2 race guard (default 10 min)
+    """
+    from .models import HarvestEngineConfig, HarvestOpsRun, RawJob
     from .ops_audit import begin_ops_run, finish_ops_run
+
+    cfg = HarvestEngineConfig.get()
+    inactive_age_days = cfg.cleanup_inactive_age_days
+    pending_safe_minutes = cfg.cleanup_pending_safe_minutes
 
     ops_run = begin_ops_run(
         HarvestOpsRun.Operation.CLEANUP,
         getattr(self.request, "id", "") or "",
-        queue={},
+        queue={
+            "inactive_age_days": inactive_age_days,
+            "pending_safe_minutes": pending_safe_minutes,
+        },
     )
     try:
         now = timezone.now()
@@ -2152,16 +2197,19 @@ def cleanup_harvested_jobs_task(self):
             is_active=True,
         ).update(is_active=False)
 
-        # Phase 2: purge is_active=False rows that are PENDING (never synced,
-        # confirmed dead) — no age requirement needed; they will never sync.
+        # Phase 2: purge is_active=False + PENDING rows (never synced, confirmed
+        # dead). A safe buffer guards against a race with in-flight sync tasks —
+        # only delete rows that have been inactive for at least pending_safe_minutes.
+        pending_safe_cutoff = now - timedelta(minutes=pending_safe_minutes)
         purged_pending = RawJob.objects.filter(
             is_active=False,
             sync_status=RawJob.SyncStatus.PENDING,
+            fetched_at__lt=pending_safe_cutoff,
         ).delete()[0]
 
-        # Phase 3: purge remaining inactive rows older than 7 days
+        # Phase 3: purge remaining inactive rows older than configured threshold
         # (SKIPPED/FAILED rows where the job posting is gone)
-        old_cutoff = now - timedelta(days=7)
+        old_cutoff = now - timedelta(days=inactive_age_days)
         purged_old = RawJob.objects.filter(
             is_active=False,
             fetched_at__lt=old_cutoff,
@@ -4214,6 +4262,7 @@ def _backfill_descriptions_chunk_impl(
     shard_index: int = 0,
     shard_count: int = 1,
     force_jarvis: bool = False,
+    include_cold: bool = False,
 ) -> dict:
     """
     Claim up to *claim_size* rows (SKIP LOCKED on Postgres) and fetch JDs sequentially.
@@ -4241,6 +4290,7 @@ def _backfill_descriptions_chunk_impl(
             platform_slug,
             shard_index=shard_index,
             shard_count=shard_count,
+            include_cold=include_cold,
         )
     except Exception as exc:
         logger.exception("backfill chunk claim failed: %s", exc)
@@ -4314,33 +4364,45 @@ def backfill_descriptions_chunk_task(
 @shared_task(bind=True, name="harvest.backfill_descriptions", soft_time_limit=86400, time_limit=90000)
 def backfill_descriptions_task(
     self,
-    batch_size: int = 200,
-    parallel_workers: int = 4,
+    batch_size: int | None = None,
+    parallel_workers: int | None = None,
     platform_slug: str | None = None,
     offset: int = 0,
     _chain_depth: int = 0,
     _skip_streak: int = 0,
     force_jarvis: bool = False,
-    reset_locks: bool = False,
+    reset_locks: bool | None = None,
+    include_cold: bool | None = None,
 ):
     """
     Fetch JDs for RawJobs with no description using parallel chunk workers.
 
-    *batch_size* — rows claimed per chunk (default 200).
-    *parallel_workers* — concurrent chunk runners (capped at 8), implemented with
-      a thread pool inside this task (not nested Celery tasks).
+    All tunable parameters fall back to HarvestEngineConfig values when not
+    explicitly provided by the caller:
+      batch_size       → 200 (default)
+      parallel_workers → HarvestEngineConfig.backfill_jd_workers (default 4)
+      reset_locks      → HarvestEngineConfig.backfill_jd_reset_locks (default True)
+      include_cold     → HarvestEngineConfig.backfill_jd_include_cold (default False)
 
     Without ``SKIP LOCKED``, chunks use PK modulo sharding so rows are not doubled.
-
-    Uses ``jd_backfill_locked_at`` + either ``SKIP LOCKED`` or PK sharding so workers
-    do not process the same row twice.
     """
     import time as _time
 
     from celery.exceptions import SoftTimeLimitExceeded
 
-    from .models import HarvestOpsRun, RawJob
+    from .models import HarvestEngineConfig, HarvestOpsRun, RawJob
     from .ops_audit import begin_ops_run, finish_ops_run
+
+    # Resolve config defaults for any param not explicitly supplied
+    cfg = HarvestEngineConfig.get()
+    if batch_size is None:
+        batch_size = 200
+    if parallel_workers is None:
+        parallel_workers = cfg.backfill_jd_workers
+    if reset_locks is None:
+        reset_locks = cfg.backfill_jd_reset_locks
+    if include_cold is None:
+        include_cold = cfg.backfill_jd_include_cold
 
     if offset:
         logger.warning(
@@ -4402,7 +4464,7 @@ def backfill_descriptions_task(
 
     parallelism_note = " ".join(parallelism_notes)
 
-    total = _backfill_eligible_queryset(platform_slug).count()
+    total = _backfill_eligible_queryset(platform_slug, include_cold=include_cold).count()
     if total == 0:
         empty_op = begin_ops_run(
             HarvestOpsRun.Operation.BACKFILL_JD,
@@ -4633,7 +4695,7 @@ def backfill_descriptions_task(
             "updated": updated,
             "skipped": skipped,
             "failed": failed,
-            "remaining": _backfill_eligible_queryset(platform_slug).count(),
+            "remaining": _backfill_eligible_queryset(platform_slug, include_cold=include_cold).count(),
             "parallel_workers": parallelism,
             "soft_time_limit": True,
         }
@@ -4654,7 +4716,7 @@ def backfill_descriptions_task(
         )
         raise
 
-    remaining_n = _backfill_eligible_queryset(platform_slug).count()
+    remaining_n = _backfill_eligible_queryset(platform_slug, include_cold=include_cold).count()
     result = {
         "updated": updated,
         "skipped": skipped,
