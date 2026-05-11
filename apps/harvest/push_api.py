@@ -274,9 +274,29 @@ class PushJobsView(View):
                 _platform_cache[slug] = _resolve_platform(slug)
             return _platform_cache[slug]
 
-        from harvest.models import RawJob
+        from harvest.models import RawJob, RawJobPayloadSnapshot
         from .enrichments import clean_job_content, clean_job_text, extract_enrichments
         from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
+        from .payload_archive import capture_rawjob_payload_snapshot
+
+        def capture_incoming_payload(raw_job, job_data):
+            payload = job_data.get("raw_payload") or {}
+            raw_html = job_data.get("description_raw_html") or ""
+            if not raw_html and isinstance(payload, dict):
+                raw_html = payload.get("raw_html") or payload.get("html") or ""
+            return capture_rawjob_payload_snapshot(
+                raw_job,
+                payload=payload,
+                raw_html=raw_html,
+                payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                source_url=job_data.get("original_url") or raw_job.original_url,
+                platform_slug=job_data.get("platform_slug") or raw_job.platform_slug,
+                source_metadata={
+                    "ingest": "push_api",
+                    "external_id": job_data.get("external_id") or "",
+                    "has_description": bool(job_data.get("description")),
+                },
+            )
 
         for job_data in jobs:
             try:
@@ -289,15 +309,27 @@ class PushJobsView(View):
                     errors += 1
                     continue
 
-                if RawJob.objects.filter(url_hash=url_hash).exists():
+                existing_by_hash = RawJob.objects.filter(url_hash=url_hash).first()
+                if existing_by_hash:
+                    capture_incoming_payload(existing_by_hash, job_data)
                     skipped += 1
                     continue
                 base_url = original_url.split("?", 1)[0].strip()
-                if base_url and RawJob.objects.filter(original_url__startswith=base_url).exists():
+                existing_by_base = (
+                    RawJob.objects.filter(original_url__startswith=base_url).first()
+                    if base_url else None
+                )
+                if existing_by_base:
+                    capture_incoming_payload(existing_by_base, job_data)
                     skipped += 1
                     continue
                 legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest() if original_url else ""
-                if legacy_hash and legacy_hash != url_hash and RawJob.objects.filter(url_hash=legacy_hash).exists():
+                existing_by_legacy = (
+                    RawJob.objects.filter(url_hash=legacy_hash).first()
+                    if legacy_hash and legacy_hash != url_hash else None
+                )
+                if existing_by_legacy:
+                    capture_incoming_payload(existing_by_legacy, job_data)
                     skipped += 1
                     continue
 
@@ -345,11 +377,13 @@ class PushJobsView(View):
                 )
 
                 # Secondary dedupe guard: same company+platform+external_id.
-                if external_id and RawJob.objects.filter(
+                existing_by_external = RawJob.objects.filter(
                     company=company,
                     platform_slug=platform_slug[:64],
                     external_id=external_id,
-                ).exists():
+                ).first() if external_id else None
+                if existing_by_external:
+                    capture_incoming_payload(existing_by_external, job_data)
                     skipped += 1
                     continue
 
@@ -455,6 +489,7 @@ class PushJobsView(View):
                 for field, value in scope_updates.items():
                     setattr(rj, field, value)
                 rj.save()
+                capture_incoming_payload(rj, job_data)
                 created += 1
 
             except IntegrityError:

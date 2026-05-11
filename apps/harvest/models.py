@@ -1,4 +1,5 @@
 import hashlib
+import gzip
 from datetime import timedelta
 
 from django.conf import settings
@@ -959,6 +960,94 @@ class RawJob(models.Model):
 
     def __str__(self):
         return f"{self.title} @ {self.company_name}"
+
+
+class RawJobPayloadSnapshot(models.Model):
+    """Immutable vendor/source evidence captured before normalization/classification."""
+
+    class PayloadKind(models.TextChoices):
+        LIST = "list", "List payload"
+        DETAIL = "detail", "Detail payload"
+        JSONLD = "jsonld", "JSON-LD"
+        HTML = "html", "Raw HTML"
+        API_RESPONSE = "api_response", "API response"
+        BACKFILL = "backfill", "Legacy backfill"
+        FAILURE = "failure", "Failure metadata"
+
+    raw_job = models.ForeignKey(
+        RawJob,
+        on_delete=models.CASCADE,
+        related_name="payload_snapshots",
+    )
+    fetch_batch = models.ForeignKey(
+        FetchBatch,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="payload_snapshots",
+    )
+    platform_slug = models.CharField(max_length=64, blank=True, db_index=True)
+    source_url = models.URLField(max_length=1024, blank=True)
+    payload_kind = models.CharField(
+        max_length=16,
+        choices=PayloadKind.choices,
+        default=PayloadKind.API_RESPONSE,
+        db_index=True,
+    )
+    schema_version = models.CharField(max_length=24, blank=True, default="source-v1")
+    payload = models.JSONField(default=dict, blank=True)
+    raw_html_gzip = models.BinaryField(null=True, blank=True, editable=False)
+    content_hash = models.CharField(max_length=64, db_index=True)
+    payload_size_bytes = models.PositiveIntegerField(default=0)
+    raw_html_size_bytes = models.PositiveIntegerField(default=0)
+    redaction_version = models.CharField(max_length=16, blank=True, default="v1")
+    source_metadata = models.JSONField(default=dict, blank=True)
+    is_failure = models.BooleanField(default=False, db_index=True)
+    http_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    captured_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        ordering = ["-captured_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["raw_job", "payload_kind", "content_hash"],
+                name="uniq_rawjob_payload_kind_hash",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["raw_job", "-captured_at"], name="raw_payload_job_time_idx"),
+            models.Index(fields=["platform_slug", "payload_kind"], name="raw_payload_platform_kind_idx"),
+        ]
+        verbose_name = "Raw Job Payload Snapshot"
+        verbose_name_plural = "Raw Job Payload Snapshots"
+
+    @property
+    def raw_html(self) -> str:
+        if not self.raw_html_gzip:
+            return ""
+        try:
+            return gzip.decompress(bytes(self.raw_html_gzip)).decode("utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    @property
+    def raw_html_preview(self) -> str:
+        html = self.raw_html
+        if len(html) > 50_000:
+            return f"{html[:50_000]}...[TRUNCATED PREVIEW]"
+        return html
+
+    @property
+    def size_label(self) -> str:
+        total = int(self.payload_size_bytes or 0) + int(self.raw_html_size_bytes or 0)
+        if total >= 1024 * 1024:
+            return f"{total / (1024 * 1024):.1f} MB"
+        if total >= 1024:
+            return f"{total / 1024:.1f} KB"
+        return f"{total} B"
+
+    def __str__(self):
+        return f"{self.raw_job_id} {self.payload_kind} {self.content_hash[:10]}"
 
 
 # ── Duplicate Detection ───────────────────────────────────────────────────────

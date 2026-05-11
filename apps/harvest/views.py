@@ -994,6 +994,8 @@ class RawJobDetailView(SuperuserRequiredMixin, DetailView):
     def get_context_data(self, **kwargs):
         ctx = super().get_context_data(**kwargs)
         ctx["resume_jd_gate"] = evaluate_raw_job_resume_gate(self.object)
+        ctx["payload_snapshots"] = self.object.payload_snapshots.all()[:8]
+        ctx["payload_snapshot_count"] = self.object.payload_snapshots.count()
         return ctx
 
 

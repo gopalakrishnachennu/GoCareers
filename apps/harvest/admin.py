@@ -1,7 +1,14 @@
 from django.contrib import admin
 from django.db.models import Count
 
-from .models import CompanyPlatformLabel, JobBoardPlatform, LocationCache, RawJob, PlatformEngineConfig
+from .models import (
+    CompanyPlatformLabel,
+    JobBoardPlatform,
+    LocationCache,
+    PlatformEngineConfig,
+    RawJob,
+    RawJobPayloadSnapshot,
+)
 
 
 @admin.register(JobBoardPlatform)
@@ -43,6 +50,29 @@ class RawJobAdmin(admin.ModelAdmin):
     search_fields = ["title", "company_name", "url_hash", "job_domain", "location_raw"]
     raw_id_fields = ["company"]
     readonly_fields = ["url_hash", "fetched_at", "updated_at", "job_domain", "domain_version", "last_scope_evaluated_at"]
+
+
+@admin.register(RawJobPayloadSnapshot)
+class RawJobPayloadSnapshotAdmin(admin.ModelAdmin):
+    list_display = [
+        "raw_job", "payload_kind", "platform_slug", "size_label",
+        "is_failure", "http_status", "captured_at",
+    ]
+    list_filter = ["payload_kind", "platform_slug", "is_failure", "captured_at"]
+    search_fields = ["raw_job__title", "raw_job__company_name", "source_url", "content_hash"]
+    raw_id_fields = ["raw_job", "fetch_batch"]
+    readonly_fields = [
+        "raw_job", "fetch_batch", "platform_slug", "source_url", "payload_kind",
+        "schema_version", "payload", "raw_html_gzip", "content_hash",
+        "payload_size_bytes", "raw_html_size_bytes", "redaction_version",
+        "source_metadata", "is_failure", "http_status", "captured_at",
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(LocationCache)

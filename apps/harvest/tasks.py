@@ -527,10 +527,23 @@ def harvest_jobs_task(
                             **_company_snapshot_fields(company),
                             **enriched,
                         }
-                        _, created = RawJob.objects.update_or_create(
+                        raw_obj, created = RawJob.objects.update_or_create(
                             url_hash=url_hash,
                             defaults=rj_defaults,
                         )
+                        try:
+                            from .models import RawJobPayloadSnapshot
+                            from .payload_archive import capture_rawjob_payload_snapshot
+                            capture_rawjob_payload_snapshot(
+                                raw_obj,
+                                payload=normalized.get("raw_payload", {}),
+                                payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                                source_url=original_url,
+                                platform_slug=platform.slug,
+                                source_metadata={"ingest": "harvest_jobs", "external_id": normalized.get("external_id", "")},
+                            )
+                        except Exception:
+                            logger.exception("Failed to archive source payload for RawJob %s", url_hash)
                         if created:
                             jobs_new += 1
                         else:
@@ -1048,6 +1061,26 @@ def fetch_raw_jobs_for_company_task(
                 **enriched,
             }
 
+            def _archive_job_payload(raw_obj):
+                try:
+                    from .models import RawJobPayloadSnapshot
+                    from .payload_archive import capture_rawjob_payload_snapshot
+                    capture_rawjob_payload_snapshot(
+                        raw_obj,
+                        payload=job_dict.get("raw_payload") or {},
+                        raw_html=desc_meta.get("raw_html") or "",
+                        payload_kind=RawJobPayloadSnapshot.PayloadKind.API_RESPONSE,
+                        source_url=original_url,
+                        platform_slug=(label.platform.slug if label.platform else ""),
+                        source_metadata={
+                            "ingest": "fetch_company_jobs",
+                            "external_id": external_id,
+                            "label_id": label.pk,
+                        },
+                    )
+                except Exception:
+                    logger.exception("Failed to archive source payload for RawJob %s", url_hash)
+
             # ── Dedup guard (ATS external_id): same label+external_id = same job ──
             # Must run BEFORE content_hash check — external_id is the strongest
             # identity signal (same ATS posting, different URL variant). Content_hash
@@ -1088,6 +1121,7 @@ def fetch_raw_jobs_for_company_task(
                     setattr(existing_by_external, field, val)
                 existing_by_external.url_hash = url_hash
                 existing_by_external.save()
+                _archive_job_payload(existing_by_external)
                 jobs_updated += 1
                 continue
 
@@ -1148,6 +1182,7 @@ def fetch_raw_jobs_for_company_task(
                         setattr(variant_row, field, val)
                     variant_row.url_hash = url_hash
                     variant_row.save()
+                    _archive_job_payload(variant_row)
                     jobs_updated += 1
                     continue
 
@@ -1172,6 +1207,7 @@ def fetch_raw_jobs_for_company_task(
                         setattr(legacy_row, field, val)
                     legacy_row.url_hash = url_hash
                     legacy_row.save()
+                    _archive_job_payload(legacy_row)
                     jobs_updated += 1
                     continue
 
@@ -1189,6 +1225,7 @@ def fetch_raw_jobs_for_company_task(
                 url_hash=url_hash,
                 defaults=defaults,
             )
+            _archive_job_payload(obj)
             if created:
                 jobs_new += 1
                 new_raw_job_pks.append(obj.pk)
@@ -2816,6 +2853,25 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             defaults=raw_job_defaults,
         )
     if raw_job:
+        try:
+            from .models import RawJobPayloadSnapshot
+            from .payload_archive import capture_rawjob_payload_snapshot
+            capture_rawjob_payload_snapshot(
+                raw_job,
+                payload=data.get("raw_payload") or {},
+                raw_html=desc_meta.get("raw_html") or "",
+                payload_kind=RawJobPayloadSnapshot.PayloadKind.DETAIL,
+                source_url=url,
+                platform_slug=platform_slug,
+                source_metadata={
+                    "ingest": "jarvis_single_job",
+                    "strategy": data.get("strategy", ""),
+                    "detected_ats": detected_ats,
+                    "external_id": external_id,
+                },
+            )
+        except Exception:
+            logger.exception("Failed to archive Jarvis source payload for RawJob %s", url_hash)
         evaluate_rawjob_scope(raw_job, use_provider=False, save=True)
     _invalidate_rawjobs_dashboard_cache()
 
@@ -4119,6 +4175,24 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     update_fields.update(evaluate_rawjob_scope(job, use_provider=False, save=False))
 
     RawJob.objects.filter(pk=job.pk).update(**update_fields)
+    if data.get("raw_payload"):
+        try:
+            from .models import RawJobPayloadSnapshot
+            from .payload_archive import capture_rawjob_payload_snapshot
+            capture_rawjob_payload_snapshot(
+                job,
+                payload=data.get("raw_payload") or {},
+                raw_html=desc_meta.get("raw_html") or "",
+                payload_kind=RawJobPayloadSnapshot.PayloadKind.DETAIL,
+                source_url=job.original_url,
+                platform_slug=job.platform_slug,
+                source_metadata={
+                    "ingest": "jd_backfill",
+                    "strategy": _backfill_str(data.get("strategy"))[:80],
+                },
+            )
+        except Exception:
+            logger.exception("Failed to archive backfill source payload for RawJob %s", job.pk)
     log = {
         **log_base,
         "status": "updated",

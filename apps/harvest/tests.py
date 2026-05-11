@@ -83,6 +83,66 @@ class HarvestUrlHashDedupeTests(SimpleTestCase):
         self.assertNotEqual(compute_url_hash(a), compute_url_hash(b))
 
 
+class RawJobPayloadArchiveTests(TestCase):
+    def _raw_job(self):
+        from companies.models import Company
+        from harvest.models import RawJob
+
+        company = Company.objects.create(name="Payload Test Co")
+        return RawJob.objects.create(
+            company=company,
+            company_name=company.name,
+            title="Software Engineer",
+            url_hash="payload-archive-test",
+            original_url="https://jobs.example.com/role?token=secret-token",
+            platform_slug="workday",
+        )
+
+    def test_snapshot_redacts_sensitive_values_and_compresses_html(self):
+        from harvest.models import RawJobPayloadSnapshot
+        from harvest.payload_archive import capture_rawjob_payload_snapshot
+
+        raw = self._raw_job()
+        snap = capture_rawjob_payload_snapshot(
+            raw,
+            payload={
+                "title": "Software Engineer",
+                "api_key": "abc123",
+                "applyUrl": "https://jobs.example.com/apply?signature=abc&job=1",
+                "contact": "recruiter@example.com",
+            },
+            raw_html="<html>Call 212-555-1212</html>",
+            payload_kind=RawJobPayloadSnapshot.PayloadKind.DETAIL,
+        )
+
+        self.assertIsNotNone(snap)
+        self.assertEqual(snap.payload["api_key"], "[REDACTED]")
+        self.assertIn("signature=%5BREDACTED%5D", snap.payload["applyUrl"])
+        self.assertEqual(snap.payload["contact"], "[REDACTED_EMAIL]")
+        self.assertIn("[REDACTED_PHONE]", snap.raw_html)
+        self.assertGreater(snap.raw_html_size_bytes, 0)
+
+    def test_snapshot_dedupes_same_job_kind_and_content_hash(self):
+        from harvest.models import RawJobPayloadSnapshot
+        from harvest.payload_archive import capture_rawjob_payload_snapshot
+
+        raw = self._raw_job()
+        payload = {"id": "REQ-1", "location": "Indianapolis, IN"}
+        first = capture_rawjob_payload_snapshot(
+            raw,
+            payload=payload,
+            payload_kind=RawJobPayloadSnapshot.PayloadKind.LIST,
+        )
+        second = capture_rawjob_payload_snapshot(
+            raw,
+            payload=dict(payload),
+            payload_kind=RawJobPayloadSnapshot.PayloadKind.LIST,
+        )
+
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(raw.payload_snapshots.count(), 1)
+
+
 class SmokeTestHarvestCommandTests(TestCase):
     """Dry-run must not require network or Celery."""
 
