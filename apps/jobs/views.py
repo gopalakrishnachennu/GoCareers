@@ -110,7 +110,9 @@ def _rawjob_blocker_label(raw_job, gate) -> str:
     if not raw_job.has_description:
         return "MISSING_JD"
     confidence = _rawjob_effective_confidence(raw_job)
-    if confidence is not None and confidence < 0.55:
+    from harvest.runtime_config import get_ready_stage_min_confidence
+
+    if confidence is not None and confidence < get_ready_stage_min_confidence():
         return "LOW_CONFIDENCE"
     if gate and not gate.usable:
         return gate.reason_code
@@ -127,6 +129,9 @@ def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") ->
             gate = None
 
     confidence = _rawjob_effective_confidence(raw_job)
+    from harvest.runtime_config import get_ready_stage_min_confidence
+
+    ready_min_conf = get_ready_stage_min_confidence()
     confidence_pct = round(confidence * 100) if confidence is not None else None
     scope_label = country_label or _rawjob_scope_label(raw_job)
     blocker = _rawjob_blocker_label(raw_job, gate)
@@ -146,7 +151,7 @@ def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") ->
         "confidence_label": f"{confidence_pct}%" if confidence_pct is not None else "Unknown",
         "confidence_level": (
             "high" if confidence is not None and confidence >= 0.75
-            else "medium" if confidence is not None and confidence >= 0.55
+            else "medium" if confidence is not None and confidence >= ready_min_conf
             else "low" if confidence is not None
             else "unknown"
         ),
@@ -1310,12 +1315,14 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             effective_classification_q,
             ready_stage_q,
         )
+        from harvest.runtime_config import get_ready_stage_min_confidence
 
         raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
         raw_insights = raw_jobs_workflow_insights()
         raw_total = raw_stats.get("total", 0)
         raw_funnel = (raw_insights or {}).get("funnel") or build_funnel_counts(RawJob.objects.all())
-        raw_ready_q = ready_stage_q(min_conf=0.55)
+        ready_min_conf = get_ready_stage_min_confidence()
+        raw_ready_q = ready_stage_q(min_conf=ready_min_conf)
         raw_qualified_pending = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
         raw_qualified_synced = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
         raw_pending_total = raw_stats.get("pending", 0)
@@ -1327,7 +1334,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         raw_blocked_low_conf = (
             RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=True, is_active=True)
             .filter(effective_classification_q(min_conf=0.01))
-            .exclude(effective_classification_q(min_conf=0.55))
+            .exclude(effective_classification_q(min_conf=ready_min_conf))
             .count()
         )
         raw_duplicates_total = (raw_insights or {}).get("duplicates", {}).get("total")

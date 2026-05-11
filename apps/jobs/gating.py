@@ -19,7 +19,12 @@ REASON_PLATFORM_MISMATCH = "PLATFORM_MISMATCH"
 REASON_DUPLICATE_RISK = "DUPLICATE_RISK"
 REASON_JD_TOO_WEAK = "JD_TOO_WEAK"
 REASON_BLACKLISTED_COMPANY = "BLACKLISTED_COMPANY"
+REASON_COLD_SCOPE = "COLD_SCOPE"        # non-target country or no location
+REASON_UNSCOPED = "UNSCOPED"            # location never evaluated
 REASON_OK = "ELIGIBLE"
+
+# Scope statuses that are allowed to proceed to the vet queue
+_PASSABLE_SCOPE = frozenset({"PRIORITY_TARGET", "REVIEW_UNKNOWN_COUNTRY"})
 
 
 @dataclass
@@ -124,8 +129,42 @@ def _duplicate_risk(raw_job) -> bool:
     return base.exists()
 
 
+def _scope_blocked_result(reason_code: str, scope_status: str) -> GateResult:
+    """Fast-path BLOCKED result for jobs that fail the scope pre-check."""
+    return GateResult(
+        passed=False,
+        reason_code=reason_code,
+        reasons=[reason_code],
+        checks={
+            "scope_ok": False,
+            "active_posting": False,
+            "valid_source_url": False,
+            "tenant_platform_match": False,
+            "dedupe_passed": False,
+            "clean_jd_present": False,
+            "company_resolved": False,
+        },
+        data_quality_score=0.0,
+        trust_score=0.0,
+        candidate_fit_score=0.0,
+        vet_priority_score=0.0,
+        lane="BLOCKED",
+        status="BLOCKED",
+    )
+
+
 def evaluate_raw_job_gate(raw_job) -> GateResult:
+    # ── Scope pre-check (fast-path) ───────────────────────────────────────────
+    # COLD and UNSCOPED jobs are blocked before any expensive checks.
+    # This mirrors the `is_priority=True` filter in sync_harvested_to_pool_task
+    # and makes the reason explicit in the gate audit trail.
+    scope_status = (getattr(raw_job, "scope_status", "") or "").upper()
+    if scope_status and scope_status not in _PASSABLE_SCOPE:
+        reason = REASON_UNSCOPED if scope_status == "UNSCOPED" else REASON_COLD_SCOPE
+        return _scope_blocked_result(reason, scope_status)
+
     checks = {
+        "scope_ok": True,
         "active_posting": bool(raw_job.is_active),
         "valid_source_url": bool((raw_job.original_url or "").strip()),
         "tenant_platform_match": _platform_tenant_match(raw_job),

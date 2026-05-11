@@ -51,6 +51,7 @@
         <button class="ops-tab-btn" data-tab="completed">Completed</button>
         <button class="ops-tab-btn" data-tab="workers">Workers</button>
         <button class="ops-tab-btn" data-tab="pipelines">Pipelines</button>
+        <button class="ops-tab-btn" data-tab="opsruns">Ops Runs</button>
       </div>
     </div>
 
@@ -224,6 +225,26 @@
             </tr>
           </thead>
           <tbody id="pipelineRows" class="divide-y divide-slate-100"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-opsruns" class="ops-tab-panel hidden p-4">
+      <h3 class="mb-2 text-base font-bold text-slate-900">Management Command Runs</h3>
+      <p class="mb-3 text-sm text-slate-500">Audit trail for long-running ops commands (classify, scope, backfill, refetch). Updated every few seconds while a command is running.</p>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+            <tr>
+              <th class="px-4 py-3">Operation</th>
+              <th class="px-4 py-3">Status</th>
+              <th class="px-4 py-3">Progress</th>
+              <th class="px-4 py-3">Started</th>
+              <th class="px-4 py-3">Runtime</th>
+              <th class="px-4 py-3">Message</th>
+            </tr>
+          </thead>
+          <tbody id="opsRunRows" class="divide-y divide-slate-100"></tbody>
         </table>
       </div>
     </div>
@@ -460,6 +481,36 @@
       </tr>`).join('');
   }
 
+  function renderOpsRuns(runs){
+    const body = document.getElementById('opsRunRows');
+    if (!runs || !runs.length){ body.innerHTML = '<tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">No ops runs recorded yet. Run a management command to see it here.</td></tr>'; return; }
+    const statusStyle = {
+      RUNNING: 'background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;',
+      SUCCESS: 'background:#ecfdf5;color:#047857;border:1px solid #a7f3d0;',
+      FAILED:  'background:#fff1f2;color:#be123c;border:1px solid #fecdd3;',
+    };
+    body.innerHTML = runs.map(r => {
+      const sStyle = statusStyle[r.status] || 'background:#f1f5f9;color:#475569;border:1px solid #cbd5e1;';
+      const pct = Number(r.progress_pct || 0);
+      const barColor = r.status === 'FAILED' ? '#ef4444' : r.status === 'SUCCESS' ? '#10b981' : '#3b82f6';
+      const progressBar = r.progress_total > 0 ? `
+        <div class="flex items-center gap-2">
+          <div class="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+            <div class="h-full rounded-full transition-all" style="width:${pct}%;background:${barColor}"></div>
+          </div>
+          <span class="text-xs text-slate-500">${pct}%</span>
+        </div>` : '<span class="text-xs text-slate-400">—</span>';
+      return `<tr>
+        <td class="px-4 py-3 font-semibold text-slate-900">${esc(r.operation_label || r.operation)}</td>
+        <td class="px-4 py-3"><span class="rounded-full px-2 py-0.5 text-xs font-medium" style="${sStyle}">${esc(r.status)}</span></td>
+        <td class="px-4 py-3">${progressBar}</td>
+        <td class="px-4 py-3 text-xs text-slate-600">${esc(fmtDate(r.started_at) || '—')}</td>
+        <td class="px-4 py-3 text-xs text-slate-600">${esc(fmtRuntime(r.runtime_seconds))}</td>
+        <td class="px-4 py-3 max-w-xs truncate text-xs text-slate-500">${esc(r.progress_message || '—')}</td>
+      </tr>`;
+    }).join('');
+  }
+
   function renderTrendBars(containerId, totalArr, majorArr, minorArr, majorColor, minorColor){
     const root = document.getElementById(containerId);
     const total = Array.isArray(totalArr) ? totalArr : [];
@@ -494,6 +545,7 @@
       renderCompleted(data.completed || []);
       renderWorkers(data.workers || []);
       renderPipelines(data.pipelines || []);
+      renderOpsRuns(data.ops_runs || []);
       renderTrend(data.trend || {});
 
       document.getElementById('lastUpdated').textContent = fmtDate(data.generated_at);

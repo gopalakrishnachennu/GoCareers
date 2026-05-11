@@ -293,6 +293,7 @@ class HarvestOpsRun(models.Model):
         BACKFILL_ROLES = "backfill_roles", "Backfill marketing roles"
         REFETCH_LOCATIONS = "refetch_locations", "Refetch ambiguous locations"
         BACKFILL_ENRICHMENT = "backfill_enrichment", "Backfill enrichment"
+        CONFIG_FAILURE = "config_failure", "Config read failure"
 
     class Status(models.TextChoices):
         RUNNING = "RUNNING", "Running"
@@ -909,6 +910,8 @@ class RawJob(models.Model):
             if self.category_confidence is not None
             else self.classification_confidence
         ) or 0
+        from .runtime_config import get_ready_stage_min_confidence
+
         if self.sync_status == self.SyncStatus.SYNCED:
             return "SYNCED"
         if self.sync_status == self.SyncStatus.FAILED:
@@ -918,7 +921,7 @@ class RawJob(models.Model):
         if (
             self.has_description
             and self.is_resume_jd_usable()
-            and effective_conf >= 0.55
+            and effective_conf >= get_ready_stage_min_confidence()
             and self.is_active
         ):
             return "READY"
@@ -1274,6 +1277,30 @@ class HarvestEngineConfig(models.Model):
             "Minimum classification confidence (0-1) required for resume-ready gating."
         ),
     )
+    ready_stage_min_confidence = models.FloatField(
+        default=0.55,
+        verbose_name="Ready stage minimum confidence",
+        help_text=(
+            "Minimum effective classification confidence (0-1) required before a RawJob "
+            "is considered READY in pipeline analytics and queue counts."
+        ),
+    )
+    legacy_hash_bridge_enabled = models.BooleanField(
+        default=True,
+        verbose_name="Legacy SHA256 URL hash bridge",
+        help_text=(
+            "Temporarily reconcile old SHA256 url_hash rows during upsert. Turn off "
+            "after the historical hash migration/backfill has completed."
+        ),
+    )
+    jd_backfill_lock_stale_minutes = models.PositiveSmallIntegerField(
+        default=15,
+        verbose_name="JD backfill stale lock minutes",
+        help_text=(
+            "If a JD backfill worker crashes, locks older than this are reclaimed. "
+            "Keep above the longest normal single-job fetch duration."
+        ),
+    )
 
     # ── Scoped harvest controls ──────────────────────────────────────────────
     target_countries = models.JSONField(
@@ -1355,6 +1382,17 @@ class HarvestEngineConfig(models.Model):
     def save(self, *args, **kwargs):
         self.pk = 1  # enforce singleton
         super().save(*args, **kwargs)
+        try:
+            from django.core.cache import cache
+
+            cache.delete_many([
+                "harvest:ready-stage-min-confidence:v1",
+                "harvest:jd-backfill-lock-stale-minutes:v1",
+                "harvest:legacy-hash-bridge-enabled:v1",
+                "harvest:resume_jd_gate:thresholds:v1",
+            ])
+        except Exception:
+            pass
         # Broadcast updated rate limit to all running Celery workers immediately.
         # Workers that are offline will pick up the new rate from DB on next task start.
         try:

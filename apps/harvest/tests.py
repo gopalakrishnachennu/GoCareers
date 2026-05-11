@@ -83,6 +83,209 @@ class HarvestUrlHashDedupeTests(SimpleTestCase):
         self.assertNotEqual(compute_url_hash(a), compute_url_hash(b))
 
 
+class HarvestEngineHardeningTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, JobBoardPlatform
+
+        self.company = Company.objects.create(name="Hardening Co")
+        self.platform = JobBoardPlatform.objects.create(name="Hardening ATS", slug="hardening")
+        self.label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.platform,
+            tenant_id="hardening",
+        )
+
+    def _raw_defaults(self, **overrides):
+        defaults = {
+            "company": self.company,
+            "platform_label": self.label,
+            "job_platform": self.platform,
+            "platform_slug": self.platform.slug,
+            "external_id": overrides.pop("external_id", ""),
+            "original_url": overrides.pop("original_url", "https://hardening.example/jobs/new"),
+            "title": overrides.pop("title", "Software Engineer"),
+            "company_name": self.company.name,
+            "content_hash": overrides.pop("content_hash", "content-same"),
+            "sync_status": "PENDING",
+            "is_active": True,
+        }
+        defaults.update(overrides)
+        return defaults
+
+    def test_atomic_rawjob_upsert_skips_content_duplicate(self):
+        from harvest.models import RawJob
+        from harvest.normalizer import compute_url_hash
+        from harvest.services.rawjob_upsert import upsert_raw_job_with_dedupe
+
+        RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash=compute_url_hash("https://hardening.example/jobs/existing"),
+                original_url="https://hardening.example/jobs/existing",
+                content_hash="content-same",
+            )
+        )
+
+        result = upsert_raw_job_with_dedupe(
+            company=self.company,
+            defaults=self._raw_defaults(
+                original_url="https://hardening.example/jobs/new",
+                content_hash="content-same",
+            ),
+            url_hash=compute_url_hash("https://hardening.example/jobs/new"),
+            original_url="https://hardening.example/jobs/new",
+            external_id="new-ext",
+            platform_label=self.label,
+            job_platform=self.platform,
+            platform_slug=self.platform.slug,
+        )
+
+        self.assertEqual(result.action, "duplicate")
+        self.assertEqual(result.reason, "content_hash_duplicate")
+        self.assertEqual(RawJob.objects.count(), 1)
+
+    def test_atomic_rawjob_upsert_updates_external_identity(self):
+        from harvest.models import RawJob
+        from harvest.normalizer import compute_url_hash
+        from harvest.services.rawjob_upsert import upsert_raw_job_with_dedupe
+
+        existing = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash=compute_url_hash("https://hardening.example/jobs/old"),
+                original_url="https://hardening.example/jobs/old",
+                external_id="REQ-1",
+                content_hash="old-content",
+            )
+        )
+
+        result = upsert_raw_job_with_dedupe(
+            company=self.company,
+            defaults=self._raw_defaults(
+                original_url="https://hardening.example/jobs/new?utm=1",
+                external_id="REQ-1",
+                content_hash="new-content",
+                title="Senior Software Engineer",
+            ),
+            url_hash=compute_url_hash("https://hardening.example/jobs/new?utm=1"),
+            original_url="https://hardening.example/jobs/new?utm=1",
+            external_id="REQ-1",
+            platform_label=self.label,
+            job_platform=self.platform,
+            platform_slug=self.platform.slug,
+        )
+
+        self.assertEqual(result.action, "updated")
+        self.assertEqual(result.raw_job.pk, existing.pk)
+        self.assertEqual(RawJob.objects.count(), 1)
+        existing.refresh_from_db()
+        self.assertEqual(existing.title, "Senior Software Engineer")
+
+    def test_ready_stage_threshold_comes_from_engine_config(self):
+        from django.core.cache import cache
+        from harvest.models import HarvestEngineConfig, RawJob
+        from harvest.services.rawjob_query import ready_stage_q
+
+        cfg = HarvestEngineConfig.get()
+        cfg.ready_stage_min_confidence = 0.70
+        cfg.save()
+        cache.delete("harvest:ready-stage-min-confidence:v1")
+
+        low = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash="ready-low",
+                description="A real job description",
+                has_description=True,
+                category_confidence=0.60,
+            )
+        )
+        high = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash="ready-high",
+                original_url="https://hardening.example/jobs/high",
+                content_hash="content-high",
+                description="A real job description",
+                has_description=True,
+                category_confidence=0.75,
+            )
+        )
+
+        qs = RawJob.objects.filter(ready_stage_q())
+        self.assertFalse(qs.filter(pk=low.pk).exists())
+        self.assertTrue(qs.filter(pk=high.pk).exists())
+
+    def test_scope_evaluation_uses_config_provider_when_requested(self):
+        from harvest.location_resolver import LocationResolution, evaluate_rawjob_scope
+        from harvest.models import HarvestEngineConfig, RawJob
+
+        cfg = HarvestEngineConfig.get()
+        cfg.geocoding_cache_enabled = False
+        cfg.geocoding_provider_enabled = True
+        cfg.geocoding_provider = "mapbox"
+        cfg.target_countries = ["US"]
+        cfg.save()
+        raw = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash="scope-provider-auto",
+                location_raw="Provider Only Place",
+                content_hash="scope-provider-auto",
+            )
+        )
+
+        with patch(
+            "harvest.location_resolver._mapbox_geocode",
+            return_value=LocationResolution(
+                raw_text="Provider Only Place",
+                normalized_text="provider only place",
+                country_code="US",
+                country_name="United States",
+                confidence=0.95,
+                source="mapbox",
+                status="RESOLVED",
+            ),
+        ) as mocked:
+            evaluate_rawjob_scope(raw, cfg=cfg, use_provider=None, save=True)
+
+        raw.refresh_from_db()
+        self.assertTrue(mocked.called)
+        self.assertEqual(raw.country_code, "US")
+        self.assertEqual(raw.scope_status, RawJob.ScopeStatus.PRIORITY_TARGET)
+
+    def test_backfill_stale_lock_window_comes_from_engine_config(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from harvest.models import HarvestEngineConfig, RawJob
+        from harvest.tasks import _backfill_eligible_queryset
+
+        cfg = HarvestEngineConfig.get()
+        cfg.jd_backfill_lock_stale_minutes = 5
+        cfg.save()
+
+        stale = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash="stale-lock",
+                original_url="https://hardening.example/jobs/stale-lock",
+                content_hash="stale-lock",
+                is_priority=True,
+                has_description=False,
+                jd_backfill_locked_at=timezone.now() - timedelta(minutes=6),
+            )
+        )
+        fresh = RawJob.objects.create(
+            **self._raw_defaults(
+                url_hash="fresh-lock",
+                original_url="https://hardening.example/jobs/fresh-lock",
+                content_hash="fresh-lock",
+                is_priority=True,
+                has_description=False,
+                jd_backfill_locked_at=timezone.now() - timedelta(minutes=4),
+            )
+        )
+
+        eligible = _backfill_eligible_queryset(None)
+        self.assertTrue(eligible.filter(pk=stale.pk).exists())
+        self.assertFalse(eligible.filter(pk=fresh.pk).exists())
+
+
 class RawJobPayloadArchiveTests(TestCase):
     def _raw_job(self):
         from companies.models import Company
@@ -928,6 +1131,9 @@ class SyncRawJobsToPoolTests(TestCase):
             ),
             sync_status="PENDING",
             is_priority=True,
+            scope_status=RawJob.ScopeStatus.PRIORITY_TARGET,
+            country_code="US",
+            country_codes=["US"],
         )
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()
         raw.refresh_from_db()
@@ -949,6 +1155,9 @@ class SyncRawJobsToPoolTests(TestCase):
             original_url=url,
             sync_status="PENDING",
             is_priority=True,
+            scope_status=RawJob.ScopeStatus.PRIORITY_TARGET,
+            country_code="US",
+            country_codes=["US"],
         )
         Job.objects.create(
             title="Already here",
@@ -1005,6 +1214,9 @@ class SyncRawJobsToPoolTests(TestCase):
             job_domain="",
             sync_status="PENDING",
             is_priority=True,
+            scope_status=RawJob.ScopeStatus.PRIORITY_TARGET,
+            country_code="US",
+            country_codes=["US"],
         )
 
         sync_harvested_to_pool_task.apply(kwargs={"max_jobs": 10}).get()

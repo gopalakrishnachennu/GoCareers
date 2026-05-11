@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
 from django.db.models import Q
 from django.utils import timezone
 
@@ -11,11 +10,14 @@ from harvest.location_resolver import (
     is_placeholder_location_value,
     split_multi_location_text,
 )
-from harvest.models import HarvestEngineConfig, RawJob
+from harvest.models import HarvestEngineConfig, HarvestOpsRun, RawJob
+
+from ._ops_base import OpsTrackedCommand
 
 
-class Command(BaseCommand):
+class Command(OpsTrackedCommand):
     help = "Refetch detail pages for RawJobs whose stored location is a multi-location placeholder."
+    ops_operation = HarvestOpsRun.Operation.REFETCH_LOCATIONS
 
     def add_arguments(self, parser):
         parser.add_argument("--platform", default="", help="Limit to one platform slug, e.g. jobvite.")
@@ -44,14 +46,15 @@ class Command(BaseCommand):
 
         jarvis = JobJarvis()
         dry_run = bool(options["dry_run"])
-        use_provider = bool(options["provider"])
+        use_provider = True if options["provider"] else None
         batch_size = max(10, int(options["batch_size"] or 100))
 
         processed = updated = no_location = failed = 0
         self.stdout.write(
             f"Refetching ambiguous locations: limit={limit:,}, platform={options['platform'] or 'all'}, "
-            f"provider={use_provider}, dry_run={dry_run}"
+            f"provider={use_provider if use_provider is not None else 'config'}, dry_run={dry_run}"
         )
+        self.ops_start(total=limit, message=f"Refetching up to {limit:,} ambiguous location jobs…")
 
         fields = [
             "location_raw",
@@ -128,6 +131,7 @@ class Command(BaseCommand):
                     self.stderr.write(f"Failed raw_job={raw_job.pk}: {type(exc).__name__}: {exc}")
 
             if processed % batch_size == 0:
+                self.ops_progress(processed)
                 self.stdout.write(f"Processed {processed:,}; updated={updated:,}; no_location={no_location:,}; failed={failed:,}")
 
         self.stdout.write(self.style.SUCCESS(

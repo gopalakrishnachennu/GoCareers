@@ -11,6 +11,11 @@ from django.db.models.functions import Coalesce, Length, Mod, Trim
 from django.utils import timezone
 
 from core.task_progress import update_task_progress
+from .runtime_config import (
+    DEFAULT_JD_BACKFILL_LOCK_STALE_MINUTES,
+    get_jd_backfill_lock_stale_minutes,
+    require_harvest_engine_config,
+)
 
 # ─── Harvest compliance constants ────────────────────────────────────────────
 # Delay between processing each company within a platform run.
@@ -44,7 +49,7 @@ MAX_CONSECUTIVE_FAILURES = 3
 logger = logging.getLogger(__name__)
 
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
-BACKFILL_LOCK_STALE_MINUTES = 45
+BACKFILL_LOCK_STALE_MINUTES = DEFAULT_JD_BACKFILL_LOCK_STALE_MINUTES
 BACKFILL_MAX_PARALLEL = 8
 
 
@@ -112,7 +117,7 @@ def _backfill_eligible_queryset(platform_slug: str | None):
     """
     from .models import RawJob
 
-    q = RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES).filter(
+    q = RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes()).filter(
         is_priority=True,
     )
     if platform_slug:
@@ -163,6 +168,44 @@ def _claim_backfill_job_batch(
         now = timezone.now()
         RawJob.objects.filter(pk__in=ids).update(jd_backfill_locked_at=now)
     return list(RawJob.objects.filter(pk__in=ids).order_by("pk"))
+
+
+@shared_task(bind=True, name="harvest.release_stale_jd_backfill_locks", max_retries=0)
+def release_stale_jd_backfill_locks_task(self):
+    """Clear stale JD lock timestamps so crashed workers do not hide backlog rows."""
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
+
+    stale_minutes = get_jd_backfill_lock_stale_minutes()
+    cutoff = timezone.now() - timedelta(minutes=stale_minutes)
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.BACKFILL_JD,
+        getattr(self.request, "id", "") or "",
+        queue={
+            "maintenance": "release_stale_jd_backfill_locks",
+            "stale_minutes": stale_minutes,
+        },
+    )
+    stale_qs = RawJob.objects.filter(
+        has_description=False,
+        jd_backfill_locked_at__isnull=False,
+        jd_backfill_locked_at__lt=cutoff,
+    )
+    stale_count = stale_qs.count()
+    cleared = stale_qs.update(jd_backfill_locked_at=None)
+    if cleared:
+        logger.warning(
+            "Released %s stale JD backfill locks older than %s minutes",
+            cleared,
+            stale_minutes,
+        )
+    completion = {
+        "stale_minutes": stale_minutes,
+        "stale_count": stale_count,
+        "cleared": cleared,
+    }
+    finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, completion)
+    return completion
 
 
 @shared_task(bind=True, name="harvest.backfill_platform_labels_from_jobs")
@@ -698,26 +741,21 @@ def fetch_raw_jobs_for_company_task(
     Fetch ALL jobs for a single CompanyPlatformLabel and upsert into RawJob.
     Creates a CompanyFetchRun audit record. Updates FetchBatch counters if batch_id given.
     """
-    import hashlib
     import requests
     from datetime import date
 
-    from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig, RawJob
+    from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, RawJob
     from .harvesters import get_harvester
     from .normalizer import compute_url_hash, compute_content_hash
     from .location_resolver import extract_location_candidates
 
-    # ── Read live config from DB — overrides decorator-level fallbacks ────────
-    try:
-        _cfg = HarvestEngineConfig.get()
-        # Apply the current rate limit to THIS worker's slot for this task type.
-        # This ensures the DB value is always honoured even after a live GUI change.
-        self.rate_limit = f"{_cfg.task_rate_limit}/m"
-        _soft_limit = _cfg.task_soft_time_limit_secs
-        _hard_limit = _soft_limit + 120
-    except Exception:
-        _soft_limit = 480
-        _hard_limit = 600
+    # ── Read live config from DB — required for harvest correctness ───────────
+    _cfg = require_harvest_engine_config("fetch_raw_jobs_for_company_task")
+    # Apply the current rate limit to THIS worker's slot for this task type.
+    # This ensures the DB value is always honoured even after a live GUI change.
+    self.rate_limit = f"{_cfg.task_rate_limit}/m"
+    _soft_limit = _cfg.task_soft_time_limit_secs
+    _hard_limit = _soft_limit + 120
 
     # ── Load label ────────────────────────────────────────────────────────────
     try:
@@ -1081,150 +1119,26 @@ def fetch_raw_jobs_for_company_task(
                 except Exception:
                     logger.exception("Failed to archive source payload for RawJob %s", url_hash)
 
-            # ── Dedup guard (ATS external_id): same label+external_id = same job ──
-            # Must run BEFORE content_hash check — external_id is the strongest
-            # identity signal (same ATS posting, different URL variant). Content_hash
-            # is only for cross-platform dedup where external_id is absent.
-            existing_by_external = None
-            if external_id:
-                ext_q = RawJob.objects.filter(
-                    company=label.company,
-                    external_id=external_id,
-                )
-                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
-                if platform_slug_match:
-                    ext_q = ext_q.filter(
-                        Q(platform_label=label)
-                        | Q(job_platform=label.platform)
-                        | Q(platform_slug=platform_slug_match)
-                        | Q(job_platform__isnull=True)
-                    )
-                existing_by_external = (
-                    ext_q
-                    .order_by("pk")
-                    .first()
-                )
-            if existing_by_external:
-                if existing_by_external.sync_status == "SYNCED":
-                    jobs_duplicate += 1
-                    continue
-                hash_owned_elsewhere = (
-                    RawJob.objects.filter(url_hash=url_hash)
-                    .exclude(pk=existing_by_external.pk)
-                    .values_list("pk", flat=True)
-                    .first()
-                )
-                if hash_owned_elsewhere:
-                    jobs_duplicate += 1
-                    continue
-                for field, val in defaults.items():
-                    setattr(existing_by_external, field, val)
-                existing_by_external.url_hash = url_hash
-                existing_by_external.save()
-                _archive_job_payload(existing_by_external)
-                jobs_updated += 1
-                continue
+            # ── Atomic identity decision ───────────────────────────────────────
+            # Lock and evaluate all duplicate identities together so external_id,
+            # content_hash, query-variant, and legacy-url hashes cannot disagree.
+            from .services.rawjob_upsert import upsert_raw_job_with_dedupe
 
-            # ── Cross-platform dedup guard (content_hash) ─────────────────────
-            # Prevents the same job from being ingested twice when a company posts
-            # on multiple boards (e.g. Greenhouse + LinkedIn). Runs after external_id
-            # check so ATS URL variants aren't incorrectly blocked here.
-            _ch = defaults["content_hash"]
-            if _ch:
-                _cross_dup = (
-                    RawJob.objects.filter(
-                        company=label.company,
-                        content_hash=_ch,
-                        is_active=True,
-                    )
-                    .exclude(url_hash=url_hash)
-                    .values_list("pk", flat=True)
-                    .first()
-                )
-                if _cross_dup:
-                    jobs_duplicate += 1
-                    continue
-
-            # ── Query-variant reconciliation: same path, tracker query changed ──
-            base_url = original_url.split("?", 1)[0].strip()
-            if base_url:
-                variant_q = RawJob.objects.filter(
-                    company=label.company,
-                    original_url__startswith=base_url,
-                )
-                platform_slug_match = (label.platform.slug if label.platform else "")[:64]
-                if platform_slug_match:
-                    variant_q = variant_q.filter(
-                        Q(platform_label=label)
-                        | Q(job_platform=label.platform)
-                        | Q(platform_slug=platform_slug_match)
-                        | Q(job_platform__isnull=True)
-                    )
-                variant_row = (
-                    variant_q
-                    .order_by("pk")
-                    .first()
-                )
-                if variant_row and variant_row.url_hash != url_hash:
-                    if variant_row.sync_status == "SYNCED":
-                        jobs_duplicate += 1
-                        continue
-                    hash_owned_elsewhere = (
-                        RawJob.objects.filter(url_hash=url_hash)
-                        .exclude(pk=variant_row.pk)
-                        .values_list("pk", flat=True)
-                        .first()
-                    )
-                    if hash_owned_elsewhere:
-                        jobs_duplicate += 1
-                        continue
-                    for field, val in defaults.items():
-                        setattr(variant_row, field, val)
-                    variant_row.url_hash = url_hash
-                    variant_row.save()
-                    _archive_job_payload(variant_row)
-                    jobs_updated += 1
-                    continue
-
-            # ── Legacy hash reconciliation: migrate old non-canonical hash in place ──
-            legacy_hash = hashlib.sha256(original_url.encode("utf-8")).hexdigest()
-            if legacy_hash and legacy_hash != url_hash:
-                legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
-                if legacy_row:
-                    if legacy_row.sync_status == "SYNCED":
-                        jobs_duplicate += 1
-                        continue
-                    hash_owned_elsewhere = (
-                        RawJob.objects.filter(url_hash=url_hash)
-                        .exclude(pk=legacy_row.pk)
-                        .values_list("pk", flat=True)
-                        .first()
-                    )
-                    if hash_owned_elsewhere:
-                        jobs_duplicate += 1
-                        continue
-                    for field, val in defaults.items():
-                        setattr(legacy_row, field, val)
-                    legacy_row.url_hash = url_hash
-                    legacy_row.save()
-                    _archive_job_payload(legacy_row)
-                    jobs_updated += 1
-                    continue
-
-            # ── Dedup guard: never overwrite a SYNCED job ────────────────────
-            # If this URL is already in the pool (sync_status=SYNCED), there is
-            # nothing to do — don't reset its sync status or overwrite its data.
-            existing_synced = RawJob.objects.filter(
-                url_hash=url_hash, sync_status="SYNCED"
-            ).values_list("pk", flat=True).first()
-            if existing_synced:
+            upsert = upsert_raw_job_with_dedupe(
+                company=label.company,
+                defaults=defaults,
+                url_hash=url_hash,
+                original_url=original_url,
+                external_id=external_id,
+                platform_label=label,
+                job_platform=label.platform,
+                platform_slug=(label.platform.slug if label.platform else ""),
+            )
+            if upsert.action == "duplicate" or upsert.raw_job is None:
                 jobs_duplicate += 1
                 continue
-
-            obj, created = RawJob.objects.update_or_create(
-                url_hash=url_hash,
-                defaults=defaults,
-            )
+            obj = upsert.raw_job
+            created = upsert.created
             _archive_job_payload(obj)
             if created:
                 jobs_new += 1
@@ -1359,87 +1273,83 @@ def fetch_raw_jobs_for_company_task(
                     if refreshed["failed_companies"] == 0
                     else FetchBatch.Status.PARTIAL
                 )
-                wrote = FetchBatch.objects.filter(
-                    pk=batch.pk, status=FetchBatch.Status.RUNNING
-                ).update(status=final_status, completed_at=timezone.now())
-                if wrote == 1:
-                    _batch_just_finished = True
-                    try:
-                        bdone = FetchBatch.objects.filter(pk=batch.pk).first()
-                        status_rows = (
-                            CompanyFetchRun.objects.filter(batch_id=batch.pk)
-                            .values("status")
-                            .annotate(c=Count("id"))
-                        )
-                        by_status = {row["status"]: row["c"] for row in status_rows}
-                        plat_rows = (
-                            CompanyFetchRun.objects.filter(batch_id=batch.pk)
-                            .values("label__platform__slug")
-                            .annotate(
-                                n=Count("id"),
-                                ok=Count(
-                                    "id",
-                                    filter=Q(
-                                        status__in=[
-                                            CompanyFetchRun.Status.SUCCESS,
-                                            CompanyFetchRun.Status.PARTIAL,
-                                        ]
-                                    ),
+                try:
+                    status_rows = (
+                        CompanyFetchRun.objects.filter(batch_id=batch.pk)
+                        .values("status")
+                        .annotate(c=Count("id"))
+                    )
+                    by_status = {row["status"]: row["c"] for row in status_rows}
+                    plat_rows = list(
+                        CompanyFetchRun.objects.filter(batch_id=batch.pk)
+                        .values("label__platform__slug")
+                        .annotate(
+                            n=Count("id"),
+                            ok=Count(
+                                "id",
+                                filter=Q(
+                                    status__in=[
+                                        CompanyFetchRun.Status.SUCCESS,
+                                        CompanyFetchRun.Status.PARTIAL,
+                                    ]
                                 ),
-                                bad=Count(
-                                    "id",
-                                    filter=Q(
-                                        status__in=[
-                                            CompanyFetchRun.Status.FAILED,
-                                            CompanyFetchRun.Status.SKIPPED,
-                                        ]
-                                    ),
-                                ),
-                            )
-                            .order_by("-n")[:30]
-                        )
-                        logger.info(
-                            "[HARVEST_AUDIT done] run_kind=%s batch_id=%s batch_status=%s "
-                            "total_companies=%s completed_counter=%s failed_counter=%s "
-                            "total_jobs_found=%s total_jobs_new=%s by_status=%s by_platform=%s",
-                            ((bdone.audit_payload or {}).get("queue") or {}).get("run_kind", "")
-                            if bdone
-                            else "",
-                            batch.pk,
-                            final_status,
-                            (bdone.total_companies if bdone else 0),
-                            (bdone.completed_companies if bdone else 0),
-                            (bdone.failed_companies if bdone else 0),
-                            (bdone.total_jobs_found if bdone else 0),
-                            (bdone.total_jobs_new if bdone else 0),
-                            by_status,
-                            list(plat_rows),
-                        )
-                        completion_audit = {
-                            "phase": "completed",
-                            "batch_status": final_status,
-                            "total_companies": bdone.total_companies if bdone else 0,
-                            "completed_companies": bdone.completed_companies if bdone else 0,
-                            "failed_companies": bdone.failed_companies if bdone else 0,
-                            "total_jobs_found": bdone.total_jobs_found if bdone else 0,
-                            "total_jobs_new": bdone.total_jobs_new if bdone else 0,
-                            "by_status": by_status,
-                            "by_platform": list(plat_rows),
-                            "logged_at": timezone.now().isoformat(),
-                            "last_company_task_id": getattr(self.request, "id", "") or "",
-                            "notes": (
-                                "failed_companies includes SKIPPED early exits (no tenant / no harvester). "
-                                "See batch detail page for per-company rows."
                             ),
-                        }
-                        with transaction.atomic():
-                            locked = FetchBatch.objects.select_for_update().get(pk=batch.pk)
+                            bad=Count(
+                                "id",
+                                filter=Q(
+                                    status__in=[
+                                        CompanyFetchRun.Status.FAILED,
+                                        CompanyFetchRun.Status.SKIPPED,
+                                    ]
+                                ),
+                            ),
+                        )
+                        .order_by("-n")[:30]
+                    )
+                    with transaction.atomic():
+                        locked = FetchBatch.objects.select_for_update().get(pk=batch.pk)
+                        if locked.status == FetchBatch.Status.RUNNING:
+                            completion_audit = {
+                                "phase": "completed",
+                                "batch_status": final_status,
+                                "total_companies": locked.total_companies,
+                                "completed_companies": locked.completed_companies,
+                                "failed_companies": locked.failed_companies,
+                                "total_jobs_found": locked.total_jobs_found,
+                                "total_jobs_new": locked.total_jobs_new,
+                                "by_status": by_status,
+                                "by_platform": plat_rows,
+                                "logged_at": timezone.now().isoformat(),
+                                "last_company_task_id": getattr(self.request, "id", "") or "",
+                                "notes": (
+                                    "failed_companies includes SKIPPED early exits (no tenant / no harvester). "
+                                    "See batch detail page for per-company rows."
+                                ),
+                            }
                             merged = dict(locked.audit_payload or {})
                             merged["completion"] = completion_audit
                             locked.audit_payload = merged
-                            locked.save(update_fields=["audit_payload"])
-                    except Exception as exc:
-                        logger.warning("HARVEST_AUDIT completion persist/log failed: %s", exc)
+                            locked.status = final_status
+                            locked.completed_at = timezone.now()
+                            locked.save(update_fields=["audit_payload", "status", "completed_at"])
+                            _batch_just_finished = True
+                            logger.info(
+                                "[HARVEST_AUDIT done] run_kind=%s batch_id=%s batch_status=%s "
+                                "total_companies=%s completed_counter=%s failed_counter=%s "
+                                "total_jobs_found=%s total_jobs_new=%s by_status=%s by_platform=%s",
+                                ((merged.get("queue") or {}).get("run_kind", "")),
+                                batch.pk,
+                                final_status,
+                                locked.total_companies,
+                                locked.completed_companies,
+                                locked.failed_companies,
+                                locked.total_jobs_found,
+                                locked.total_jobs_new,
+                                by_status,
+                                plat_rows,
+                            )
+                except Exception as exc:
+                    logger.warning("HARVEST_AUDIT completion persist/log failed: %s", exc)
 
     logger.info(
         "fetch_raw_jobs: label=%s new=%d updated=%d enriched_inline=pending failed=%d",
@@ -1458,10 +1368,10 @@ def fetch_raw_jobs_for_company_task(
     # Gated by HarvestEngineConfig flags so either step can be disabled from the GUI.
     if new_raw_job_pks:
         try:
-            from .models import HarvestEngineConfig as _EngCfg, RawJob
+            from .models import RawJob
             from .enrichments import extract_enrichments
 
-            _pipe_cfg = _EngCfg.get()
+            _pipe_cfg = require_harvest_engine_config("fetch_raw_jobs_for_company_inline_pipeline")
 
             # Re-load only the jobs we just created
             new_jobs = list(
@@ -1484,7 +1394,7 @@ def fetch_raw_jobs_for_company_task(
             bulk_scope: list[RawJob] = []
             for job in new_jobs:
                 scope_updates = evaluate_rawjob_scope(
-                    job, cfg=_pipe_cfg, use_provider=False, save=False,
+                    job, cfg=_pipe_cfg, use_provider=None, save=False,
                 )
                 for field, value in scope_updates.items():
                     setattr(job, field, value)
@@ -1575,8 +1485,7 @@ def fetch_raw_jobs_for_company_task(
     # after the batch closes is more than enough for all inline enrichment to settle.
     if _batch_just_finished:
         try:
-            from .models import HarvestEngineConfig as _EngCfg3
-            _sync_cfg = _EngCfg3.get()
+            _sync_cfg = require_harvest_engine_config("fetch_raw_jobs_for_company_post_batch")
             # First run link-health validation to flip soft-404 rows inactive
             # before promotion into Vet Queue.
             validate_raw_job_urls_task.apply_async(
@@ -1640,20 +1549,16 @@ def fetch_raw_jobs_batch_task(
     hours. Pass None to read from HarvestEngineConfig (default). Pass 0 to force re-fetch.
     """
     from django.contrib.auth import get_user_model
-    from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch, HarvestEngineConfig
+    from .models import CompanyPlatformLabel, CompanyFetchRun, FetchBatch
 
-    # ── Read live engine config — all tuning knobs come from DB ──────────────
-    try:
-        _ecfg = HarvestEngineConfig.get()
-        # Caller-supplied min_hours_since_fetch overrides DB only when explicitly passed.
-        # Default argument sentinel is 6; if it still equals 6, prefer the DB value.
-        if min_hours_since_fetch == 6:
-            min_hours_since_fetch = _ecfg.min_hours_since_fetch
-        _api_stagger    = _ecfg.api_stagger_ms    / 1000.0   # convert ms → seconds
-        _scraper_stagger = _ecfg.scraper_stagger_ms / 1000.0
-    except Exception:
-        _api_stagger    = 0.1
-        _scraper_stagger = 1.5
+    # ── Read live engine config — required for harvest correctness ───────────
+    _ecfg = require_harvest_engine_config("fetch_raw_jobs_batch_task")
+    # Caller-supplied min_hours_since_fetch overrides DB only when explicitly passed.
+    # Default argument sentinel is 6; if it still equals 6, prefer the DB value.
+    if min_hours_since_fetch == 6:
+        min_hours_since_fetch = _ecfg.min_hours_since_fetch
+    _api_stagger    = _ecfg.api_stagger_ms    / 1000.0   # convert ms → seconds
+    _scraper_stagger = _ecfg.scraper_stagger_ms / 1000.0
 
     User = get_user_model()
     triggered_user = None
@@ -2578,7 +2483,6 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             )
 
     # ── Build RawJob ──────────────────────────────────────────────────────────
-    import hashlib
     from datetime import timedelta
     original_url = data.get("original_url") or url
     url_hash = compute_url_hash(original_url)
@@ -2745,119 +2649,34 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
         **enriched,
     }
 
-    raw_job = None
-    created = False
+    from .services.rawjob_upsert import upsert_raw_job_with_dedupe
 
-    # Secondary dedupe guard by external_id within the resolved company+platform.
-    if external_id:
-        ext_match_qs = RawJob.objects.filter(
-            company=company,
-            external_id=external_id,
+    upsert = upsert_raw_job_with_dedupe(
+        company=company,
+        defaults=raw_job_defaults,
+        url_hash=url_hash,
+        original_url=original_url,
+        external_id=external_id,
+        job_platform=job_platform,
+        platform_slug=(job_platform.slug if job_platform else platform_slug),
+    )
+    raw_job = upsert.raw_job
+    created = upsert.created
+    if upsert.action == "duplicate" or raw_job is None:
+        logger.info(
+            "Jarvis ingest skipped (%s duplicate=%s): %s | %s",
+            upsert.reason,
+            upsert.duplicate_pk,
+            data.get("title"),
+            company_name,
         )
-        if job_platform:
-            ext_match_qs = ext_match_qs.filter(
-                Q(job_platform=job_platform)
-                | Q(platform_slug=job_platform.slug)
-                | Q(job_platform__isnull=True)
-            )
-        ext_match = ext_match_qs.order_by("pk").first()
-        if ext_match:
-            hash_owned_elsewhere = (
-                RawJob.objects.filter(url_hash=url_hash)
-                .exclude(pk=ext_match.pk)
-                .values_list("pk", flat=True)
-                .first()
-            )
-            if not hash_owned_elsewhere:
-                for field, val in raw_job_defaults.items():
-                    setattr(ext_match, field, val)
-                ext_match.url_hash = url_hash
-                ext_match.save()
-                raw_job = ext_match
-
-    # Query-variant reconciliation: same job path with old tracking query hash.
-    if raw_job is None:
-        base_url = original_url.split("?", 1)[0].strip()
-        if base_url:
-            variant_qs = RawJob.objects.filter(
-                company=company,
-                original_url__startswith=base_url,
-            )
-            if job_platform:
-                variant_qs = variant_qs.filter(
-                    Q(job_platform=job_platform)
-                    | Q(platform_slug=job_platform.slug)
-                    | Q(job_platform__isnull=True)
-                )
-            variant_row = variant_qs.order_by("pk").first()
-            if variant_row and variant_row.url_hash != url_hash:
-                hash_owned_elsewhere = (
-                    RawJob.objects.filter(url_hash=url_hash)
-                    .exclude(pk=variant_row.pk)
-                    .values_list("pk", flat=True)
-                    .first()
-                )
-                if not hash_owned_elsewhere:
-                    for field, val in raw_job_defaults.items():
-                        setattr(variant_row, field, val)
-                    variant_row.url_hash = url_hash
-                    variant_row.save()
-                    raw_job = variant_row
-
-    # Legacy hash reconciliation so old rows are updated instead of duplicated.
-    if raw_job is None:
-        legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest()
-        if legacy_hash and legacy_hash != url_hash:
-            legacy_row = RawJob.objects.filter(url_hash=legacy_hash).order_by("pk").first()
-            if legacy_row:
-                hash_owned_elsewhere = (
-                    RawJob.objects.filter(url_hash=url_hash)
-                    .exclude(pk=legacy_row.pk)
-                    .values_list("pk", flat=True)
-                    .first()
-                )
-                if not hash_owned_elsewhere:
-                    for field, val in raw_job_defaults.items():
-                        setattr(legacy_row, field, val)
-                    legacy_row.url_hash = url_hash
-                    legacy_row.save()
-                    raw_job = legacy_row
-
-    # ── Cross-platform dedup guard (content_hash) ─────────────────────────────
-    # Last resort before create: if an active job at this company with the same
-    # normalized title+location already exists (different URL), skip insertion.
-    if raw_job is None:
-        _ch = raw_job_defaults.get("content_hash", "")
-        if _ch:
-            _cross_dup = (
-                RawJob.objects.filter(
-                    company=company,
-                    content_hash=_ch,
-                    is_active=True,
-                )
-                .exclude(url_hash=url_hash)
-                .values_list("pk", flat=True)
-                .first()
-            )
-            if _cross_dup:
-                logger.info(
-                    "Jarvis ingest skipped (cross-platform dup content_hash=%s): %s | %s",
-                    _ch, data.get("title"), company_name,
-                )
-                return {
-                    "ok": False,
-                    "skipped": True,
-                    "reason": "cross_platform_duplicate",
-                    "content_hash": _ch,
-                    "title": data.get("title", ""),
-                    "company_name": company_name,
-                }
-
-    if raw_job is None:
-        raw_job, created = RawJob.objects.update_or_create(
-            url_hash=url_hash,
-            defaults=raw_job_defaults,
-        )
+        return {
+            "ok": False,
+            "skipped": True,
+            "reason": upsert.reason or "duplicate",
+            "title": data.get("title", ""),
+            "company_name": company_name,
+        }
     if raw_job:
         try:
             from .models import RawJobPayloadSnapshot
@@ -2878,7 +2697,7 @@ def jarvis_ingest_task(self, url: str, user_id: int | None = None):
             )
         except Exception:
             logger.exception("Failed to archive Jarvis source payload for RawJob %s", url_hash)
-        evaluate_rawjob_scope(raw_job, use_provider=False, save=True)
+        evaluate_rawjob_scope(raw_job, use_provider=None, save=True)
     _invalidate_rawjobs_dashboard_cache()
 
     update_task_progress(self, current=3, total=3, message="Done ✓")
@@ -4178,7 +3997,7 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
 
     for field, value in update_fields.items():
         setattr(job, field, value)
-    update_fields.update(evaluate_rawjob_scope(job, use_provider=False, save=False))
+    update_fields.update(evaluate_rawjob_scope(job, use_provider=None, save=False))
 
     RawJob.objects.filter(pk=job.pk).update(**update_fields)
     if data.get("raw_payload"):

@@ -23,6 +23,7 @@ from django.utils import timezone
 from .board_capabilities import get_capabilities, capability_gap
 from .services.rawjob_query import duplicate_rawjob_q, effective_classification_q, json_array_contains_q, ready_stage_q
 from .enrichments import CURRENT_DOMAIN_VERSION
+from .runtime_config import get_ready_stage_min_confidence
 
 
 # Boards that harvest via Jarvis (manual paste) — excluded from ATS ranking.
@@ -70,7 +71,7 @@ RAWJOB_FIELD_GROUP_SPECS = [
             {"key": "parsed", "label": "Parsed", "tip": "Has JD / description text parsed.", "warn": 70, "good": 90},
             {"key": "enriched", "label": "Enriched", "tip": "Has enrichment scores / extracted metadata.", "warn": 60, "good": 85},
             {"key": "classified", "label": "Classified", "tip": "Has at least minimal classification confidence.", "warn": 55, "good": 80},
-            {"key": "ready", "label": "Ready", "tip": "Active + usable JD + classification confidence >= 0.55.", "warn": 40, "good": 65},
+            {"key": "ready", "label": "Ready", "tip": "Active + usable JD + configured classification confidence.", "warn": 40, "good": 65},
             {"key": "synced", "label": "Synced", "tip": "Already promoted to the vet pool.", "warn": 5, "good": 20},
             {"key": "failed_sync", "label": "Failed", "tip": "Sync failed.", "warn": 5, "good": 0, "inverse": True},
             {"key": "duplicate", "label": "Duplicate", "tip": "Marked duplicate / skipped.", "warn": 5, "good": 0, "inverse": True},
@@ -254,6 +255,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
     # Detect which optional fields exist in this DB (handles schema drift gracefully).
     _raw_fields = {f.name for f in RawJob._meta.get_fields()}
 
+    ready_min_conf = get_ready_stage_min_confidence()
     _field_annotations = {
         "total":       Count("id"),
         "synced":      Count("id", filter=Q(sync_status="SYNCED")),
@@ -267,7 +269,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         "parsed_count": Count("id", filter=Q(has_description=True)),
         "enriched_count": Count("id", filter=Q(quality_score__isnull=False) | Q(jd_quality_score__isnull=False)),
         "classified_count": Count("id", filter=effective_classification_q(min_conf=0.01)),
-        "ready_count": Count("id", filter=ready_stage_q(min_conf=0.55)),
+        "ready_count": Count("id", filter=ready_stage_q(min_conf=ready_min_conf)),
         "recent_30d_count": Count("id", filter=Q(fetched_at__gte=fresh_30d_cutoff)),
         "current_enrichment_version_count": Count("id", filter=Q(enrichment_version=CURRENT_ENRICHMENT_VERSION)),
         "current_domain_version_count": Count("id", filter=Q(domain_version=CURRENT_DOMAIN_VERSION)),
@@ -343,7 +345,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         filter=(
             Q(sync_status="PENDING", has_description=True, is_active=True)
             & effective_classification_q(min_conf=0.01)
-            & ~effective_classification_q(min_conf=0.55)
+            & ~effective_classification_q(min_conf=ready_min_conf)
         ),
     )
     if "requirements" in _raw_fields:

@@ -10,6 +10,7 @@ from django.utils import timezone
 from django.utils.timezone import make_aware
 
 from harvest.models import RawJob
+from harvest.runtime_config import get_ready_stage_min_confidence
 
 
 DUPLICATE_SKIP_REASONS = ("DUPLICATE_RISK", "DUPLICATE_EXISTING")
@@ -85,8 +86,10 @@ def effective_classification_q(min_conf: float = 0.01) -> Q:
     )
 
 
-def ready_stage_q(min_conf: float = 0.55) -> Q:
+def ready_stage_q(min_conf: float | None = None) -> Q:
     """READY rows for workflow board (active + JD present + confidence)."""
+    if min_conf is None:
+        min_conf = get_ready_stage_min_confidence()
     return Q(has_description=True, is_active=True) & effective_classification_q(min_conf=min_conf)
 
 
@@ -130,7 +133,7 @@ def apply_stage_filter(qs: QuerySet[RawJob], stage: str) -> QuerySet[RawJob]:
     if stage_value == "CLASSIFIED":
         return qs.filter(effective_classification_q(min_conf=0.01))
     if stage_value == "READY":
-        return qs.filter(ready_stage_q(min_conf=0.55))
+        return qs.filter(ready_stage_q())
     if stage_value == "SYNCED":
         return qs.filter(sync_status=RawJob.SyncStatus.SYNCED)
     if stage_value == "FAILED":
@@ -329,7 +332,7 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
 
     conf_bucket = _get(params, "classification_bucket").lower()
     if conf_bucket:
-        low_cut = 0.55
+        low_cut = get_ready_stage_min_confidence()
         any_classified_q = effective_classification_q(min_conf=0.01)
         high_q = effective_classification_q(min_conf=low_cut)
         if conf_bucket == "low":

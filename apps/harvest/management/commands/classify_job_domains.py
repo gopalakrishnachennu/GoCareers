@@ -15,12 +15,16 @@ Usage:
 """
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from harvest.models import HarvestOpsRun
 
-class Command(BaseCommand):
+from ._ops_base import OpsTrackedCommand
+
+
+class Command(OpsTrackedCommand):
     help = "Classify RawJobs into taxonomy fields (job_category + job_domain) using keyword patterns"
+    ops_operation = HarvestOpsRun.Operation.CLASSIFY_DOMAINS
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -76,6 +80,7 @@ class Command(BaseCommand):
         if dry_run or total == 0:
             return
 
+        self.ops_start(total=total, message=f"Classifying {total:,} jobs…")
         classified = 0
         unclassified = 0
         domain_counts: dict[str, int] = {}
@@ -133,6 +138,7 @@ class Command(BaseCommand):
                 )
 
             offset += len(batch)
+            self.ops_progress(offset, message=f"{offset:,} / {total:,} classified")
             if offset % 10000 == 0 or offset >= total:
                 self.stdout.write(f"  {offset:,}/{total:,} processed …")
 

@@ -11,11 +11,10 @@ Three endpoints (all protected by Bearer token = settings.HARVEST_PUSH_SECRET):
 import json
 import logging
 from datetime import date, datetime
-import hashlib
 
 from django.conf import settings
 from django.core.cache import cache
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
@@ -23,7 +22,7 @@ from django.utils.decorators import method_decorator
 from django.views import View
 from django.views.decorators.csrf import csrf_exempt
 
-from .normalizer import compute_url_hash
+from .normalizer import compute_content_hash, compute_url_hash
 
 logger = logging.getLogger("harvest.push_api")
 
@@ -278,6 +277,7 @@ class PushJobsView(View):
         from .enrichments import clean_job_content, clean_job_text, extract_enrichments
         from .location_resolver import evaluate_rawjob_scope, extract_location_candidates
         from .payload_archive import capture_rawjob_source_payloads
+        from .services.rawjob_upsert import upsert_raw_job_with_dedupe
 
         def capture_incoming_payload(raw_job, job_data):
             return capture_rawjob_source_payloads(
@@ -303,30 +303,6 @@ class PushJobsView(View):
                     url_hash = job_data.get("url_hash", "").strip()
                 if not url_hash:
                     errors += 1
-                    continue
-
-                existing_by_hash = RawJob.objects.filter(url_hash=url_hash).first()
-                if existing_by_hash:
-                    capture_incoming_payload(existing_by_hash, job_data)
-                    skipped += 1
-                    continue
-                base_url = original_url.split("?", 1)[0].strip()
-                existing_by_base = (
-                    RawJob.objects.filter(original_url__startswith=base_url).first()
-                    if base_url else None
-                )
-                if existing_by_base:
-                    capture_incoming_payload(existing_by_base, job_data)
-                    skipped += 1
-                    continue
-                legacy_hash = hashlib.sha256(original_url.strip().encode("utf-8")).hexdigest() if original_url else ""
-                existing_by_legacy = (
-                    RawJob.objects.filter(url_hash=legacy_hash).first()
-                    if legacy_hash and legacy_hash != url_hash else None
-                )
-                if existing_by_legacy:
-                    capture_incoming_payload(existing_by_legacy, job_data)
-                    skipped += 1
                     continue
 
                 company = _resolve_company(job_data.get("company_name", ""))
@@ -372,124 +348,137 @@ class PushJobsView(View):
                     )
                 )
 
-                # Secondary dedupe guard: same company+platform+external_id.
-                existing_by_external = RawJob.objects.filter(
+                defaults = {
+                    "company": company,
+                    "job_platform": platform,
+                    "external_id": external_id,
+                    "original_url": original_url[:1024],
+                    "apply_url": str(job_data.get("apply_url", ""))[:1024],
+                    "title": str(job_data.get("title", ""))[:512],
+                    "company_name": str(job_data.get("company_name", ""))[:256],
+                    "department": str(job_data.get("department", ""))[:256],
+                    "team": str(job_data.get("team", ""))[:256],
+                    "location_raw": str(job_data.get("location_raw", ""))[:512],
+                    "city": str(job_data.get("city", ""))[:128],
+                    "state": str(job_data.get("state", ""))[:128],
+                    "country": str(job_data.get("country", ""))[:128],
+                    "location_candidates": location_candidates,
+                    "country_codes": _safe_list(job_data.get("country_codes")),
+                    "postal_code": str(job_data.get("postal_code", ""))[:32],
+                    "location_type": job_data.get("location_type") or RawJob.LocationType.UNKNOWN,
+                    "is_remote": bool(job_data.get("is_remote", False)),
+                    "employment_type": job_data.get("employment_type") or RawJob.EmploymentType.UNKNOWN,
+                    "experience_level": job_data.get("experience_level") or RawJob.ExperienceLevel.UNKNOWN,
+                    "salary_min": _safe_float(job_data.get("salary_min")),
+                    "salary_max": _safe_float(job_data.get("salary_max")),
+                    "salary_currency": str(job_data.get("salary_currency", "USD"))[:8],
+                    "salary_period": str(job_data.get("salary_period", ""))[:16],
+                    "salary_raw": str(job_data.get("salary_raw", ""))[:256],
+                    "description": description,
+                    "description_clean": (job_data.get("description_clean") or enriched.get("description_clean") or description)[:50000],
+                    "description_raw_html": (job_data.get("description_raw_html") or desc_meta.get("raw_html") or "")[:120000],
+                    "has_html_content": bool(job_data.get("has_html_content", desc_meta.get("has_html_content", False))),
+                    "cleaning_version": str(job_data.get("cleaning_version") or desc_meta.get("cleaning_version") or "v2")[:20],
+                    "requirements": requirements,
+                    "responsibilities": str(job_data.get("responsibilities", ""))[:20000],
+                    "benefits": benefits,
+                    "posted_date": _parse_date(job_data.get("posted_date")),
+                    "closing_date": _parse_date(job_data.get("closing_date")),
+                    "platform_slug": platform_slug[:64],
+                    "vendor_job_identification": str(job_data.get("vendor_job_identification", ""))[:128],
+                    "vendor_job_category": str(job_data.get("vendor_job_category", ""))[:128],
+                    "vendor_degree_level": str(job_data.get("vendor_degree_level", ""))[:128],
+                    "vendor_job_schedule": str(job_data.get("vendor_job_schedule", ""))[:128],
+                    "vendor_job_shift": str(job_data.get("vendor_job_shift", ""))[:128],
+                    "vendor_location_block": str(job_data.get("vendor_location_block", ""))[:512],
+                    "raw_payload": job_data.get("raw_payload") or {},
+                    "content_hash": compute_content_hash(
+                        company.pk,
+                        job_data.get("title") or "",
+                        job_data.get("location_raw") or "",
+                    ),
+                    "skills": job_data.get("skills") or enriched.get("skills") or [],
+                    "tech_stack": job_data.get("tech_stack") or enriched.get("tech_stack") or [],
+                    "job_category": str(job_data.get("job_category", "") or enriched.get("job_category", ""))[:64],
+                    "job_domain": str(job_data.get("job_domain", "") or enriched.get("job_domain", ""))[:120],
+                    "job_domain_candidates": _safe_list(job_data.get("job_domain_candidates") or enriched.get("job_domain_candidates")),
+                    "domain_version": str(job_data.get("domain_version", "") or enriched.get("domain_version", ""))[:16],
+                    "normalized_title": str(job_data.get("normalized_title", "") or enriched.get("normalized_title", ""))[:255],
+                    "years_required": job_data.get("years_required", enriched.get("years_required")),
+                    "years_required_max": job_data.get("years_required_max", enriched.get("years_required_max")),
+                    "education_required": str(job_data.get("education_required", "") or enriched.get("education_required", ""))[:12],
+                    "visa_sponsorship": job_data.get("visa_sponsorship", enriched.get("visa_sponsorship")),
+                    "work_authorization": str(job_data.get("work_authorization", "") or enriched.get("work_authorization", ""))[:64],
+                    "clearance_required": bool(job_data.get("clearance_required", enriched.get("clearance_required", False))),
+                    "clearance_level": str(job_data.get("clearance_level", "") or enriched.get("clearance_level", ""))[:64],
+                    "salary_equity": bool(job_data.get("salary_equity", enriched.get("salary_equity", False))),
+                    "signing_bonus": bool(job_data.get("signing_bonus", enriched.get("signing_bonus", False))),
+                    "relocation_assistance": bool(job_data.get("relocation_assistance", enriched.get("relocation_assistance", False))),
+                    "travel_required": str(job_data.get("travel_required", "") or enriched.get("travel_required", ""))[:64],
+                    "travel_pct_min": _safe_int(job_data.get("travel_pct_min", enriched.get("travel_pct_min"))),
+                    "travel_pct_max": _safe_int(job_data.get("travel_pct_max", enriched.get("travel_pct_max"))),
+                    "schedule_type": str(job_data.get("schedule_type", "") or enriched.get("schedule_type", ""))[:32],
+                    "shift_schedule": str(job_data.get("shift_schedule", "") or enriched.get("shift_schedule", ""))[:128],
+                    "shift_details": str(job_data.get("shift_details", "") or enriched.get("shift_details", ""))[:255],
+                    "hours_hint": str(job_data.get("hours_hint", "") or enriched.get("hours_hint", ""))[:64],
+                    "weekend_required": job_data.get("weekend_required", enriched.get("weekend_required")),
+                    "certifications": job_data.get("certifications") or enriched.get("certifications") or [],
+                    "licenses_required": job_data.get("licenses_required") or enriched.get("licenses_required") or [],
+                    "benefits_list": job_data.get("benefits_list") or enriched.get("benefits_list") or [],
+                    "languages_required": job_data.get("languages_required") or enriched.get("languages_required") or [],
+                    "encouraged_to_apply": job_data.get("encouraged_to_apply") or enriched.get("encouraged_to_apply") or [],
+                    "job_keywords": job_data.get("job_keywords") or enriched.get("job_keywords") or [],
+                    "title_keywords": job_data.get("title_keywords") or enriched.get("title_keywords") or [],
+                    "department_normalized": str(job_data.get("department_normalized", "") or enriched.get("department_normalized", ""))[:128],
+                    "word_count": int(job_data.get("word_count", enriched.get("word_count", 0)) or 0),
+                    "quality_score": _safe_float(job_data.get("quality_score", enriched.get("quality_score"))),
+                    "jd_quality_score": _safe_float(job_data.get("jd_quality_score", enriched.get("jd_quality_score"))),
+                    "classification_confidence": _safe_float(job_data.get("classification_confidence", enriched.get("classification_confidence"))),
+                    "category_confidence": _safe_float(job_data.get("category_confidence", enriched.get("category_confidence"))),
+                    "classification_source": str(job_data.get("classification_source", "") or enriched.get("classification_source", ""))[:16],
+                    "classification_provenance": job_data.get("classification_provenance") or enriched.get("classification_provenance") or {},
+                    "field_confidence": job_data.get("field_confidence") or enriched.get("field_confidence") or {},
+                    "field_provenance": job_data.get("field_provenance") or enriched.get("field_provenance") or {},
+                    "resume_ready_score": _safe_float(job_data.get("resume_ready_score", enriched.get("resume_ready_score"))),
+                    "company_industry": (job_data.get("company_industry") or (company.industry if company else "") or "")[:255],
+                    "company_stage": (job_data.get("company_stage") or (company.funding_stage if company else "") or "")[:64],
+                    "company_funding": (job_data.get("company_funding") or (company.funding_amount if company else "") or "")[:128],
+                    "company_size": (job_data.get("company_size") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64],
+                    "company_employee_count_band": (job_data.get("company_employee_count_band") or (company.employee_count_band if company else "") or (company.headcount_range if company else "") or "")[:64],
+                    "company_founding_year": _safe_int(job_data.get("company_founding_year")) or (company.founding_year if company else None),
+                    "sync_status": RawJob.SyncStatus.PENDING,
+                    "is_active": True,
+                }
+                scope_probe = RawJob(url_hash=url_hash, **defaults)
+                scope_updates = evaluate_rawjob_scope(scope_probe, use_provider=None, save=False)
+                for field, value in scope_updates.items():
+                    defaults[field] = value
+
+                upsert = upsert_raw_job_with_dedupe(
                     company=company,
-                    platform_slug=platform_slug[:64],
+                    defaults=defaults,
+                    url_hash=url_hash,
+                    original_url=original_url,
                     external_id=external_id,
-                ).first() if external_id else None
-                if existing_by_external:
-                    capture_incoming_payload(existing_by_external, job_data)
-                    skipped += 1
+                    job_platform=platform,
+                    platform_slug=platform_slug,
+                )
+                if upsert.raw_job is not None:
+                    capture_incoming_payload(upsert.raw_job, job_data)
+                    if upsert.created:
+                        created += 1
+                    else:
+                        skipped += 1
                     continue
 
-                rj = RawJob(
-                    company=company,
-                    job_platform=platform,
-                    url_hash=url_hash,
-                    external_id=external_id,
-                    original_url=original_url[:1024],
-                    apply_url=str(job_data.get("apply_url", ""))[:1024],
-                    title=str(job_data.get("title", ""))[:512],
-                    company_name=str(job_data.get("company_name", ""))[:256],
-                    department=str(job_data.get("department", ""))[:256],
-                    team=str(job_data.get("team", ""))[:256],
-                    location_raw=str(job_data.get("location_raw", ""))[:512],
-                    city=str(job_data.get("city", ""))[:128],
-                    state=str(job_data.get("state", ""))[:128],
-                    country=str(job_data.get("country", ""))[:128],
-                    location_candidates=location_candidates,
-                    country_codes=_safe_list(job_data.get("country_codes")),
-                    postal_code=str(job_data.get("postal_code", ""))[:32],
-                    location_type=job_data.get("location_type") or RawJob.LocationType.UNKNOWN,
-                    is_remote=bool(job_data.get("is_remote", False)),
-                    employment_type=job_data.get("employment_type") or RawJob.EmploymentType.UNKNOWN,
-                    experience_level=job_data.get("experience_level") or RawJob.ExperienceLevel.UNKNOWN,
-                    salary_min=_safe_float(job_data.get("salary_min")),
-                    salary_max=_safe_float(job_data.get("salary_max")),
-                    salary_currency=str(job_data.get("salary_currency", "USD"))[:8],
-                    salary_period=str(job_data.get("salary_period", ""))[:16],
-                    salary_raw=str(job_data.get("salary_raw", ""))[:256],
-                    description=description,
-                    description_clean=(job_data.get("description_clean") or enriched.get("description_clean") or description)[:50000],
-                    description_raw_html=(job_data.get("description_raw_html") or desc_meta.get("raw_html") or "")[:120000],
-                    has_html_content=bool(job_data.get("has_html_content", desc_meta.get("has_html_content", False))),
-                    cleaning_version=str(job_data.get("cleaning_version") or desc_meta.get("cleaning_version") or "v2")[:20],
-                    requirements=requirements,
-                    responsibilities=str(job_data.get("responsibilities", ""))[:20000],
-                    benefits=benefits,
-                    posted_date=_parse_date(job_data.get("posted_date")),
-                    closing_date=_parse_date(job_data.get("closing_date")),
-                    platform_slug=platform_slug[:64],
-                    vendor_job_identification=str(job_data.get("vendor_job_identification", ""))[:128],
-                    vendor_job_category=str(job_data.get("vendor_job_category", ""))[:128],
-                    vendor_degree_level=str(job_data.get("vendor_degree_level", ""))[:128],
-                    vendor_job_schedule=str(job_data.get("vendor_job_schedule", ""))[:128],
-                    vendor_job_shift=str(job_data.get("vendor_job_shift", ""))[:128],
-                    vendor_location_block=str(job_data.get("vendor_location_block", ""))[:512],
-                    raw_payload=job_data.get("raw_payload") or {},
-                    # Enrichment (pre-computed on local machine)
-                    skills=job_data.get("skills") or enriched.get("skills") or [],
-                    tech_stack=job_data.get("tech_stack") or enriched.get("tech_stack") or [],
-                    job_category=str(job_data.get("job_category", "") or enriched.get("job_category", ""))[:64],
-                    job_domain=str(job_data.get("job_domain", "") or enriched.get("job_domain", ""))[:120],
-                    job_domain_candidates=_safe_list(job_data.get("job_domain_candidates") or enriched.get("job_domain_candidates")),
-                    domain_version=str(job_data.get("domain_version", "") or enriched.get("domain_version", ""))[:16],
-                    normalized_title=str(job_data.get("normalized_title", "") or enriched.get("normalized_title", ""))[:255],
-                    years_required=job_data.get("years_required", enriched.get("years_required")),
-                    years_required_max=job_data.get("years_required_max", enriched.get("years_required_max")),
-                    education_required=str(job_data.get("education_required", "") or enriched.get("education_required", ""))[:12],
-                    visa_sponsorship=job_data.get("visa_sponsorship", enriched.get("visa_sponsorship")),
-                    work_authorization=str(job_data.get("work_authorization", "") or enriched.get("work_authorization", ""))[:64],
-                    clearance_required=bool(job_data.get("clearance_required", enriched.get("clearance_required", False))),
-                    clearance_level=str(job_data.get("clearance_level", "") or enriched.get("clearance_level", ""))[:64],
-                    salary_equity=bool(job_data.get("salary_equity", enriched.get("salary_equity", False))),
-                    signing_bonus=bool(job_data.get("signing_bonus", enriched.get("signing_bonus", False))),
-                    relocation_assistance=bool(job_data.get("relocation_assistance", enriched.get("relocation_assistance", False))),
-                    travel_required=str(job_data.get("travel_required", "") or enriched.get("travel_required", ""))[:64],
-                    travel_pct_min=_safe_int(job_data.get("travel_pct_min", enriched.get("travel_pct_min"))),
-                    travel_pct_max=_safe_int(job_data.get("travel_pct_max", enriched.get("travel_pct_max"))),
-                    schedule_type=str(job_data.get("schedule_type", "") or enriched.get("schedule_type", ""))[:32],
-                    shift_schedule=str(job_data.get("shift_schedule", "") or enriched.get("shift_schedule", ""))[:128],
-                    shift_details=str(job_data.get("shift_details", "") or enriched.get("shift_details", ""))[:255],
-                    hours_hint=str(job_data.get("hours_hint", "") or enriched.get("hours_hint", ""))[:64],
-                    weekend_required=job_data.get("weekend_required", enriched.get("weekend_required")),
-                    certifications=job_data.get("certifications") or enriched.get("certifications") or [],
-                    licenses_required=job_data.get("licenses_required") or enriched.get("licenses_required") or [],
-                    benefits_list=job_data.get("benefits_list") or enriched.get("benefits_list") or [],
-                    languages_required=job_data.get("languages_required") or enriched.get("languages_required") or [],
-                    encouraged_to_apply=job_data.get("encouraged_to_apply") or enriched.get("encouraged_to_apply") or [],
-                    job_keywords=job_data.get("job_keywords") or enriched.get("job_keywords") or [],
-                    title_keywords=job_data.get("title_keywords") or enriched.get("title_keywords") or [],
-                    department_normalized=str(job_data.get("department_normalized", "") or enriched.get("department_normalized", ""))[:128],
-                    word_count=int(job_data.get("word_count", enriched.get("word_count", 0)) or 0),
-                    quality_score=_safe_float(job_data.get("quality_score", enriched.get("quality_score"))),
-                    jd_quality_score=_safe_float(job_data.get("jd_quality_score", enriched.get("jd_quality_score"))),
-                    classification_confidence=_safe_float(job_data.get("classification_confidence", enriched.get("classification_confidence"))),
-                    category_confidence=_safe_float(job_data.get("category_confidence", enriched.get("category_confidence"))),
-                    classification_source=str(job_data.get("classification_source", "") or enriched.get("classification_source", ""))[:16],
-                    classification_provenance=job_data.get("classification_provenance") or enriched.get("classification_provenance") or {},
-                    field_confidence=job_data.get("field_confidence") or enriched.get("field_confidence") or {},
-                    field_provenance=job_data.get("field_provenance") or enriched.get("field_provenance") or {},
-                    resume_ready_score=_safe_float(job_data.get("resume_ready_score", enriched.get("resume_ready_score"))),
-                    company_industry=(job_data.get("company_industry") or (company.industry if company else "") or "")[:255],
-                    company_stage=(job_data.get("company_stage") or (company.funding_stage if company else "") or "")[:64],
-                    company_funding=(job_data.get("company_funding") or (company.funding_amount if company else "") or "")[:128],
-                    company_size=(job_data.get("company_size") or (company.size_band if company else "") or (company.headcount_range if company else "") or "")[:64],
-                    company_employee_count_band=(job_data.get("company_employee_count_band") or (company.employee_count_band if company else "") or (company.headcount_range if company else "") or "")[:64],
-                    company_founding_year=_safe_int(job_data.get("company_founding_year")) or (company.founding_year if company else None),
-                    sync_status=RawJob.SyncStatus.PENDING,
-                    is_active=True,
-                )
-                scope_updates = evaluate_rawjob_scope(rj, use_provider=False, save=False)
-                for field, value in scope_updates.items():
-                    setattr(rj, field, value)
-                rj.save()
-                capture_incoming_payload(rj, job_data)
-                created += 1
+                if upsert.duplicate_pk:
+                    duplicate = RawJob.objects.filter(pk=upsert.duplicate_pk).first()
+                    if duplicate:
+                        capture_incoming_payload(duplicate, job_data)
+                skipped += 1
 
             except IntegrityError:
-                # Race condition: another worker created the same url_hash between our check and save
+                # Race condition: another worker created the same identity after retry.
                 skipped += 1
             except Exception:
                 logger.exception(

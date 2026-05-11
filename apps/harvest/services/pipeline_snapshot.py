@@ -8,27 +8,24 @@ from django.db.models import Avg, Count, Max, Min, Q
 from django.utils import timezone
 
 from harvest.models import CompanyFetchRun, RawJob
+from harvest.runtime_config import get_jd_backfill_lock_stale_minutes, get_ready_stage_min_confidence
 from harvest.services.rawjob_query import build_funnel_counts
 
 
 def raw_jobs_missing_description_count() -> int:
     """Count jobs with empty/trivial description that still have a URL."""
-    from harvest.tasks import BACKFILL_LOCK_STALE_MINUTES
-
-    return RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES).count()
+    return RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes()).count()
 
 
 def raw_jobs_missing_jd_expired_count() -> int:
     """Missing-JD rows that are effectively expired/inactive."""
-    from harvest.tasks import BACKFILL_LOCK_STALE_MINUTES
-
     today = timezone.now().date()
     now = timezone.now()
     stale_days = max(30, int(getattr(settings, "HARVEST_JD_STALE_DAYS", 120)))
     stale_cutoff = today - timedelta(days=stale_days)
 
     return (
-        RawJob.objects.missing_jd(stale_minutes=BACKFILL_LOCK_STALE_MINUTES)
+        RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes())
         .filter(
             Q(expires_at__lt=now)
             | Q(closing_date__lt=today)
@@ -111,14 +108,15 @@ def raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
     drain_per_hour = round(completed_24h / 24.0, 2) if completed_24h > 0 else 0.0
     eta_hours = round(pending_total / drain_per_hour, 1) if drain_per_hour > 0 else None
 
+    ready_min_conf = get_ready_stage_min_confidence()
     quality_debt = {
         "missing_jd": base.filter(has_description=False).count(),
         "html_heavy": base.filter(has_html_content=True).count(),
         "low_confidence": base.filter(
-            Q(category_confidence__lt=0.55)
+            Q(category_confidence__lt=ready_min_conf)
             | (
                 Q(category_confidence__isnull=True)
-                & (Q(classification_confidence__lt=0.55) | Q(classification_confidence__isnull=True))
+                & (Q(classification_confidence__lt=ready_min_conf) | Q(classification_confidence__isnull=True))
             )
         ).count(),
         "missing_salary": base.filter(salary_min__isnull=True, salary_max__isnull=True).count(),

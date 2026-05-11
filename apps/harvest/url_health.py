@@ -10,6 +10,34 @@ import requests
 
 _WS_RE = re.compile(r"\s+")
 
+# Pages that look dead but are actually bot-blocks or login walls —
+# treat these as INCONCLUSIVE (live-assumed) to avoid false positives.
+_BOT_BLOCK_MARKERS = (
+    "challenge.cloudflare.com",
+    "cf-please-wait",
+    "enable javascript and cookies",
+    "checking your browser",
+    "ddos protection by cloudflare",
+    "access denied",
+    "this site is protected by recaptcha",
+    "unusual traffic",
+    "please verify you are a human",
+    "security check to access",
+    "one more step",
+    "prove you are not a robot",
+)
+_LOGIN_WALL_MARKERS = (
+    "sign in to view",
+    "log in to view",
+    "please log in",
+    "please sign in",
+    "login required",
+    "you must be logged in",
+    "create an account to view",
+    "register to view",
+    "sign up to apply",
+)
+
 # Generic signals for job pages that render an error page with HTTP 200.
 _DEAD_MARKERS_GENERIC = (
     "page you are looking for doesnt exist",
@@ -492,9 +520,9 @@ def check_job_posting_live(
         if status_get in {404, 410, 451}:
             r_get.close()
             return LinkHealthResult(False, status_get, f"http_{status_get}", final_url)
-        if status_get in {429, 500, 502, 503, 504}:
-            # Temporary throttling/upstream issues: treat as unknown-live to prevent
-            # accidental mass deactivation.
+        if status_get in {401, 403, 429, 500, 502, 503, 504}:
+            # Auth walls, bot-blocks, throttling, upstream issues: treat as unknown-live
+            # to prevent accidental mass deactivation of valid postings.
             r_get.close()
             return LinkHealthResult(True, status_get, f"transient_http_{status_get}", final_url)
 
@@ -507,6 +535,13 @@ def check_job_posting_live(
         detail_path = _looks_like_detail_path(path_l, platform_slug)
         dead_marker = _contains_dead_marker(text, platform_slug)
         live_marker = _contains_live_marker(text, platform_slug)
+
+        # Bot-block / login-wall: treat as live-assumed (inconclusive) to avoid
+        # false positives where a valid job is unreachable only to the crawler.
+        if any(m in text for m in _BOT_BLOCK_MARKERS):
+            return LinkHealthResult(True, status_get, "bot_block_assumed_live", final_url)
+        if any(m in text for m in _LOGIN_WALL_MARKERS):
+            return LinkHealthResult(True, status_get, "login_wall_assumed_live", final_url)
 
         if any(seg in path_l for seg in ("/jobs/search", "/search", "/job-search")) and not any(
             seg in path_l for seg in ("/job/", "/details/")

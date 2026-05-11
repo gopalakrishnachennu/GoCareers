@@ -279,7 +279,7 @@ def _fetch_workday_detail(session, full_subdomain: str, tenant: str, jobboard: s
                 if isinstance(val, dict):
                     val = val.get("content", "") or val.get("descriptor", "") or ""
                 val = str(val).strip()
-                if len(val) > 80:
+                if val:
                     result["description"] = val
                     break
             if "description" in result:

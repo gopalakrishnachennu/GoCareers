@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from collections import Counter
 
-from django.core.management.base import BaseCommand
 from django.db import transaction
 
 from harvest.location_resolver import evaluate_rawjob_scope
-from harvest.models import HarvestEngineConfig, RawJob
+from harvest.models import HarvestEngineConfig, HarvestOpsRun, RawJob
+
+from ._ops_base import OpsTrackedCommand
 
 
-class Command(BaseCommand):
+class Command(OpsTrackedCommand):
     help = "Resolve RawJob country/scope fields for scoped harvest processing."
+    ops_operation = HarvestOpsRun.Operation.EVALUATE_SCOPE
 
     def add_arguments(self, parser):
         parser.add_argument("--all", action="store_true", help="Evaluate all RawJobs.")
@@ -66,13 +68,15 @@ class Command(BaseCommand):
             qs = qs[: options["limit"]]
 
         batch_size = max(100, min(int(options["batch_size"] or 1000), 5000))
-        use_provider = bool(options["provider"])
+        use_provider = True if options["provider"] else None
         dry_run = bool(options["dry_run"])
 
+        total_hint = qs.count() if hasattr(qs, "count") else 0
         self.stdout.write(
-            f"Evaluating RawJob scope: batch={batch_size:,}, provider={use_provider}, dry_run={dry_run}, "
+            f"Evaluating RawJob scope: batch={batch_size:,}, provider={use_provider if use_provider is not None else 'config'}, dry_run={dry_run}, "
             f"targets={','.join(cfg.get_target_countries())}"
         )
+        self.ops_start(total=total_hint, message=f"Evaluating scope for ~{total_hint:,} jobs…")
 
         counters = Counter()
         buffer: list[RawJob] = []
@@ -112,6 +116,7 @@ class Command(BaseCommand):
             processed += 1
             if len(buffer) >= batch_size:
                 flush()
+                self.ops_progress(processed)
                 self.stdout.write(f"Processed {processed:,}...")
 
         flush()

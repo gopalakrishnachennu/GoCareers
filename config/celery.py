@@ -108,6 +108,11 @@ app.conf.beat_schedule = {
         "kwargs": {"batch_size": 300, "concurrency": 25},
         "options": {"queue": "harvest"},
     },
+    "harvest-release-stale-jd-locks": {
+        "task": "harvest.release_stale_jd_backfill_locks",
+        "schedule": crontab(minute="*/10"),          # every 10 min
+        "options": {"queue": "harvest"},
+    },
 
     # Continuously fetch missing JDs — runs every hour so new harvests get
     # their descriptions filled without manual intervention. The task itself

@@ -62,7 +62,7 @@ def _effective_classification_q(min_conf: float = 0.01) -> Q:
     return _svc_effective_classification_q(min_conf=min_conf)
 
 
-def _ready_stage_q(min_conf: float = 0.55) -> Q:
+def _ready_stage_q(min_conf: float | None = None) -> Q:
     """Backward-compatible wrapper to shared query service."""
     return _svc_ready_stage_q(min_conf=min_conf)
 
@@ -1759,7 +1759,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
             "insights": _raw_jobs_workflow_insights(stale_pending_hours=6),
             "meta": {
                 "cache": "fresh" if (running_batch or running_company_fetch) else "short_ttl",
-                "new_today_basis": "last_24h_fetched",
+                "new_today_basis": "last_24h_created",
             },
         }
 
@@ -2844,7 +2844,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "api_stagger_ms", "scraper_stagger_ms",
             "min_hours_since_fetch", "task_soft_time_limit_secs",
             "resume_jd_min_words", "resume_jd_min_chars",
-            "geocoding_monthly_limit",
+            "geocoding_monthly_limit", "jd_backfill_lock_stale_minutes",
         ]
         errors = []
         for field in int_fields:
@@ -2856,13 +2856,13 @@ class EngineConfigView(SuperuserRequiredMixin, View):
                     errors.append(f"{field}: must be a whole number")
 
         # Float fields
-        float_fields = ["resume_jd_min_classification_confidence"]
+        float_fields = ["resume_jd_min_classification_confidence", "ready_stage_min_confidence"]
         for field in float_fields:
             val = request.POST.get(field, "").strip()
             if val:
                 try:
                     fval = float(val)
-                    if field == "resume_jd_min_classification_confidence" and not (0.0 <= fval <= 1.0):
+                    if field in {"resume_jd_min_classification_confidence", "ready_stage_min_confidence"} and not (0.0 <= fval <= 1.0):
                         raise ValueError
                     setattr(cfg, field, fval)
                 except (ValueError, TypeError):
@@ -2874,6 +2874,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "auto_backfill_jd", "auto_enrich", "auto_sync_to_pool",
             "process_unknown_country_with_target_domain",
             "geocoding_cache_enabled", "geocoding_provider_enabled",
+            "legacy_hash_bridge_enabled",
         ]
         for field in bool_fields:
             setattr(cfg, field, field in request.POST)

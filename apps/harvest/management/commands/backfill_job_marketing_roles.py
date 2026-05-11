@@ -15,11 +15,14 @@ Usage:
 """
 from __future__ import annotations
 
-from django.core.management.base import BaseCommand
+from harvest.models import HarvestOpsRun
+
+from ._ops_base import OpsTrackedCommand
 
 
-class Command(BaseCommand):
+class Command(OpsTrackedCommand):
     help = "Backfill Job.marketing_roles from harvested routing signals for already-synced jobs"
+    ops_operation = HarvestOpsRun.Operation.BACKFILL_ROLES
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -59,7 +62,9 @@ class Command(BaseCommand):
         if dry_run or total == 0:
             return
 
+        self.ops_start(total=total, message=f"Backfilling marketing roles for {total:,} synced jobs…")
         assigned = skipped = missing_job = 0
+        processed = 0
         last_pk  = None
 
         while True:
@@ -70,6 +75,7 @@ class Command(BaseCommand):
             last_pk = batch[-1].pk
 
             for rj in batch:
+                processed += 1
                 # Find the Job — prefer source_raw_job FK, fall back to url_hash
                 job: Job | None = (
                     Job.objects.filter(source_raw_job=rj).first()
@@ -85,6 +91,8 @@ class Command(BaseCommand):
 
                 if assign_marketing_roles_to_job(job, raw_job=rj):
                     assigned += 1
+
+            self.ops_progress(processed)
 
         self.stdout.write("")
         self.stdout.write(f"✅  Assigned:       {assigned:,}")

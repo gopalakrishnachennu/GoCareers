@@ -976,10 +976,12 @@ def evaluate_rawjob_scope(
     raw_job: RawJob,
     *,
     cfg: HarvestEngineConfig | None = None,
-    use_provider: bool = False,
+    use_provider: bool | None = False,
     save: bool = False,
 ) -> dict:
     cfg = cfg or HarvestEngineConfig.get()
+    if use_provider is None:
+        use_provider = bool(getattr(cfg, "geocoding_provider_enabled", False))
     location_candidates = extract_location_candidates(
         location_raw=raw_job.location_raw or "",
         city=raw_job.city or "",

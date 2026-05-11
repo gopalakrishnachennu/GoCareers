@@ -544,6 +544,15 @@
               <span class="text-xs text-gray-400">Hard kill fires {{ cfg.task_soft_time_limit_secs|add:120 }}s later</span>
             </div>
           </div>
+          <div>
+            <label class="form-label">JD backfill stale lock minutes</label>
+            <div class="flex items-center gap-3">
+              <input type="number" name="jd_backfill_lock_stale_minutes" value="{{ cfg.jd_backfill_lock_stale_minutes }}"
+                     min="1" max="240" step="1"
+                     class="form-input w-28 text-center font-mono">
+              <span class="text-xs text-gray-400">Crashed worker locks older than this are released automatically</span>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -586,6 +595,25 @@
               <span class="text-xs text-gray-400">Lower = more permissive, higher = stricter vet gate</span>
             </div>
           </div>
+          <div>
+            <label class="form-label">Ready stage confidence (0-1)</label>
+            <div class="flex items-center gap-3">
+              <input type="number" name="ready_stage_min_confidence"
+                     value="{{ cfg.ready_stage_min_confidence|floatformat:2 }}"
+                     min="0" max="1" step="0.01"
+                     class="form-input w-28 text-center font-mono">
+              <span class="text-xs text-gray-400">Single source for READY counts, board analytics, and low-confidence blockers</span>
+            </div>
+          </div>
+          <label class="flex items-start gap-2 text-sm text-gray-700">
+            <input type="checkbox" name="legacy_hash_bridge_enabled" value="1"
+                   {% if cfg.legacy_hash_bridge_enabled %}checked{% endif %}
+                   class="mt-1 rounded border-gray-300 text-indigo-600">
+            <span>
+              <span class="font-semibold text-gray-800">Enable legacy SHA256 URL hash bridge</span>
+              <span class="block text-xs text-gray-500">Use only while old url_hash rows are still being reconciled.</span>
+            </span>
+          </label>
         </div>
       </div>
 
