@@ -1619,6 +1619,19 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                 skipped_counts[run.operation] = skipped_counts.get(run.operation, 0) + 1
                 continue  # don't surface individual SKIPPED rows
 
+            # Hide trivial "nothing to do" completions — Beat fires every hour and
+            # creates a SUCCESS run in ~0 s when 0 jobs are eligible.  These add
+            # zero information and flood the panel.
+            if (
+                run.status == HarvestOpsRun.Status.SUCCESS
+                and run.finished_at
+                and run.created_at
+                and (run.finished_at - run.created_at).total_seconds() < 5
+                and (run.progress_total or 0) == 0
+            ):
+                skipped_counts[run.operation] = skipped_counts.get(run.operation, 0) + 1
+                continue
+
             total = run.progress_total or 0
             current = run.progress_current or 0
             message = run.progress_message or ""
