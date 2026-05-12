@@ -1552,6 +1552,21 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                 running_companies = CompanyFetchRun.objects.filter(
                     batch=b, status=CompanyFetchRun.Status.RUNNING
                 ).count()
+
+                # ── Zombie detection ──────────────────────────────────────────
+                # If no workers are active and the batch hasn't progressed in
+                # 10+ minutes, the Celery tasks were lost (worker crash / laptop
+                # closed).  Auto-mark PARTIAL so the monitor reflects reality.
+                _elapsed_min = elapsed / 60 if elapsed else 0
+                if (
+                    running_companies == 0
+                    and _elapsed_min > 10
+                    and done < total_c
+                ):
+                    b.status = FetchBatch.Status.PARTIAL
+                    b.completed_at = now
+                    b.save(update_fields=["status", "completed_at"])
+                    running_companies = 0  # reflect updated state
                 recent_done = (
                     CompanyFetchRun.objects
                     .filter(batch=b, status__in=[
