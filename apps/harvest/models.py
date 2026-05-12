@@ -246,6 +246,12 @@ class FetchBatch(models.Model):
         help_text="Platform slug filter, e.g. 'workday'. Empty = all platforms.",
     )
     task_id = models.CharField(max_length=64, blank=True)
+    # Set True by StopBatchView → every queued task checks this at startup and exits fast.
+    # Cleared back to False by ResumeBatchView before re-dispatching.
+    stop_requested = models.BooleanField(
+        default=False,
+        help_text="If True, queued tasks for this batch will exit immediately on pickup.",
+    )
     total_companies = models.PositiveIntegerField(default=0)
     completed_companies = models.PositiveIntegerField(default=0)
     failed_companies = models.PositiveIntegerField(default=0)

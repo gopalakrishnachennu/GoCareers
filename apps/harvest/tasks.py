@@ -961,6 +961,17 @@ def fetch_raw_jobs_for_company_task(
     if batch_id:
         batch = FetchBatch.objects.filter(pk=batch_id).first()
 
+    # ── Stop-gate: bail immediately if operator cancelled the batch ───────────
+    # stop_requested is set by StopBatchView. Tasks with countdown that were
+    # already queued when Stop was clicked will see this flag and exit without
+    # doing any work. This drains the queue fast (pure DB read per task).
+    if batch and batch.stop_requested:
+        logger.info(
+            "fetch_raw_jobs_for_company_task: batch #%s stop_requested — skipping label %s",
+            batch_id, label_pk,
+        )
+        return {"skipped": True, "reason": "stop_requested", "label_pk": label_pk}
+
     # ── Create run record ─────────────────────────────────────────────────────
     is_test_run = bool(max_jobs)
     run = CompanyFetchRun.objects.create(

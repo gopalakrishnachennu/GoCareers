@@ -1963,10 +1963,23 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
 
 
 class StopBatchView(SuperuserRequiredMixin, View):
-    """GET — redirect to batch list. POST — cancel a running FetchBatch and revoke its tasks."""
+    """
+    POST — stop a batch that is RUNNING or PARTIAL.
+
+    Two-pronged approach that handles both already-running and queued tasks:
+    1. Set batch.stop_requested = True  →  every task that picks up from the
+       queue checks this flag at startup and exits immediately without doing work.
+       This handles countdown/ETA tasks that haven't started yet (have no
+       CompanyFetchRun record, so we can't revoke them by task ID).
+    2. Revoke + SIGTERM any tasks that are *already* RUNNING  →  kills the
+       active HTTP fetch in the worker process right now.
+
+    Result: the queue drains to zero in seconds (tasks bail on flag check),
+    and any mid-flight company fetch is killed. Batch → CANCELLED.
+    Resume button becomes available to restart from checkpoint.
+    """
 
     def get(self, request):
-        """Direct browser navigation → just go to the batch list page."""
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
     def post(self, request):
@@ -1974,66 +1987,90 @@ class StopBatchView(SuperuserRequiredMixin, View):
 
         batch_id = request.POST.get("batch_id") or None
         if batch_id:
-            batch = get_object_or_404(FetchBatch, pk=batch_id)
+            batch = get_object_or_404(FetchBatch, pk=int(batch_id))
         else:
-            batch = FetchBatch.objects.filter(status="RUNNING").order_by("-created_at").first()
+            # Stop the most recently started active batch
+            batch = (
+                FetchBatch.objects.filter(status__in=["RUNNING", "PARTIAL"])
+                .order_by("-created_at")
+                .first()
+            )
 
         if not batch:
+            msg = "No active batch found."
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                return JsonResponse({"ok": False, "error": "No running batch found."}, status=404)
-            messages.warning(request, "No running batch found.")
+                return JsonResponse({"ok": False, "error": msg}, status=404)
+            messages.warning(request, msg)
             return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
-        if batch.status not in ("RUNNING", "PENDING"):
+        stoppable = {"RUNNING", "PARTIAL", "PENDING"}
+        if batch.status not in stoppable:
+            msg = f"Batch #{batch.pk} is {batch.status} — nothing to stop."
             if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                return JsonResponse({"ok": False, "error": f"Batch is already {batch.status}."})
-            messages.warning(request, f"Batch #{batch.pk} is already {batch.status}.")
+                return JsonResponse({"ok": False, "error": msg})
+            messages.warning(request, msg)
             return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
-        # 1. Revoke the main batch orchestration task (if it's still queued/running)
+        now = timezone.now()
+
+        # ── 1. Set stop_requested flag — queued tasks see this and bail fast ──
+        batch.stop_requested = True
+        batch.status = FetchBatch.Status.CANCELLED
+        batch.completed_at = batch.completed_at or now
+        batch.save(update_fields=["stop_requested", "status", "completed_at"])
+
+        # ── 2. Revoke the orchestrator task (if any) ──────────────────────────
         if batch.task_id:
-            current_app.control.revoke(batch.task_id, terminate=True, signal="SIGTERM")
+            try:
+                current_app.control.revoke(batch.task_id, terminate=True, signal="SIGTERM")
+            except Exception:
+                pass
 
-        # 2. Revoke all PENDING/RUNNING per-company tasks for this batch
-        pending_runs = CompanyFetchRun.objects.filter(
-            batch=batch, status__in=["PENDING", "RUNNING"]
+        # ── 3. Revoke tasks that are already RUNNING in a worker ──────────────
+        #  (tasks still in the queue with countdown don't have a CompanyFetchRun
+        #   yet — they'll be stopped by the stop_requested flag instead.)
+        active_runs = CompanyFetchRun.objects.filter(
+            batch=batch, status="RUNNING"
         ).exclude(task_id="").exclude(task_id=None)
-        task_ids = list(pending_runs.values_list("task_id", flat=True))
+        task_ids = list(active_runs.values_list("task_id", flat=True))
         if task_ids:
-            current_app.control.revoke(task_ids, terminate=True, signal="SIGTERM")
+            try:
+                current_app.control.revoke(task_ids, terminate=True, signal="SIGTERM")
+            except Exception:
+                pass
+            active_runs.update(status="SKIPPED")
 
-        # 3. Mark company runs as SKIPPED
-        pending_runs.update(status="SKIPPED")
-
-        # 4. Mark batch as CANCELLED
-        batch.status = "CANCELLED"
-        if not batch.completed_at:
-            batch.completed_at = timezone.now()
-        batch.save(update_fields=["status", "completed_at"])
-
+        # ── 4. Audit ──────────────────────────────────────────────────────────
         try:
-            locked = FetchBatch.objects.filter(pk=batch.pk).first()
-            if locked:
-                ap = dict(locked.audit_payload or {})
-                ap["cancelled"] = {
-                    "at": timezone.now().isoformat(),
-                    "by": request.user.username,
-                    "revoked_child_tasks": len(task_ids),
-                }
-                locked.audit_payload = ap
-                locked.save(update_fields=["audit_payload"])
+            ap = dict(batch.audit_payload or {})
+            ap["cancelled"] = {
+                "at": now.isoformat(),
+                "by": request.user.username,
+                "revoked_running_tasks": len(task_ids),
+                "note": "Remaining queued tasks will bail on stop_requested flag.",
+            }
+            FetchBatch.objects.filter(pk=batch.pk).update(audit_payload=ap)
         except Exception:
-            logger.exception("StopBatchView: failed to record audit_payload cancelled")
+            logger.exception("StopBatchView: failed to write audit_payload")
 
         logger.info(
-            "[HARVEST] Batch #%s cancelled by %s — revoked %d task(s)",
-            batch.pk, request.user.username, len(task_ids) + (1 if batch.task_id else 0),
+            "[HARVEST] Batch #%s CANCELLED by %s — stop_requested set, %d running task(s) revoked",
+            batch.pk, request.user.username, len(task_ids),
         )
 
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-            return JsonResponse({"ok": True, "batch_id": batch.pk, "revoked": len(task_ids)})
+            return JsonResponse({
+                "ok": True,
+                "batch_id": batch.pk,
+                "revoked_running": len(task_ids),
+                "message": "Batch cancelled. Queued tasks will drain in seconds.",
+            })
 
-        messages.success(request, f"Batch #{batch.pk} cancelled — {len(task_ids)} pending tasks revoked.")
+        messages.success(
+            request,
+            f"Batch #{batch.pk} stopping — queued tasks will drain in seconds. "
+            f"Use Resume to continue from checkpoint.",
+        )
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
 
@@ -2061,6 +2098,11 @@ class ResumeBatchView(SuperuserRequiredMixin, View):
                 return JsonResponse({"ok": False, "error": f"Batch is {batch.status} — nothing to resume."})
             messages.warning(request, f"Batch #{batch.pk} is {batch.status} — nothing to resume.")
             return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
+
+        # Clear stop_requested so tasks dispatched by the resume actually run.
+        if batch.stop_requested:
+            batch.stop_requested = False
+            batch.save(update_fields=["stop_requested"])
 
         task = resume_fetch_batch_task.apply_async(
             kwargs={"batch_id": batch.pk},
