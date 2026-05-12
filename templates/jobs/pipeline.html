@@ -706,6 +706,17 @@
       `<div style="color:#94a3b8;font-size:10px;font-family:monospace;padding:1px 0">${l}</div>`
     ).join("");
 
+    const isPartial = b.status === "PARTIAL";
+    const resumeBtn = isPartial ? `
+      <form method="post" action="/harvest/run/resume-batch/" style="display:inline" onsubmit="this.querySelector('button').disabled=true">
+        {% csrf_token %}
+        <input type="hidden" name="batch_id" value="${b.id}">
+        <button type="submit" style="background:#1d4ed8;color:#fff;font-size:10px;font-family:monospace;padding:2px 10px;border-radius:4px;border:none;cursor:pointer;margin-left:4px"
+          title="Resume from checkpoint — only unfinished companies will be re-fetched">
+          ▶ Resume
+        </button>
+      </form>` : "";
+
     return `<div class="px-4 py-3 border-b border-slate-800 hover:bg-slate-800/30 transition">
       <div class="flex items-center gap-2 flex-wrap">
         ${badge(b.label, col.bg)}
@@ -714,7 +725,9 @@
         </span>
         ${dur ? `<span style="color:#94a3b8;font-size:10px;font-family:monospace">${isRunning ? "⏱ " : "ran "}${dur}</span>` : ""}
         ${link}
+        ${resumeBtn}
       </div>
+      ${isPartial ? `<div style="color:#fbbf24;font-size:10px;font-family:monospace;margin-top:2px">⚠ interrupted — ${fmtNum(b.total_companies - b.done_companies)} companies not fetched. Click Resume to continue from checkpoint.</div>` : ""}
       ${progressBar(b.pct, col.bar, isRunning)}
       ${statParts.length ? `<div style="margin-top:4px;font-size:10px;color:#64748b">${statParts.join(" · ")}</div>` : ""}
       ${logLines ? `<div style="margin-top:6px;padding:6px 8px;background:#0f172a;border-radius:6px;border:1px solid #1e293b">${logLines}</div>` : ""}

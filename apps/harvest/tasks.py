@@ -1945,6 +1945,104 @@ def fetch_raw_jobs_batch_task(
     return {"batch_id": batch.pk, "total_companies": total, "test_mode": test_mode}
 
 
+@shared_task(bind=True, name="harvest.resume_fetch_batch", max_retries=0)
+def resume_fetch_batch_task(self, batch_id: int):
+    """
+    Resume a PARTIAL/RUNNING FetchBatch that was interrupted mid-run.
+
+    Finds every company in the batch that does NOT have a finished
+    CompanyFetchRun (SUCCESS/PARTIAL/FAILED/EMPTY) and re-dispatches
+    only those — acting as a checkpoint/resume instead of starting over.
+
+    Safe to call multiple times — already-completed companies are skipped.
+    """
+    from .models import CompanyFetchRun, CompanyPlatformLabel, FetchBatch
+
+    try:
+        batch = FetchBatch.objects.get(pk=batch_id)
+    except FetchBatch.DoesNotExist:
+        logger.error("resume_fetch_batch: batch #%s not found", batch_id)
+        return {"error": "batch not found"}
+
+    # IDs of labels that already have a finished run in this batch
+    finished_label_ids = set(
+        CompanyFetchRun.objects.filter(
+            batch=batch,
+            status__in=[
+                CompanyFetchRun.Status.SUCCESS,
+                CompanyFetchRun.Status.PARTIAL,
+                CompanyFetchRun.Status.FAILED,
+                CompanyFetchRun.Status.EMPTY,
+            ],
+        ).values_list("label_id", flat=True)
+    )
+
+    # All labels that were supposed to be in this batch (same criteria as original)
+    qs = CompanyPlatformLabel.objects.filter(
+        portal_alive__in=[True, None],
+        platform__isnull=False,
+        platform__is_enabled=True,
+    ).exclude(tenant_id="").select_related("platform", "company")
+
+    if batch.platform_filter:
+        qs = qs.filter(platform__slug=batch.platform_filter)
+
+    # Labels still needing a fetch = all eligible MINUS already finished
+    pending_pks = [
+        pk for pk in qs.values_list("pk", flat=True)
+        if pk not in finished_label_ids
+    ]
+
+    if not pending_pks:
+        batch.status = FetchBatch.Status.COMPLETED
+        batch.completed_at = timezone.now()
+        batch.save(update_fields=["status", "completed_at"])
+        logger.info("resume_fetch_batch: batch #%s already complete", batch_id)
+        return {"batch_id": batch_id, "resumed": 0, "message": "Already complete"}
+
+    # Put batch back to RUNNING and update total to reflect reality
+    batch.status = FetchBatch.Status.RUNNING
+    batch.total_companies = batch.completed_companies + batch.failed_companies + len(pending_pks)
+    batch.completed_at = None
+    batch.save(update_fields=["status", "total_companies", "completed_at"])
+
+    _ecfg = require_harvest_engine_config("resume_fetch_batch_task")
+    _api_stagger = _ecfg.api_stagger_ms / 1000.0
+    _scraper_stagger = _ecfg.scraper_stagger_ms / 1000.0
+
+    for i, label_pk in enumerate(pending_pks):
+        label = CompanyPlatformLabel.objects.filter(pk=label_pk).select_related("platform", "company").first()
+        if not label:
+            continue
+        is_scraper = getattr(label.platform, "is_scraper", False) if label.platform else False
+        stagger = _scraper_stagger if is_scraper else _api_stagger
+        countdown = int(i * stagger)
+        fetch_raw_jobs_for_company_task.apply_async(
+            kwargs={
+                "label_pk": label_pk,
+                "batch_id": batch_id,
+                "fetch_all": True,
+            },
+            countdown=countdown,
+            queue="batches",
+        )
+
+    logger.info(
+        "resume_fetch_batch: batch #%s resumed — %d/%d companies re-queued (%d already done)",
+        batch_id, len(pending_pks),
+        batch.total_companies, len(finished_label_ids),
+    )
+    update_task_progress(
+        self, current=len(pending_pks), total=len(pending_pks),
+        message=f"Resumed batch #{batch_id}: {len(pending_pks)} companies re-queued, {len(finished_label_ids)} already done",
+    )
+    return {
+        "batch_id": batch_id,
+        "resumed": len(pending_pks),
+        "already_done": len(finished_label_ids),
+    }
+
+
 @shared_task(bind=True, name="harvest.retry_failed_raw_jobs")
 def retry_failed_raw_jobs_task(self):
     """Re-queue fetch_raw_jobs_for_company_task for all FAILED runs.

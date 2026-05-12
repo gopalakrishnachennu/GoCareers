@@ -2037,6 +2037,48 @@ class StopBatchView(SuperuserRequiredMixin, View):
         return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
 
 
+class ResumeBatchView(SuperuserRequiredMixin, View):
+    """POST — resume a PARTIAL/interrupted FetchBatch from its checkpoint.
+
+    Finds companies that have no finished CompanyFetchRun in this batch
+    and re-dispatches only those — no restart from scratch needed.
+    """
+
+    def post(self, request):
+        from .tasks import resume_fetch_batch_task
+
+        batch_id = request.POST.get("batch_id")
+        if not batch_id:
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse({"ok": False, "error": "batch_id required"}, status=400)
+            messages.error(request, "batch_id required.")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
+
+        batch = get_object_or_404(FetchBatch, pk=batch_id)
+
+        if batch.status not in ("PARTIAL", "RUNNING", "FAILED", "CANCELLED"):
+            if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                return JsonResponse({"ok": False, "error": f"Batch is {batch.status} — nothing to resume."})
+            messages.warning(request, f"Batch #{batch.pk} is {batch.status} — nothing to resume.")
+            return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
+
+        task = resume_fetch_batch_task.apply_async(
+            kwargs={"batch_id": batch.pk},
+            queue="batches",
+        )
+
+        logger.info(
+            "[HARVEST] Batch #%s resume triggered by %s (task=%s)",
+            batch.pk, request.user.username, task.id,
+        )
+
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse({"ok": True, "batch_id": batch.pk, "task_id": task.id})
+
+        messages.success(request, f"Batch #{batch.pk} resuming — only unfinished companies will be re-fetched.")
+        return redirect(f"{reverse('jobs-pipeline')}?tab=raw")
+
+
 class RunEnrichExistingView(SuperuserRequiredMixin, View):
     """POST — run enrichment engine on all jobs already in DB (no HTTP)."""
 
