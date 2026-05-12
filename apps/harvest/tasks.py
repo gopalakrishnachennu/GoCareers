@@ -1974,7 +1974,13 @@ def retry_failed_raw_jobs_task(self):
     return {"queued": queued}
 
 
-@shared_task(bind=True, name="harvest.validate_raw_job_urls")
+@shared_task(
+    bind=True,
+    name="harvest.validate_raw_job_urls",
+    soft_time_limit=7200,   # 2 h — enough for 126k URLs at 20 threads
+    time_limit=7500,
+    max_retries=0,
+)
 def validate_raw_job_urls_task(
     self,
     platform_slug: str | None = None,
@@ -2154,6 +2160,27 @@ def validate_raw_job_urls_task(
         }
         finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
         return out
+
+    except SoftTimeLimitExceeded:
+        # 2-hour window exceeded — record what we finished, not a FAILED
+        logger.warning(
+            "validate_raw_job_urls_task soft time limit — checked=%d/%d live=%d inactive=%d",
+            checked, total, alive, dead,
+        )
+        finish_ops_run(
+            ops_run,
+            HarvestOpsRun.Status.PARTIAL,
+            {
+                "note": "soft_time_limit",
+                "checked": checked,
+                "total": total,
+                "live": alive,
+                "inactive": dead,
+                "inconclusive": inconclusive,
+                "reason_counts": reason_counts,
+            },
+        )
+        return {"checked": checked, "live": alive, "inactive": dead, "soft_time_limit": True}
 
     except Exception as e:
         logger.exception("validate_raw_job_urls_task failed: %s", e)

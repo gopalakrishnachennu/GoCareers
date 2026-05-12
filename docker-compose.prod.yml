@@ -66,15 +66,16 @@ services:
     restart: unless-stopped
 
   # ── Harvest worker: dedicated to batch scraping ───────────────────────────
-  # HARVEST_CONCURRENCY is controlled via the GUI at /harvest/engine/ and stored
-  # in HarvestEngineConfig. Update .env.production + restart this container to apply.
-  # Rate-limit and stagger values are read from DB on every task run — no restart needed.
+  # HARVEST_CONCURRENCY — parallel Celery processes for company fetches.
+  # Each process handles one company at a time (HTTP I/O bound).
+  # Default raised to 8 so Full Fetch runs ~8 companies in parallel.
+  # Set HARVEST_CONCURRENCY in .env.production to override without code change.
   celery_harvest:
     build: .
     image: ${IMAGE_WORKER:-consulting-worker:local}
     command: >
       celery -A config worker -l warning
-      --concurrency=${HARVEST_CONCURRENCY:-3}
+      --concurrency=${HARVEST_CONCURRENCY:-8}
       -Q batches,harvest
       --hostname=harvest@%h
       --max-tasks-per-child=50
@@ -85,7 +86,7 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       CELERY_TASK_ALWAYS_EAGER: "0"
-      HARVEST_CONCURRENCY: ${HARVEST_CONCURRENCY:-3}
+      HARVEST_CONCURRENCY: ${HARVEST_CONCURRENCY:-8}
     depends_on:
       - db
       - redis
