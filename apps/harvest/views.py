@@ -1513,26 +1513,65 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
         from django.utils import timezone as _tz
 
         from .models import CompanyFetchRun, FetchBatch
+        from .ops_audit import mark_stale_fetch_batches, mark_stale_running_ops
 
         now = _tz.now()
         since_24h = now - timedelta(hours=24)
+        stale_marked = 0
+        stale_marked += mark_stale_running_ops(
+            HarvestOpsRun.Operation.VALIDATE_URLS,
+            stale_after_minutes=45,
+            reason="live_ops_monitor",
+        )
+        stale_marked += mark_stale_running_ops(
+            HarvestOpsRun.Operation.BACKFILL_JD,
+            stale_after_minutes=90,
+            reason="live_ops_monitor",
+        )
+        stale_marked += mark_stale_running_ops(
+            exclude_operations=[
+                HarvestOpsRun.Operation.VALIDATE_URLS,
+                HarvestOpsRun.Operation.BACKFILL_JD,
+            ],
+            stale_after_minutes=60,
+            reason="live_ops_monitor",
+        )
+        stale_fetch = mark_stale_fetch_batches(
+            stale_after_minutes=120,
+            reason="live_ops_monitor",
+        )
 
         # ── FetchBatch (Full Fetch / Quick Fetch) ────────────────────────────
-        # Show: every active batch (RUNNING/PARTIAL/PENDING) regardless of age,
-        # plus the single most recently finished batch as a reference.
-        # This keeps the monitor clean — no wall of dead batches.
+        # Show: true active batches, the latest resumable checkpoint, plus the
+        # latest finished batch as history. Older failed/cancelled checkpoints
+        # stay on the batch detail page instead of cluttering the monitor.
         batches = []
         active_batches = list(
             FetchBatch.objects.filter(
-                status__in=["RUNNING", "PARTIAL", "PENDING"]
+                status__in=["RUNNING", "PENDING"]
             ).order_by("-created_at")
+        )
+        resumable_batches = list(
+            FetchBatch.objects
+            .annotate(_done_companies=F("completed_companies") + F("failed_companies"))
+            .filter(status="PARTIAL", total_companies__gt=F("_done_companies"))
+            .order_by("-created_at")[:1]
+        )
+        finished_partials = list(
+            FetchBatch.objects
+            .annotate(_done_companies=F("completed_companies") + F("failed_companies"))
+            .filter(status="PARTIAL", total_companies__lte=F("_done_companies"))
+            .order_by("-created_at")[:1]
         )
         last_finished = list(
             FetchBatch.objects.filter(
                 status__in=["COMPLETED", "CANCELLED", "FAILED"]
             ).order_by("-created_at")[:1]
         )
-        batch_qs = active_batches + [b for b in last_finished if b not in active_batches]
+        batch_qs = []
+        for b in active_batches + resumable_batches + finished_partials + last_finished:
+            if b not in batch_qs:
+                batch_qs.append(b)
 
         for b in batch_qs:
             done = b.completed_companies + b.failed_companies
@@ -1640,10 +1679,17 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
         skipped_counts: dict[str, int] = {}  # op → count of SKIPPED grouped
 
         # Load more rows than we'll show — to collapse SKIPPED groups
+        shown_success_ops: set[str] = set()
         for run in HarvestOpsRun.objects.order_by("-created_at")[:60]:
             if run.status == HarvestOpsRun.Status.SKIPPED:
                 skipped_counts[run.operation] = skipped_counts.get(run.operation, 0) + 1
                 continue  # don't surface individual SKIPPED rows
+
+            if run.status == HarvestOpsRun.Status.SUCCESS:
+                if run.operation in shown_success_ops:
+                    skipped_counts[run.operation] = skipped_counts.get(run.operation, 0) + 1
+                    continue
+                shown_success_ops.add(run.operation)
 
             # Hide trivial "nothing to do" completions — Beat fires every hour and
             # creates a SUCCESS run in ~0 s when 0 jobs are eligible.  These add
@@ -1712,6 +1758,7 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                 "progress_message": live_msg[:200],
                 "completion": completion,
                 "stuck_warning": stuck_warning,
+                "stale_marked": bool((run.audit_payload or {}).get("stale")),
                 "detail_url": f"/harvest/raw-jobs/ops-runs/{run.pk}/",
                 "created_at": run.created_at.isoformat() if run.created_at else "",
             })
@@ -1727,6 +1774,8 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
             "runs": runs,
             "skipped_counts": skipped_counts,
             "active_count": active_count,
+            "stale_marked": stale_marked,
+            "stale_fetch_marked": stale_fetch,
             "ts": now.isoformat(),
         })
 
@@ -1833,9 +1882,16 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
         # RUNNING or PARTIAL means work is either in progress or resumable.
         # Don't let a new batch pile on top — force Stop or Resume first.
         if fetch_mode in ("quick", "full", ""):
+            from .ops_audit import mark_stale_fetch_batches
+
+            mark_stale_fetch_batches(
+                stale_after_minutes=120,
+                reason="start_batch_preflight",
+            )
             active_batch = (
                 FetchBatch.objects
-                .filter(status__in=["RUNNING", "PARTIAL"])
+                .annotate(_done_companies=F("completed_companies") + F("failed_companies"))
+                .filter(Q(status="RUNNING") | Q(status="PARTIAL", total_companies__gt=F("_done_companies")))
                 .order_by("-created_at")
                 .first()
             )

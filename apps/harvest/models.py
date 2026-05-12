@@ -328,6 +328,12 @@ class HarvestOpsRun(models.Model):
     progress_current = models.IntegerField(default=0)
     progress_total = models.IntegerField(default=0)
     progress_message = models.CharField(max_length=256, blank=True)
+    last_heartbeat_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        db_index=True,
+        help_text="Last progress heartbeat written by the worker. Used to detect orphaned RUNNING ops.",
+    )
     triggered_by_user = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

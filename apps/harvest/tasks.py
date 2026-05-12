@@ -53,6 +53,89 @@ logger = logging.getLogger(__name__)
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
 BACKFILL_LOCK_STALE_MINUTES = DEFAULT_JD_BACKFILL_LOCK_STALE_MINUTES
 BACKFILL_MAX_PARALLEL = 8
+OPS_SINGLETON_STALE_MINUTES = 30
+OPS_SINGLETON_CACHE_TTL_SECONDS = 45 * 60
+
+
+def _ops_singleton_cache_key(operation: str) -> str:
+    return f"harvest:ops-singleton:{operation}"
+
+
+def _acquire_ops_singleton(
+    operation: str,
+    task_id: str,
+    *,
+    queue: dict | None = None,
+    stale_minutes: int = OPS_SINGLETON_STALE_MINUTES,
+    cache_ttl_seconds: int = OPS_SINGLETON_CACHE_TTL_SECONDS,
+) -> str | None:
+    """Best-effort cache lock plus DB heartbeat guard for one active op run."""
+    from .models import HarvestOpsRun
+    from .ops_audit import active_ops_run_exists, begin_ops_run, finish_ops_run, mark_stale_running_ops
+
+    task_id = task_id or ""
+    queue_payload = dict(queue or {})
+    stale_marked = mark_stale_running_ops(
+        operation,
+        stale_after_minutes=stale_minutes,
+        reason="singleton_acquire",
+    )
+    if active_ops_run_exists(
+        operation,
+        exclude_task_id=task_id,
+        stale_after_minutes=stale_minutes,
+    ):
+        skipped = begin_ops_run(
+            operation,
+            task_id,
+            queue={
+                **queue_payload,
+                "skipped_duplicate_instance": True,
+                "guard": "db_heartbeat",
+                "stale_runs_marked": stale_marked,
+            },
+        )
+        finish_ops_run(skipped, HarvestOpsRun.Status.SKIPPED, {"reason": "duplicate_active_operation"})
+        return None
+
+    key = _ops_singleton_cache_key(operation)
+    if cache.add(key, task_id, cache_ttl_seconds):
+        return key
+
+    # Cache can survive a worker crash. If DB says no fresh heartbeat exists,
+    # clear the stale cache key once and retry.
+    if not active_ops_run_exists(
+        operation,
+        exclude_task_id=task_id,
+        stale_after_minutes=stale_minutes,
+    ):
+        cache.delete(key)
+        if cache.add(key, task_id, cache_ttl_seconds):
+            return key
+
+    skipped = begin_ops_run(
+        operation,
+        task_id,
+        queue={
+            **queue_payload,
+            "skipped_duplicate_instance": True,
+            "guard": "cache",
+            "stale_runs_marked": stale_marked,
+        },
+    )
+    finish_ops_run(skipped, HarvestOpsRun.Status.SKIPPED, {"reason": "duplicate_active_operation"})
+    return None
+
+
+def _release_ops_singleton(lock_key: str | None, task_id: str) -> None:
+    if not lock_key:
+        return
+    try:
+        current = cache.get(lock_key)
+        if current in (None, task_id):
+            cache.delete(lock_key)
+    except Exception:
+        logger.debug("Failed to release ops singleton lock %s", lock_key, exc_info=True)
 
 
 def _invalidate_rawjobs_dashboard_cache() -> None:
@@ -2120,6 +2203,25 @@ def validate_raw_job_urls_task(
     from .ops_audit import begin_ops_run, finish_ops_run
     from .url_health import check_job_posting_live, is_definitive_inactive
 
+    task_id = getattr(self.request, "id", "") or ""
+    singleton_queue = {
+        "platform_slug": platform_slug or "",
+        "batch_size": batch_size,
+        "concurrency": concurrency,
+        "max_jobs": max_jobs,
+        "pending_only": pending_only,
+        "recent_hours": recent_hours,
+    }
+    singleton_lock = _acquire_ops_singleton(
+        HarvestOpsRun.Operation.VALIDATE_URLS,
+        task_id,
+        queue=singleton_queue,
+        stale_minutes=45,
+        cache_ttl_seconds=3 * 60 * 60,
+    )
+    if singleton_lock is None:
+        return {"message": "Skipped — another validate-live-links run is active.", "checked": 0}
+
     qs = RawJob.objects.filter(is_active=True).exclude(original_url="")
     if platform_slug:
         qs = qs.filter(platform_slug=platform_slug)
@@ -2133,7 +2235,7 @@ def validate_raw_job_urls_task(
     total = qs.count()
     ops_run = begin_ops_run(
         HarvestOpsRun.Operation.VALIDATE_URLS,
-        getattr(self.request, "id", "") or "",
+        task_id,
         progress_total=total,
         queue={
             "platform_slug": platform_slug or "",
@@ -2268,6 +2370,7 @@ def validate_raw_job_urls_task(
             "reason_counts": reason_counts,
         }
         finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, out)
+        _release_ops_singleton(singleton_lock, task_id)
         return out
 
     except SoftTimeLimitExceeded:
@@ -2289,6 +2392,7 @@ def validate_raw_job_urls_task(
                 "reason_counts": reason_counts,
             },
         )
+        _release_ops_singleton(singleton_lock, task_id)
         return {"checked": checked, "live": alive, "inactive": dead, "soft_time_limit": True}
 
     except Exception as e:
@@ -2305,6 +2409,7 @@ def validate_raw_job_urls_task(
                 "reason_counts": reason_counts,
             },
         )
+        _release_ops_singleton(singleton_lock, task_id)
         raise
 
 
@@ -4571,6 +4676,24 @@ def backfill_descriptions_task(
     if include_cold is None:
         include_cold = cfg.backfill_jd_include_cold
 
+    task_id = getattr(self.request, "id", "") or ""
+    singleton_lock = _acquire_ops_singleton(
+        HarvestOpsRun.Operation.BACKFILL_JD,
+        task_id,
+        queue={
+            "batch_size": batch_size,
+            "parallel_workers": parallel_workers,
+            "platform_slug": platform_slug or "",
+            "force_jarvis": force_jarvis,
+            "reset_locks": reset_locks,
+            "include_cold": include_cold,
+        },
+        stale_minutes=90,
+        cache_ttl_seconds=3 * 60 * 60,
+    )
+    if singleton_lock is None:
+        return {"message": "Skipped — another Backfill JD run is active.", "updated": 0}
+
     if offset:
         logger.warning(
             "backfill_descriptions_task: offset=%s is ignored.",
@@ -4613,6 +4736,7 @@ def backfill_descriptions_task(
                         HarvestOpsRun.Status.SKIPPED,
                         {"reason": "duplicate_worker", "other_task_id": _t.get("id")},
                     )
+                    _release_ops_singleton(singleton_lock, task_id)
                     return {"message": "Skipped — another backfill instance is already running.", "updated": 0}
     except Exception:
         pass  # inspect is best-effort; proceed if it fails
@@ -4649,6 +4773,7 @@ def backfill_descriptions_task(
             HarvestOpsRun.Status.SUCCESS,
             {"message": "All jobs already have descriptions.", "updated": 0},
         )
+        _release_ops_singleton(singleton_lock, task_id)
         return {"message": "All jobs already have descriptions.", "updated": 0}
 
     updated = skipped = failed = 0
@@ -4871,6 +4996,7 @@ def backfill_descriptions_task(
             "soft_time_limit": True,
         }
         finish_ops_run(ops_run, HarvestOpsRun.Status.PARTIAL, completion)
+        _release_ops_singleton(singleton_lock, task_id)
         return completion
 
     except Exception as e:
@@ -4885,6 +5011,7 @@ def backfill_descriptions_task(
                 "failed": failed,
             },
         )
+        _release_ops_singleton(singleton_lock, task_id)
         raise
 
     remaining_n = _backfill_eligible_queryset(platform_slug, include_cold=include_cold).count()
@@ -4900,6 +5027,7 @@ def backfill_descriptions_task(
     }
     logger.info("Backfill descriptions FINISHED: %s", result)
     finish_ops_run(ops_run, HarvestOpsRun.Status.SUCCESS, result)
+    _release_ops_singleton(singleton_lock, task_id)
     return result
 
 

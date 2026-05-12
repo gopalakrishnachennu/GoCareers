@@ -779,6 +779,8 @@
     if (c.failed > 0) statParts.push(`<span style="color:#f87171">failed: ${c.failed}</span>`);
     const stuckWarning = r.stuck_warning
       ? `<span style="color:#f59e0b;font-size:10px;font-family:monospace">⚠ no progress ticks for >5 min — may be stuck or predates monitor</span>` : "";
+    const staleMarked = r.stale_marked
+      ? `<span style="color:#f59e0b;font-size:10px;font-family:monospace">Marked partial by heartbeat guard — worker stopped reporting progress.</span>` : "";
 
     return `<div class="px-4 py-3 border-b border-slate-800 hover:bg-slate-800/30 transition">
       <div class="flex items-center gap-2 flex-wrap">
@@ -793,6 +795,7 @@
       ${r.progress_message ? `<div style="color:#cbd5e1;font-size:11px;font-family:monospace;margin-top:4px;word-break:break-all">${r.progress_message.slice(0,220)}</div>` : ""}
       ${statParts.length ? `<div style="color:#64748b;font-size:10px;margin-top:3px">${statParts.join(" · ")}</div>` : ""}
       ${stuckWarning}
+      ${staleMarked}
     </div>`;
   }
 
@@ -807,6 +810,18 @@
     return `<div class="px-4 py-2 border-b border-slate-800">
       <span style="color:#475569;font-size:10px;font-family:monospace">scheduler skipped (duplicate guard): </span>${pills}
     </div>`;
+  }
+
+  function renderOpsSection(title, countLabel, items, renderer, openByDefault) {
+    if (!items.length) return "";
+    const rows = items.map(renderer).join("");
+    return `<details ${openByDefault ? "open" : ""} class="border-b border-slate-800">
+      <summary class="cursor-pointer select-none px-4 py-2 bg-slate-800/60 hover:bg-slate-800 transition flex items-center justify-between">
+        <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400">${title}</span>
+        <span class="text-[10px] font-mono text-slate-500">${countLabel || `${items.length} item${items.length === 1 ? "" : "s"}`}</span>
+      </summary>
+      ${rows}
+    </details>`;
   }
 
   // ── Poll & render ───────────────────────────────────────────────────────────
@@ -851,21 +866,25 @@
         if (body.dataset.lastKey !== key) {
           body.dataset.lastKey = key;
           let html = "";
-          // Section header: Fetches
-          if (batches.length) {
-            html += `<div class="px-4 py-1.5 bg-slate-800/60 border-b border-slate-700">
-              <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Fetch Batches (Full/Quick fetch)</span>
-            </div>`;
-            html += batches.map(renderBatch).join("");
-          }
-          // Section header: Pipeline Ops
-          if (runs.length) {
-            html += `<div class="px-4 py-1.5 bg-slate-800/60 border-b border-slate-700">
-              <span class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Pipeline Ops (Backfill · Detect · Validate · Cleanup · Classify)</span>
-            </div>`;
-            html += runs.map(renderRun).join("");
-          }
-          // Skipped summary
+          const batchRemaining = b => Math.max(0, (b.total_companies || 0) - (b.done_companies || 0));
+          const isInterruptedBatch = b => ["PARTIAL", "FAILED", "CANCELLED"].includes(b.status);
+          const runningBatches = batches.filter(b => b.status === "RUNNING" || b.status === "PENDING");
+          const actionBatches = batches.filter(b => isInterruptedBatch(b) && batchRemaining(b) > 0);
+          const historyBatches = batches.filter(b =>
+            ["COMPLETED", "SUCCESS"].includes(b.status) || (isInterruptedBatch(b) && batchRemaining(b) === 0)
+          );
+          const runningRuns = runs.filter(r => r.status === "RUNNING");
+          const actionRuns = runs.filter(r => ["PARTIAL", "FAILED"].includes(r.status) || r.stuck_warning || r.stale_marked);
+          const historyRuns = runs.filter(r => ["SUCCESS", "COMPLETED"].includes(r.status));
+
+          const nowItems = runningBatches.map(b => ({ type:"batch", item:b })).concat(runningRuns.map(r => ({ type:"run", item:r })));
+          const actionItems = actionBatches.map(b => ({ type:"batch", item:b })).concat(actionRuns.map(r => ({ type:"run", item:r })));
+          const historyItems = historyBatches.map(b => ({ type:"batch", item:b })).concat(historyRuns.map(r => ({ type:"run", item:r })));
+          const mixedRenderer = row => row.type === "batch" ? renderBatch(row.item) : renderRun(row.item);
+
+          html += renderOpsSection("Now running", "strict singletons", nowItems, mixedRenderer, true);
+          html += renderOpsSection("Needs action", "resume / review", actionItems, mixedRenderer, true);
+          html += renderOpsSection("Recent history", "collapsed", historyItems.slice(0, 8), mixedRenderer, false);
           html += renderSkipped(skipped);
           body.innerHTML = html;
         }
