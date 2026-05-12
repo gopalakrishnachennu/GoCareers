@@ -100,10 +100,12 @@ TEMPLATES = [
 
 WSGI_APPLICATION = "config.wsgi.application"
 
-# ── Celery — run tasks synchronously in the same process (no broker needed) ──
+# ── Celery — default: synchronous in-process; set CELERY_TASK_ALWAYS_EAGER=0
+#            to run as a real broker-backed worker (e.g. local_workers.sh)    ──
 
-CELERY_TASK_ALWAYS_EAGER = True        # Tasks execute immediately, in-process
-CELERY_TASK_EAGER_PROPAGATES = True    # Exceptions surface immediately
+_always_eager_raw = config("CELERY_TASK_ALWAYS_EAGER", default="1")
+CELERY_TASK_ALWAYS_EAGER = _always_eager_raw not in ("0", "false", "False", "no", "No")
+CELERY_TASK_EAGER_PROPAGATES = CELERY_TASK_ALWAYS_EAGER
 CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="memory://")
 CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default="cache+memory://")
 CELERY_ACCEPT_CONTENT = ["json"]

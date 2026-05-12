@@ -3503,8 +3503,22 @@ def _fast_workday_description(job_url: str) -> str:
 
     tenant = _re2.sub(r"\.wd\d+$", "", full_subdomain, flags=_re2.I)
     cxs_url = f"https://{full_subdomain}.myworkdayjobs.com/wday/cxs/{tenant}/{jobboard}{ext_path}"
+    _BROWSER_HEADERS = {
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Referer": f"https://{full_subdomain}.myworkdayjobs.com/",
+        "Origin": f"https://{full_subdomain}.myworkdayjobs.com",
+    }
     try:
-        resp = _req.get(cxs_url, headers={"Accept": "application/json"}, timeout=10)
+        resp = _req.get(cxs_url, headers=_BROWSER_HEADERS, timeout=12)
+        if resp.status_code == 403:
+            # Cloudflare / WAF blocking this server IP — signal caller to use Jarvis.
+            return "__BLOCKED__"
         if not resp.ok:
             return ""
         data = resp.json()
@@ -4113,9 +4127,15 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
     fast_fn = _FAST_FETCH_REGISTRY.get(platform)
     fast_desc = ""
     fast_strategy = ""
+    _fast_blocked = False  # True when CDN/WAF returned 403 — need Jarvis fallback
     if fast_fn and fetch_url and not force_jarvis:
         try:
-            fast_desc = fast_fn(fetch_url) or ""
+            raw = fast_fn(fetch_url) or ""
+            if raw == "__BLOCKED__":
+                _fast_blocked = True
+                fast_desc = ""
+            else:
+                fast_desc = raw
             if fast_desc:
                 fast_strategy = f"{platform}_api"
         except Exception:
@@ -4128,9 +4148,11 @@ def _backfill_process_one_job(job, jarvis, force_jarvis: bool = False):
 
     if fast_desc:
         data = {"description": fast_desc, "strategy": fast_strategy}
-    elif not force_jarvis and fast_fn and platform in _API_ONLY_PLATFORMS:
-        # API-only platform: fast path returned "" → job is expired or gone.
+    elif not force_jarvis and fast_fn and platform in _API_ONLY_PLATFORMS and not _fast_blocked:
+        # API-only platform: fast path returned "" (not blocked) → job is expired or gone.
         # Skip Jarvis — it will also fail and waste 30-60s. Apply cooldown lock.
+        # NOTE: if _fast_blocked is True (403), we fall through to Jarvis below so it
+        # can use browser-like behaviour to bypass the WAF.
         future_lock = timezone.now() + timedelta(hours=_COOLDOWN_HOURS)
         RawJob.objects.filter(pk=job.pk).update(
             description=" ", has_description=False, jd_backfill_locked_at=future_lock
