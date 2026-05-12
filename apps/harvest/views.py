@@ -1491,8 +1491,12 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
     """
     JSON feed for the Live Ops Monitor panel.
 
-    Returns the 20 most-recent HarvestOpsRun rows, with live Celery PROGRESS
-    state merged in for any RUNNING run.  Polls every 3 s from the front-end.
+    Returns two sections:
+      batches — active/recent FetchBatch rows (Full Fetch, Quick Fetch)
+      runs    — recent HarvestOpsRun rows, SKIPPED collapsed into a count
+
+    Live Celery PROGRESS is merged in for any RUNNING run.
+    Polled every 3 s (active) / 10 s (idle) by the front-end.
     """
 
     def test_func(self):
@@ -1503,20 +1507,129 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
         )
 
     def get(self, request, *args, **kwargs):
+        from datetime import timedelta
+
         from celery.result import AsyncResult
         from django.utils import timezone as _tz
 
+        from .models import CompanyFetchRun, FetchBatch
+
         now = _tz.now()
+        since_24h = now - timedelta(hours=24)
+
+        # ── FetchBatch (Full Fetch / Quick Fetch) ────────────────────────────
+        batches = []
+        batch_qs = FetchBatch.objects.filter(
+            created_at__gte=since_24h
+        ).order_by("-created_at")[:10]
+
+        for b in batch_qs:
+            done = b.completed_companies + b.failed_companies
+            total_c = b.total_companies or 0
+            pct = b.progress_pct
+            elapsed = None
+            runtime = None
+            if b.started_at:
+                elapsed = int((now - b.started_at).total_seconds())
+            if b.started_at and b.completed_at:
+                runtime = int((b.completed_at - b.started_at).total_seconds())
+
+            run_kind = (b.audit_payload or {}).get("queue", {}).get("run_kind", "") or ""
+            if "full" in run_kind:
+                label = "Full Fetch"
+                op_color = "full_fetch"
+            elif "platform_smoke" in run_kind:
+                label = "Test Fetch"
+                op_color = "test_fetch"
+            else:
+                label = "Quick Fetch"
+                op_color = "quick_fetch"
+
+            # For running batches, count live company runs
+            running_companies = 0
+            recent_company_msgs = []
+            if b.status == FetchBatch.Status.RUNNING:
+                running_companies = CompanyFetchRun.objects.filter(
+                    batch=b, status=CompanyFetchRun.Status.RUNNING
+                ).count()
+                recent_done = (
+                    CompanyFetchRun.objects
+                    .filter(batch=b, status__in=[
+                        CompanyFetchRun.Status.SUCCESS,
+                        CompanyFetchRun.Status.FAILED,
+                        CompanyFetchRun.Status.PARTIAL,
+                        CompanyFetchRun.Status.EMPTY,
+                    ])
+                    .select_related("label__company", "label__platform")
+                    .order_by("-completed_at")[:5]
+                )
+                for cr in recent_done:
+                    company_name = (
+                        cr.label.company.name if cr.label and cr.label.company else "?"
+                    )[:40]
+                    platform = (
+                        cr.label.platform.name if cr.label and cr.label.platform else "?"
+                    )[:20]
+                    status_icon = "✓" if cr.status == CompanyFetchRun.Status.SUCCESS else (
+                        "○" if cr.status == CompanyFetchRun.Status.EMPTY else "✗"
+                    )
+                    recent_company_msgs.append(
+                        f"{status_icon} {company_name} ({platform}) +{cr.jobs_new} new"
+                    )
+
+            msg_parts = []
+            if total_c:
+                msg_parts.append(f"{done:,}/{total_c:,} companies")
+            if b.total_jobs_new:
+                msg_parts.append(f"{b.total_jobs_new:,} new jobs")
+            if b.failed_companies:
+                msg_parts.append(f"{b.failed_companies} failed")
+            if running_companies:
+                msg_parts.append(f"{running_companies} workers active")
+            main_msg = " · ".join(msg_parts)
+
+            batches.append({
+                "id": b.pk,
+                "kind": "fetch_batch",
+                "op_color": op_color,
+                "label": label,
+                "status": b.status,
+                "pct": pct,
+                "total_companies": total_c,
+                "done_companies": done,
+                "failed_companies": b.failed_companies,
+                "total_jobs_new": b.total_jobs_new,
+                "total_jobs_found": b.total_jobs_found,
+                "running_workers": running_companies,
+                "message": main_msg,
+                "recent_company_log": recent_company_msgs,
+                "elapsed_seconds": elapsed,
+                "runtime_seconds": runtime,
+                "detail_url": f"/harvest/raw-jobs/batches/{b.pk}/",
+                "created_at": b.created_at.isoformat() if b.created_at else "",
+            })
+
+        # ── HarvestOpsRun (Backfill JD, Detect, Validate, Cleanup, …) ────────
         runs = []
-        for run in HarvestOpsRun.objects.order_by("-created_at")[:20]:
+        skipped_counts: dict[str, int] = {}  # op → count of SKIPPED grouped
+
+        # Load more rows than we'll show — to collapse SKIPPED groups
+        for run in HarvestOpsRun.objects.order_by("-created_at")[:60]:
+            if run.status == HarvestOpsRun.Status.SKIPPED:
+                skipped_counts[run.operation] = skipped_counts.get(run.operation, 0) + 1
+                continue  # don't surface individual SKIPPED rows
+
             total = run.progress_total or 0
             current = run.progress_current or 0
             message = run.progress_message or ""
-            pct = int(100 * current / total) if total else (100 if run.status == HarvestOpsRun.Status.SUCCESS else 0)
+            pct = int(100 * current / total) if total else (
+                100 if run.status == HarvestOpsRun.Status.SUCCESS else 0
+            )
 
-            # For RUNNING runs, also try the Celery result backend for finer-grained live data
+            # For RUNNING runs, merge in live Celery PROGRESS
             live_pct = pct
             live_msg = message
+            stuck_warning = False
             if run.status == HarvestOpsRun.Status.RUNNING and run.celery_task_id:
                 try:
                     res = AsyncResult(run.celery_task_id)
@@ -1526,7 +1639,6 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                         t = int(info.get("total") or total) or total
                         live_pct = int(100 * c / t) if t else live_pct
                         live_msg = (info.get("message") or message)[:200]
-                        # Update DB with what Celery knows (best-effort, non-blocking)
                         if c != current or live_msg != message:
                             HarvestOpsRun.objects.filter(pk=run.pk).update(
                                 progress_current=c,
@@ -1536,14 +1648,16 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                             current, total, message, pct = c, t, live_msg, live_pct
                 except Exception:
                     pass
+                # Flag tasks stuck at 0% for > 5 min as potentially stale
+                elapsed_run = int((now - run.created_at).total_seconds()) if run.created_at else 0
+                if elapsed_run > 300 and live_pct == 0 and not live_msg.strip():
+                    stuck_warning = True
 
-            elapsed = None
-            if run.created_at:
-                elapsed = int((now - run.created_at).total_seconds())
-            runtime = None
-            if run.finished_at and run.created_at:
-                runtime = int((run.finished_at - run.created_at).total_seconds())
-
+            elapsed = int((now - run.created_at).total_seconds()) if run.created_at else None
+            runtime = (
+                int((run.finished_at - run.created_at).total_seconds())
+                if run.finished_at and run.created_at else None
+            )
             completion = (run.audit_payload or {}).get("completion") or {}
             runs.append({
                 "id": run.pk,
@@ -1551,8 +1665,6 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                 "operation_label": run.get_operation_display(),
                 "status": run.status,
                 "celery_task_id": (run.celery_task_id or "")[:16],
-                "created_at": run.created_at.isoformat() if run.created_at else "",
-                "finished_at": run.finished_at.isoformat() if run.finished_at else "",
                 "elapsed_seconds": elapsed,
                 "runtime_seconds": runtime,
                 "progress_current": current,
@@ -1560,11 +1672,24 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
                 "progress_pct": live_pct,
                 "progress_message": live_msg[:200],
                 "completion": completion,
+                "stuck_warning": stuck_warning,
                 "detail_url": f"/harvest/raw-jobs/ops-runs/{run.pk}/",
+                "created_at": run.created_at.isoformat() if run.created_at else "",
             })
+            if len(runs) >= 15:
+                break
 
-        active_count = sum(1 for r in runs if r["status"] == HarvestOpsRun.Status.RUNNING)
-        return JsonResponse({"runs": runs, "active_count": active_count, "ts": now.isoformat()})
+        active_batches = sum(1 for b in batches if b["status"] == FetchBatch.Status.RUNNING)
+        active_ops = sum(1 for r in runs if r["status"] == HarvestOpsRun.Status.RUNNING)
+        active_count = active_batches + active_ops
+
+        return JsonResponse({
+            "batches": batches,
+            "runs": runs,
+            "skipped_counts": skipped_counts,
+            "active_count": active_count,
+            "ts": now.isoformat(),
+        })
 
 
 class CompanyFetchStatusView(SuperuserRequiredMixin, View):
