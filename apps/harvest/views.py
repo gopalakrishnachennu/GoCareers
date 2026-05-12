@@ -1518,10 +1518,21 @@ class OpsRunLiveApiView(LoginRequiredMixin, UserPassesTestMixin, View):
         since_24h = now - timedelta(hours=24)
 
         # ── FetchBatch (Full Fetch / Quick Fetch) ────────────────────────────
+        # Show: every active batch (RUNNING/PARTIAL/PENDING) regardless of age,
+        # plus the single most recently finished batch as a reference.
+        # This keeps the monitor clean — no wall of dead batches.
         batches = []
-        batch_qs = FetchBatch.objects.filter(
-            created_at__gte=since_24h
-        ).order_by("-created_at")[:10]
+        active_batches = list(
+            FetchBatch.objects.filter(
+                status__in=["RUNNING", "PARTIAL", "PENDING"]
+            ).order_by("-created_at")
+        )
+        last_finished = list(
+            FetchBatch.objects.filter(
+                status__in=["COMPLETED", "CANCELLED", "FAILED"]
+            ).order_by("-created_at")[:1]
+        )
+        batch_qs = active_batches + [b for b in last_finished if b not in active_batches]
 
         for b in batch_qs:
             done = b.completed_companies + b.failed_companies
@@ -1817,6 +1828,29 @@ class TriggerBatchFetchView(SuperuserRequiredMixin, View):
         # skip_platforms: comma-separated string OR multiple hidden inputs
         skip_raw = request.POST.get("skip_platforms", "").strip()
         skip_platforms = [s.strip() for s in skip_raw.split(",") if s.strip()] if skip_raw else []
+
+        # ── Guard: one active batch at a time ────────────────────────────────
+        # RUNNING or PARTIAL means work is either in progress or resumable.
+        # Don't let a new batch pile on top — force Stop or Resume first.
+        if fetch_mode in ("quick", "full", ""):
+            active_batch = (
+                FetchBatch.objects
+                .filter(status__in=["RUNNING", "PARTIAL"])
+                .order_by("-created_at")
+                .first()
+            )
+            if active_batch:
+                status_word = "running" if active_batch.status == "RUNNING" else "paused (PARTIAL)"
+                done = active_batch.completed_companies + active_batch.failed_companies
+                remaining = active_batch.total_companies - done
+                messages.error(
+                    request,
+                    f"⚠ Batch #{active_batch.pk} is already {status_word} "
+                    f"({done}/{active_batch.total_companies} done, {remaining} remaining). "
+                    f"Stop it first or use ▶ Resume to continue from checkpoint.",
+                )
+                return_to, _ = _resolve_return_target(request, default_view="jobs-pipeline")
+                return redirect(return_to)
 
         # ── Mode: Quick Sync ─────────────────────────────────────────────────
         if fetch_mode == "quick":
