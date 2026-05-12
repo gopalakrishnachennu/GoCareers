@@ -15,6 +15,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    # Enable AOF persistence so the Celery task queue survives container restarts/redeploys.
+    # Without this, restarting Redis wipes all queued tasks and in-progress batches lose
+    # their remaining work (they stay RUNNING but the queue is empty — zombie batches).
+    command: redis-server --appendonly yes --appendfsync everysec
+    volumes:
+      - redis_data:/data
     restart: unless-stopped
 
   web:
@@ -110,5 +116,6 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:     # Celery task queue — persists across container restarts/redeploys
   media_files:    # user-uploaded files — persists across container rebuilds
 
