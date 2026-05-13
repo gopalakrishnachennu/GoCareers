@@ -20,6 +20,7 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           script_stop: true
+          command_timeout: 30m
           script: |
             set -e
             cd /opt/consulting
@@ -29,6 +30,7 @@ jobs:
             export WEB_CONCURRENCY=2
             export WORKER_CONCURRENCY=2
             export HARVEST_CONCURRENCY=2
+            export COMPOSE_PARALLEL_LIMIT=1
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
