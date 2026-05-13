@@ -1,11 +1,12 @@
 #!/usr/bin/env sh
 set -eu
 
-# Migrations: all services (worker/beat need DB too).
-python manage.py migrate --noinput
-
-# Static files: web only (default path = no override from compose).
+# Migrations/static files: web only (default path = no override from compose).
+# Worker and beat containers must not run migrations concurrently during deploy.
 if [ "$#" -eq 0 ]; then
+  if [ "${RUN_MIGRATIONS:-1}" = "1" ]; then
+    python manage.py migrate --noinput
+  fi
   python manage.py collectstatic --noinput
 fi
 
