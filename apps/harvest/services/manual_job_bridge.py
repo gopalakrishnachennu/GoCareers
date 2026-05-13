@@ -175,7 +175,7 @@ def ensure_rawjob_for_job(
 
     with transaction.atomic():
         job = (
-            Job.objects.select_for_update()
+            Job.objects.select_for_update(of=("self",))
             .select_related("company_obj", "posted_by", "source_raw_job")
             .get(pk=job.pk)
         )
