@@ -26,18 +26,9 @@ jobs:
             git pull --ff-only origin main
             # Keep Redis/Postgres up during deploy. Never use `down` here; it
             # interrupts workers and can create avoidable downtime.
-            set_env() {
-              key="$1"
-              value="$2"
-              if grep -q "^${key}=" .env.production; then
-                sed -i "s/^${key}=.*/${key}=${value}/" .env.production
-              else
-                printf '\n%s=%s\n' "$key" "$value" >> .env.production
-              fi
-            }
-            set_env WEB_CONCURRENCY 2
-            set_env WORKER_CONCURRENCY 2
-            set_env HARVEST_CONCURRENCY 2
+            export WEB_CONCURRENCY=2
+            export WORKER_CONCURRENCY=2
+            export HARVEST_CONCURRENCY=2
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
