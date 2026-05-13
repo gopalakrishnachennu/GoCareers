@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+<div class="container mx-auto px-4 max-w-7xl">
+  <div class="page-header mb-5">
+    <h1 class="text-2xl font-bold text-gray-900">Filter Snapshots</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Immutable phrase sets used by selective harvest batches and audits.</p>
+  </div>
+  {% include 'harvest/_selective_filter_nav.html' %}
+  <section class="card-table">
+    <div class="table-scroll">
+      <table class="w-full text-sm table-min-wide">
+        <thead class="tbl-head"><tr><th class="tbl-th">Snapshot</th><th class="tbl-th">Batch</th><th class="tbl-th">Hash</th><th class="tbl-th">Taken</th><th class="tbl-th-right">Action</th></tr></thead>
+        <tbody>
+          {% for s in rows %}
+          <tr class="tbl-row">
+            <td class="tbl-td font-mono text-xs">{{ s.snapshot_id }}</td>
+            <td class="tbl-td">{% if s.batch_id %}<a class="link-action" href="{% url 'harvest-batch-detail' s.batch_id %}">#{{ s.batch_id }}</a>{% else %}—{% endif %}</td>
+            <td class="tbl-td font-mono text-xs">{{ s.phrase_hash|slice:":16" }}</td>
+            <td class="tbl-td text-xs text-gray-500">{{ s.taken_at|timesince }} ago</td>
+            <td class="tbl-td-right"><a href="{% url 'harvest-filter-snapshot-detail' s.pk %}" class="link-action">View</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="5" class="tbl-empty">No filter snapshots yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

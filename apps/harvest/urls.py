@@ -9,6 +9,8 @@ from .views import (
     FetchBatchListView,
     FetchCooldownStatusView,
     FetchBatchDetailView,
+    FilterSnapshotDetailView,
+    FilterSnapshotListView,
     HarvestBatchActivityView,
     HarvestOpsRunDetailView,
     OpsRunLiveApiView,
@@ -37,6 +39,12 @@ from .views import (
     BoardAnalyticsView,
     BoardDrillDownView,
     RawJobWorkflowInsightsView,
+    SelectiveRoleCategoryCreateView,
+    SelectiveRoleCategoryListView,
+    SelectiveRoleCategoryUpdateView,
+    SelectiveTitleTestApiView,
+    SkippedTitleRecoverView,
+    SkippedTitlesAuditView,
     RunBackfillDescriptionsView,
     RunBackfillResumeContractView,
     RunBackfillNowView,
@@ -61,6 +69,7 @@ from .views import (
     DuplicateResolveView,
     DuplicateBulkResolveView,
     UnknownCountryReviewView,
+    ZeroTechCompaniesView,
 )
 
 urlpatterns = [
@@ -131,6 +140,15 @@ urlpatterns = [
     path("duplicates/bulk-resolve/", DuplicateBulkResolveView.as_view(), name="harvest-duplicate-bulk-resolve"),
     # Engine Config — runtime tuning knobs (concurrency, rate limit, stagger)
     path("engine/", EngineConfigView.as_view(), name="harvest-engine-config"),
+    path("role-categories/", SelectiveRoleCategoryListView.as_view(), name="harvest-role-categories"),
+    path("role-categories/new/", SelectiveRoleCategoryCreateView.as_view(), name="harvest-role-category-create"),
+    path("role-categories/<int:pk>/edit/", SelectiveRoleCategoryUpdateView.as_view(), name="harvest-role-category-edit"),
+    path("role-categories/api/title-test/", SelectiveTitleTestApiView.as_view(), name="harvest-title-test-api"),
+    path("skipped-titles/", SkippedTitlesAuditView.as_view(), name="harvest-skipped-titles"),
+    path("skipped-titles/<int:pk>/recover/", SkippedTitleRecoverView.as_view(), name="harvest-skipped-title-recover"),
+    path("zero-tech-companies/", ZeroTechCompaniesView.as_view(), name="harvest-zero-tech-companies"),
+    path("filter-snapshots/", FilterSnapshotListView.as_view(), name="harvest-filter-snapshots"),
+    path("filter-snapshots/<int:pk>/", FilterSnapshotDetailView.as_view(), name="harvest-filter-snapshot-detail"),
     # Job Jarvis — paste-any-URL ingestion
     path("jarvis/", JarvisView.as_view(), name="harvest-jarvis"),
     path("jarvis/status/", JarvisStatusView.as_view(), name="harvest-jarvis-status"),

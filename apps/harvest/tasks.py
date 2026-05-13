@@ -1054,6 +1054,9 @@ def fetch_raw_jobs_for_company_task(
 
     filter_enabled = bool(getattr(_cfg, "selective_filter_enabled", False))
     filter_audit_mode = bool(getattr(_cfg, "filter_audit_mode", True))
+    # Full Fetch is the permanent audit/admin path. It may classify for visibility,
+    # but it must never suppress detail fetches or pool recovery data.
+    effective_filter_audit_mode = filter_audit_mode or bool(fetch_all)
     filter_snapshot = None
     filter_categories: list[dict] = []
     filter_hard_negatives: list[str] = []
@@ -1370,7 +1373,7 @@ def fetch_raw_jobs_for_company_task(
 
             should_skip_jd = (
                 filter_enabled
-                and not filter_audit_mode
+                and not effective_filter_audit_mode
                 and filter_result.decision in {COLD, NO_MATCH}
             )
             if should_skip_jd:
@@ -1406,6 +1409,35 @@ def fetch_raw_jobs_for_company_task(
                     company_name=job_dict.get("company_name") or label.company.name,
                     posted_date=posted_date,
                 ))
+
+                if (
+                    filter_enabled
+                    and filter_snapshot_id
+                    and not getattr(label.platform, "title_in_list", False)
+                ):
+                    post_fetch_result = classify_title(
+                        title=job_dict.get("title") or "",
+                        department=job_dict.get("department") or "",
+                        categories=filter_categories,
+                        hard_negatives=filter_hard_negatives,
+                        custom_phrases=label.custom_include_phrases or [],
+                        snapshot_id=filter_snapshot_id,
+                    )
+                    filter_result = ClassifyResult(
+                        decision=post_fetch_result.decision,
+                        category=post_fetch_result.category,
+                        matched_phrase=post_fetch_result.matched_phrase,
+                        matched_negative=post_fetch_result.matched_negative,
+                        reason=f"post-fetch classification: {post_fetch_result.reason}",
+                        snapshot_id=post_fetch_result.snapshot_id,
+                    )
+                    should_skip_jd = False
+
+            filter_blocks_pool = (
+                filter_enabled
+                and not effective_filter_audit_mode
+                and filter_result.decision in {COLD, NO_MATCH}
+            )
             supplied_location_candidates = job_dict.get("location_candidates")
             if not isinstance(supplied_location_candidates, list):
                 supplied_location_candidates = []
@@ -1473,7 +1505,7 @@ def fetch_raw_jobs_for_company_task(
                 "filter_decision": filter_result.decision if filter_enabled else None,
                 "filter_reason": filter_result.reason if filter_enabled else None,
                 "filter_snapshot_id": filter_result.snapshot_id if filter_enabled else None,
-                "is_cold": bool(should_skip_jd),
+                "is_cold": bool(filter_blocks_pool),
                 "jd_fetch_skipped": bool(should_skip_jd),
                 "is_active": True,
                 "content_hash": compute_content_hash(
@@ -1561,7 +1593,7 @@ def fetch_raw_jobs_for_company_task(
                     logger.exception("Failed to write HarvestSkippedTitle for RawJob %s", obj.pk)
             if created:
                 jobs_new += 1
-                if not should_skip_jd:
+                if not filter_blocks_pool:
                     new_raw_job_pks.append(obj.pk)
             else:
                 jobs_updated += 1
@@ -1627,7 +1659,7 @@ def fetch_raw_jobs_for_company_task(
         if (jd.get("schedule_type") and jd.get("schedule_type") not in ("", "UNKNOWN")) or jd.get("vendor_job_schedule"):
             _fp["schedule"] += 1
 
-    if filter_enabled and not filter_audit_mode:
+    if filter_enabled and not effective_filter_audit_mode:
         try:
             tech_matched = filter_strong + filter_possible + filter_unknown
             if tech_matched == 0 and len(raw_jobs):
@@ -1973,6 +2005,8 @@ def fetch_raw_jobs_for_company_task(
             "cold": filter_cold,
             "no_match": filter_no_match,
             "audit_mode": filter_audit_mode,
+            "effective_audit_mode": effective_filter_audit_mode,
+            "fetch_all_bypass": bool(fetch_all),
             "snapshot_id": filter_snapshot_id,
         },
     }
@@ -4787,6 +4821,47 @@ def _backfill_descriptions_chunk_impl(
         "skipped": skipped,
         "failed": failed,
         "log": logs if not progress_hook else [],
+    }
+
+
+@shared_task(
+    name="harvest.backfill_single_rawjob_description",
+    soft_time_limit=900,
+    time_limit=960,
+    max_retries=0,
+)
+def backfill_single_rawjob_description_task(raw_job_id: int, force_jarvis: bool = False) -> dict:
+    """Fetch a JD for one RawJob after manual skipped-title recovery."""
+    from .jarvis import JobJarvis
+    from .models import RawJob
+
+    job = RawJob.objects.filter(pk=raw_job_id).first()
+    if not job:
+        return {"updated": 0, "skipped": 0, "failed": 1, "error": "RawJob not found"}
+
+    RawJob.objects.filter(pk=job.pk).update(
+        is_cold=False,
+        jd_fetch_skipped=False,
+        filter_decision=job.filter_decision or "POSSIBLE",
+        jd_backfill_locked_at=None,
+    )
+    outcome, entry = _backfill_process_one_job(job, JobJarvis(), force_jarvis=force_jarvis)
+    fallback_task_id = ""
+    if outcome != "updated" and job.platform_label_id:
+        fallback = fetch_raw_jobs_for_company_task.apply_async(
+            args=[job.platform_label_id],
+            kwargs={"max_jobs": 25, "triggered_by": "MANUAL"},
+            countdown=10,
+            queue="harvest",
+        )
+        fallback_task_id = fallback.id
+    return {
+        "raw_job_id": raw_job_id,
+        "updated": 1 if outcome == "updated" else 0,
+        "skipped": 1 if outcome == "skipped" else 0,
+        "failed": 1 if outcome not in {"updated", "skipped"} else 0,
+        "fallback_company_fetch_task_id": fallback_task_id,
+        "log": entry,
     }
 
 

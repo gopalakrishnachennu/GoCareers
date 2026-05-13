@@ -13,6 +13,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--dry-run", action="store_true", help="Report counts without updating rows.")
         parser.add_argument("--limit", type=int, default=0, help="Maximum rows to scan. 0 means all.")
+        parser.add_argument("--batch-size", type=int, default=1000, help="Bulk update batch size.")
         parser.add_argument(
             "--only-unclassified",
             action="store_true",
@@ -22,6 +23,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         dry_run = bool(options["dry_run"])
         limit = max(0, int(options["limit"] or 0))
+        batch_size = max(1, int(options["batch_size"] or 1000))
         snapshot = HarvestFilterSnapshot.create_snapshot(notes="classify_existing_rawjobs")
         categories = snapshot.get_categories()
         hard_negatives = snapshot.get_hard_negatives()
@@ -53,9 +55,12 @@ class Command(BaseCommand):
             raw_job.filter_reason = result.reason[:512]
             raw_job.filter_snapshot_id = snapshot.snapshot_id
             raw_job.is_cold = result.decision in {COLD, NO_MATCH}
-            raw_job.jd_fetch_skipped = result.decision in {COLD, NO_MATCH}
+            raw_job.jd_fetch_skipped = (
+                result.decision in {COLD, NO_MATCH}
+                and not raw_job.has_description
+            )
             updates.append(raw_job)
-            if len(updates) >= 1000:
+            if len(updates) >= batch_size:
                 with transaction.atomic():
                     RawJob.objects.bulk_update(
                         updates,

@@ -1,0 +1,55 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+<div class="container mx-auto px-4 max-w-7xl">
+  <div class="page-header mb-5">
+    <h1 class="text-2xl font-bold text-gray-900">Skipped Titles Audit</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Review COLD and NO_MATCH decisions. Recover any false negative directly from this page.</p>
+  </div>
+  {% include 'harvest/_selective_filter_nav.html' %}
+
+  {% if messages %}{% for message in messages %}
+  <div class="mb-4 rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% else %}border-green-200 bg-green-50 text-green-700{% endif %}">{{ message }}</div>
+  {% endfor %}{% endif %}
+
+  <form method="get" class="mb-4 grid gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_repeat(5,auto)]">
+    <input name="q" value="{{ q }}" class="form-input" placeholder="Search title, company, reason">
+    <select name="platform" class="form-select"><option value="">All platforms</option>{% for p in platforms %}<option value="{{ p }}" {% if platform == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select>
+    <select name="decision" class="form-select"><option value="">All decisions</option><option value="COLD" {% if decision == 'COLD' %}selected{% endif %}>COLD</option><option value="NO_MATCH" {% if decision == 'NO_MATCH' %}selected{% endif %}>NO_MATCH</option></select>
+    <select name="sampled" class="form-select"><option value="">All rows</option><option value="1" {% if sampled == '1' %}selected{% endif %}>Sampled only</option></select>
+    <input name="days" type="number" min="1" max="365" value="{{ days }}" class="form-input w-24">
+    <button class="btn-primary">Filter</button>
+  </form>
+
+  <div class="mb-4 flex flex-wrap gap-2 text-xs">
+    {% for row in summary %}<span class="rounded-lg border border-gray-200 bg-white px-3 py-1 font-semibold">{{ row.filter_decision }}: {{ row.n }}</span>{% endfor %}
+  </div>
+
+  <section class="card-table">
+    <div class="table-scroll">
+      <table class="w-full text-sm table-min-wide">
+        <thead class="tbl-head"><tr><th class="tbl-th">Title</th><th class="tbl-th">Company</th><th class="tbl-th">Platform</th><th class="tbl-th">Decision</th><th class="tbl-th">Reason</th><th class="tbl-th">Date</th><th class="tbl-th-right">Action</th></tr></thead>
+        <tbody>
+          {% for row in rows %}
+          <tr class="tbl-row align-top">
+            <td class="tbl-td font-semibold text-gray-900">{{ row.job_title }}{% if row.is_sampled %}<span class="ml-2 badge-yellow">Sample</span>{% endif %}<div class="text-xs text-gray-400">{{ row.department|default:"" }}</div></td>
+            <td class="tbl-td">{{ row.company_name }}</td>
+            <td class="tbl-td font-mono text-xs">{{ row.platform_slug }}</td>
+            <td class="tbl-td">{% if row.filter_decision == 'NO_MATCH' %}<span class="badge-red">NO_MATCH</span>{% else %}<span class="badge-gray">COLD</span>{% endif %}</td>
+            <td class="tbl-td max-w-md text-xs text-gray-600">{{ row.filter_reason }}{% if row.matched_negative %}<div class="text-red-700">negative: {{ row.matched_negative }}</div>{% endif %}</td>
+            <td class="tbl-td text-xs text-gray-500">{{ row.skipped_at|timesince }} ago</td>
+            <td class="tbl-td-right">
+              {% if row.raw_job_id %}
+              <form method="post" action="{% url 'harvest-skipped-title-recover' row.pk %}" onsubmit="return confirm('Recover this RawJob and queue one JD fetch?');">{% csrf_token %}<button class="btn-secondary btn-sm">Recover</button></form>
+              {% else %}<span class="text-xs text-gray-400">No RawJob</span>{% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="tbl-empty">No skipped titles match this filter.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+<div class="container mx-auto px-4 max-w-6xl">
+  <div class="page-header mb-5">
+    <h1 class="text-2xl font-bold text-gray-900">Filter Snapshot</h1>
+    <p class="font-mono text-xs text-gray-500 mt-1">{{ snapshot.snapshot_id }}</p>
+  </div>
+  {% include 'harvest/_selective_filter_nav.html' %}
+  <div class="mb-5 grid gap-3 md:grid-cols-3">
+    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Taken</p><p class="font-semibold">{{ snapshot.taken_at }}</p></div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Batch</p><p class="font-semibold">{% if snapshot.batch_id %}#{{ snapshot.batch_id }}{% else %}—{% endif %}</p></div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Phrase Hash</p><p class="font-mono text-xs">{{ snapshot.phrase_hash }}</p></div>
+  </div>
+  <section class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Categories</h2>
+    <div class="mt-4 space-y-4">
+      {% for cat in categories %}
+      <div class="rounded-lg border border-gray-200 p-3">
+        <div class="font-semibold text-gray-900">{{ cat.name }} <span class="font-mono text-xs text-gray-400">{{ cat.slug }}</span></div>
+        <div class="mt-2 grid gap-3 md:grid-cols-2 text-xs">
+          <div><p class="font-bold text-gray-600">Include</p><p class="mt-1 text-gray-600">{{ cat.include_phrases|join:", " }}</p></div>
+          <div><p class="font-bold text-gray-600">Exclude</p><p class="mt-1 text-gray-600">{{ cat.exclude_phrases|join:", "|default:"none" }}</p></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+  <section class="mt-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Hard Negatives</h2>
+    <p class="mt-2 text-xs text-gray-600">{{ hard_negatives|join:", " }}</p>
+  </section>
+</div>
+{% endblock %}

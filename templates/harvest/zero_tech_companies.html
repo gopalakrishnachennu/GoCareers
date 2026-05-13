@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+<div class="container mx-auto px-4 max-w-7xl">
+  <div class="page-header mb-5">
+    <h1 class="text-2xl font-bold text-gray-900">Zero-Tech Companies</h1>
+    <p class="text-sm text-gray-500 mt-0.5">Labels that repeatedly produce no matched technical roles. Skips always expire.</p>
+  </div>
+  {% include 'harvest/_selective_filter_nav.html' %}
+
+  {% if messages %}{% for message in messages %}
+  <div class="mb-4 rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% else %}border-green-200 bg-green-50 text-green-700{% endif %}">{{ message }}</div>
+  {% endfor %}{% endif %}
+
+  <form method="get" class="mb-4 grid gap-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm md:grid-cols-[minmax(0,1fr)_auto_auto]">
+    <input name="q" value="{{ q }}" class="form-input" placeholder="Search company">
+    <select name="platform" class="form-select"><option value="">All platforms</option>{% for p in platforms %}<option value="{{ p.slug }}" {% if platform == p.slug %}selected{% endif %}>{{ p.slug }}</option>{% endfor %}</select>
+    <button class="btn-primary">Filter</button>
+  </form>
+
+  <section class="card-table">
+    <div class="table-scroll">
+      <table class="w-full text-sm table-min-wide">
+        <thead class="tbl-head"><tr><th class="tbl-th">Company</th><th class="tbl-th">Platform</th><th class="tbl-th">Zero-Tech Count</th><th class="tbl-th">Recent skipped titles</th><th class="tbl-th">Skip</th><th class="tbl-th">Expires</th><th class="tbl-th-right">Actions</th></tr></thead>
+        <tbody>
+          {% for label in rows %}
+          <tr class="tbl-row">
+            <td class="tbl-td font-semibold text-gray-900">{{ label.company.name }}</td>
+            <td class="tbl-td font-mono text-xs">{{ label.platform.slug|default:"—" }}</td>
+            <td class="tbl-td">{{ label.consecutive_zero_tech_fetches }}</td>
+            <td class="tbl-td max-w-md">
+              {% if label.recent_skipped_titles %}
+              <ul class="space-y-1 text-xs text-gray-600">
+                {% for skipped in label.recent_skipped_titles %}
+                <li><span class="font-semibold">{{ skipped.filter_decision }}</span> · {{ skipped.job_title|truncatechars:80 }}</li>
+                {% endfor %}
+              </ul>
+              {% else %}
+              <span class="text-xs text-gray-400">No skipped-title history</span>
+              {% endif %}
+            </td>
+            <td class="tbl-td">{% if label.skip_in_selective_harvest %}<span class="badge-yellow">Skipped</span>{% else %}<span class="badge-green">Included</span>{% endif %}</td>
+            <td class="tbl-td text-xs text-gray-500">{% if label.skip_expires_at %}{{ label.skip_expires_at }}{% else %}—{% endif %}</td>
+            <td class="tbl-td-right">
+              <div class="flex justify-end gap-2">
+                <form method="post">{% csrf_token %}<input type="hidden" name="label_id" value="{{ label.pk }}"><input type="hidden" name="action" value="skip"><select name="days" class="form-select text-xs"><option value="30">30d</option><option value="60">60d</option><option value="90">90d</option></select><button class="btn-secondary btn-sm">Skip</button></form>
+                <form method="post">{% csrf_token %}<input type="hidden" name="label_id" value="{{ label.pk }}"><input type="hidden" name="action" value="reset"><button class="btn-secondary btn-sm">Reset</button></form>
+              </div>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="tbl-empty">No zero-tech labels currently need review.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

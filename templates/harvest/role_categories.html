@@ -1,0 +1,81 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+<div class="container mx-auto px-4 max-w-7xl">
+  <div class="page-header flex items-start justify-between mb-5">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Selective Filter</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Configure harvest role phrases and test titles before they affect JD fetching.</p>
+    </div>
+    <a href="{% url 'harvest-role-category-create' %}" class="btn-primary">Add Category</a>
+  </div>
+  {% include 'harvest/_selective_filter_nav.html' %}
+
+  {% if messages %}
+    {% for message in messages %}
+    <div class="mb-4 rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% else %}border-green-200 bg-green-50 text-green-700{% endif %}">{{ message }}</div>
+    {% endfor %}
+  {% endif %}
+
+  <section class="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Live Title Tester</h2>
+    <div class="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
+      <input id="title-test-title" class="form-input" placeholder="Senior DevOps Engineer">
+      <input id="title-test-department" class="form-input" placeholder="Department, optional">
+      <button type="button" id="title-test-button" class="btn-primary">Test</button>
+    </div>
+    <div id="title-test-result" class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">Type a title and run the test.</div>
+  </section>
+
+  <section class="card-table">
+    <div class="table-scroll">
+      <table class="w-full text-sm table-min-wide">
+        <thead class="tbl-head">
+          <tr>
+            <th class="tbl-th">Category</th>
+            <th class="tbl-th">Phrases</th>
+            <th class="tbl-th">Priority</th>
+            <th class="tbl-th">Matched 7d</th>
+            <th class="tbl-th">Matched 30d</th>
+            <th class="tbl-th">Status</th>
+            <th class="tbl-th-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in categories %}
+          <tr class="tbl-row">
+            <td class="tbl-td">
+              <div class="font-semibold text-gray-900">{{ row.obj.name }}</div>
+              <div class="font-mono text-xs text-gray-400">{{ row.obj.slug }}</div>
+            </td>
+            <td class="tbl-td text-xs text-gray-600">{{ row.include_count }} include · {{ row.exclude_count }} exclude</td>
+            <td class="tbl-td">{{ row.obj.priority }}</td>
+            <td class="tbl-td">{{ row.matched_7d }}</td>
+            <td class="tbl-td">{{ row.matched_30d }}</td>
+            <td class="tbl-td">{% if row.obj.is_active %}<span class="badge-green">Active</span>{% else %}<span class="badge-gray">Disabled</span>{% endif %}</td>
+            <td class="tbl-td-right"><a href="{% url 'harvest-role-category-edit' row.obj.pk %}" class="link-action">Edit</a></td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="tbl-empty">No role categories configured.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+document.getElementById('title-test-button')?.addEventListener('click', async () => {
+  const title = document.getElementById('title-test-title').value;
+  const department = document.getElementById('title-test-department').value;
+  const box = document.getElementById('title-test-result');
+  const url = new URL("{% url 'harvest-title-test-api' %}", window.location.origin);
+  url.searchParams.set('title', title);
+  url.searchParams.set('department', department);
+  box.textContent = 'Testing...';
+  const res = await fetch(url);
+  const data = await res.json();
+  box.innerHTML = `<span class="font-bold text-gray-900">${data.decision}</span>${data.category ? ' · ' + data.category : ''}<br><span class="text-xs">${data.reason}</span>`;
+});
+</script>
+{% endblock %}

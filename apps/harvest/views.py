@@ -6,6 +6,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.cache import cache
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Avg, Count, F, Q, Sum, Value, Max, Min
 from django.db.models.functions import Coalesce, Length, Trim
@@ -22,7 +23,7 @@ from django.views.generic import CreateView, DetailView, ListView, TemplateView,
 from core.http import redirect_with_task_progress
 from users.models import User
 
-from .forms import JobBoardPlatformForm
+from .forms import HarvestRoleCategoryForm, JobBoardPlatformForm
 from .models import (
     CompanyFetchRun,
     CompanyPlatformLabel,
@@ -30,7 +31,10 @@ from .models import (
     DuplicateResolution,
     FetchBatch,
     HarvestEngineConfig,
+    HarvestFilterSnapshot,
     HarvestOpsRun,
+    HarvestRoleCategory,
+    HarvestSkippedTitle,
     JobBoardPlatform,
     RawJob,
     RawJobDuplicatePair,
@@ -1338,6 +1342,27 @@ class FetchBatchDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
             )
             .order_by("-total")
         )
+
+        snapshot_ids = list(batch.filter_snapshots.values_list("snapshot_id", flat=True))
+        filter_qs = RawJob.objects.filter(filter_snapshot_id__in=snapshot_ids) if snapshot_ids else RawJob.objects.none()
+        filter_counts = {
+            row["filter_decision"] or "UNCLASSIFIED": row["n"]
+            for row in filter_qs.values("filter_decision").annotate(n=Count("id"))
+        }
+        list_rows = sum(filter_counts.values())
+        jd_skipped = filter_qs.filter(jd_fetch_skipped=True).count()
+        sampled = HarvestSkippedTitle.objects.filter(batch_id=batch.pk, is_sampled=True).count()
+        ctx["filter_stats"] = {
+            "list_rows": list_rows,
+            "strong": filter_counts.get("STRONG", 0),
+            "possible": filter_counts.get("POSSIBLE", 0),
+            "unknown": filter_counts.get("UNKNOWN", 0),
+            "cold": filter_counts.get("COLD", 0),
+            "no_match": filter_counts.get("NO_MATCH", 0),
+            "jd_fetches_avoided": jd_skipped,
+            "sampled": sampled,
+            "snapshot_count": len(snapshot_ids),
+        }
 
         since_7d = timezone.now() - timedelta(days=7)
         ctx["platform_health_7d"] = (
@@ -3589,6 +3614,286 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             )
 
         return redirect("harvest-engine-config")
+
+
+# ── Selective Harvest Review UI ──────────────────────────────────────────────
+
+class SelectiveRoleCategoryListView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/role_categories.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        since_7d = timezone.now() - timedelta(days=7)
+        since_30d = timezone.now() - timedelta(days=30)
+        stats_7d = {
+            row["role_category"]: row["n"]
+            for row in RawJob.objects.filter(fetched_at__gte=since_7d)
+            .exclude(role_category__isnull=True)
+            .values("role_category")
+            .annotate(n=Count("id"))
+        }
+        stats_30d = {
+            row["role_category"]: row["n"]
+            for row in RawJob.objects.filter(fetched_at__gte=since_30d)
+            .exclude(role_category__isnull=True)
+            .values("role_category")
+            .annotate(n=Count("id"))
+        }
+        categories = []
+        for cat in HarvestRoleCategory.objects.order_by("priority", "name"):
+            categories.append({
+                "obj": cat,
+                "include_count": len(cat.include_phrases or []),
+                "exclude_count": len(cat.exclude_phrases or []),
+                "matched_7d": stats_7d.get(cat.slug, 0),
+                "matched_30d": stats_30d.get(cat.slug, 0),
+            })
+        ctx["categories"] = categories
+        return ctx
+
+
+class SelectiveRoleCategoryCreateView(SuperuserRequiredMixin, CreateView):
+    model = HarvestRoleCategory
+    form_class = HarvestRoleCategoryForm
+    template_name = "harvest/role_category_form.html"
+    success_url = reverse_lazy("harvest-role-categories")
+
+    def form_valid(self, form):
+        messages.success(self.request, "Role category created.")
+        return super().form_valid(form)
+
+
+class SelectiveRoleCategoryUpdateView(SuperuserRequiredMixin, UpdateView):
+    model = HarvestRoleCategory
+    form_class = HarvestRoleCategoryForm
+    template_name = "harvest/role_category_form.html"
+    success_url = reverse_lazy("harvest-role-categories")
+
+    def form_valid(self, form):
+        messages.success(self.request, "Role category saved.")
+        return super().form_valid(form)
+
+
+class SelectiveTitleTestApiView(SuperuserRequiredMixin, View):
+    def get(self, request, *args, **kwargs):
+        from .role_filter import classify_title
+
+        title = request.GET.get("title", "")
+        department = request.GET.get("department", "")
+        label_id = request.GET.get("label_id", "")
+        custom_phrases: list[str] = []
+        if label_id:
+            label = CompanyPlatformLabel.objects.filter(pk=label_id).first()
+            if label:
+                custom_phrases = label.custom_include_phrases or []
+        cfg = HarvestEngineConfig.get()
+        categories = list(
+            HarvestRoleCategory.objects.filter(is_active=True)
+            .order_by("priority", "name")
+            .values("name", "slug", "priority", "include_phrases", "exclude_phrases")
+        )
+        hard_negatives = cfg.hard_negative_phrases if isinstance(cfg.hard_negative_phrases, list) else []
+        result = classify_title(
+            title=title,
+            department=department,
+            categories=categories,
+            hard_negatives=hard_negatives,
+            custom_phrases=custom_phrases,
+            snapshot_id=None,
+        )
+        return JsonResponse({
+            "decision": result.decision,
+            "category": result.category,
+            "matched_phrase": result.matched_phrase,
+            "matched_negative": result.matched_negative,
+            "reason": result.reason,
+            "snapshot_id": result.snapshot_id,
+        })
+
+
+class SkippedTitlesAuditView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/skipped_titles.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        q = (self.request.GET.get("q") or "").strip()
+        platform = (self.request.GET.get("platform") or "").strip()
+        decision = (self.request.GET.get("decision") or "").strip().upper()
+        sampled = (self.request.GET.get("sampled") or "").strip()
+        try:
+            days = int((self.request.GET.get("days") or "30") or 30)
+        except ValueError:
+            days = 30
+        days = max(1, min(days, 365))
+
+        qs = HarvestSkippedTitle.objects.select_related("raw_job").filter(
+            skipped_at__gte=timezone.now() - timedelta(days=days)
+        )
+        if q:
+            qs = qs.filter(
+                Q(job_title__icontains=q)
+                | Q(company_name__icontains=q)
+                | Q(filter_reason__icontains=q)
+                | Q(matched_negative__icontains=q)
+            )
+        if platform:
+            qs = qs.filter(platform_slug=platform)
+        if decision in {"COLD", "NO_MATCH"}:
+            qs = qs.filter(filter_decision=decision)
+        if sampled == "1":
+            qs = qs.filter(is_sampled=True)
+
+        paginator = Paginator(qs.order_by("-skipped_at"), 50)
+        page_obj = paginator.get_page(self.request.GET.get("page"))
+        ctx.update({
+            "page_obj": page_obj,
+            "rows": page_obj.object_list,
+            "q": q,
+            "platform": platform,
+            "decision": decision,
+            "sampled": sampled,
+            "days": days,
+            "platforms": (
+                HarvestSkippedTitle.objects.exclude(platform_slug="")
+                .values_list("platform_slug", flat=True)
+                .distinct()
+                .order_by("platform_slug")
+            ),
+            "summary": qs.values("filter_decision").annotate(n=Count("id")).order_by("filter_decision"),
+        })
+        return ctx
+
+
+class SkippedTitleRecoverView(SuperuserRequiredMixin, View):
+    def post(self, request, pk, *args, **kwargs):
+        skipped = get_object_or_404(HarvestSkippedTitle.objects.select_related("raw_job"), pk=pk)
+        raw_job = skipped.raw_job
+        if not raw_job:
+            messages.error(request, "Cannot recover this row because its RawJob link is missing.")
+            return redirect("harvest-skipped-titles")
+
+        RawJob.objects.filter(pk=raw_job.pk).update(
+            is_cold=False,
+            jd_fetch_skipped=False,
+            filter_decision="POSSIBLE",
+            filter_reason="Manually recovered from skipped-title audit",
+            jd_backfill_locked_at=None,
+        )
+        from .tasks import backfill_single_rawjob_description_task
+
+        task = backfill_single_rawjob_description_task.delay(raw_job.pk)
+        messages.success(
+            request,
+            f"RawJob #{raw_job.pk} marked POSSIBLE and queued for single JD fetch ({task.id}).",
+        )
+        return redirect(request.META.get("HTTP_REFERER") or "harvest-skipped-titles")
+
+
+class ZeroTechCompaniesView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/zero_tech_companies.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        q = (self.request.GET.get("q") or "").strip()
+        platform = (self.request.GET.get("platform") or "").strip()
+        qs = CompanyPlatformLabel.objects.select_related("company", "platform").filter(
+            Q(consecutive_zero_tech_fetches__gt=0) | Q(skip_in_selective_harvest=True)
+        )
+        if q:
+            qs = qs.filter(company__name__icontains=q)
+        if platform:
+            qs = qs.filter(platform__slug=platform)
+
+        paginator = Paginator(
+            qs.order_by("-skip_in_selective_harvest", "-consecutive_zero_tech_fetches", "company__name"),
+            50,
+        )
+        page_obj = paginator.get_page(self.request.GET.get("page"))
+        labels = list(page_obj.object_list)
+        title_map: dict[tuple[str, str], list[HarvestSkippedTitle]] = {}
+        if labels:
+            company_names = [label.company.name for label in labels if label.company_id]
+            platform_slugs = [label.platform.slug for label in labels if label.platform_id]
+            recent_titles = (
+                HarvestSkippedTitle.objects
+                .filter(company_name__in=company_names, platform_slug__in=platform_slugs)
+                .order_by("-skipped_at")[:500]
+            )
+            for row in recent_titles:
+                key = (row.company_name, row.platform_slug)
+                bucket = title_map.setdefault(key, [])
+                if len(bucket) < 10:
+                    bucket.append(row)
+            for label in labels:
+                label.recent_skipped_titles = title_map.get(
+                    (label.company.name, label.platform.slug if label.platform_id else ""),
+                    [],
+                )
+        ctx.update({
+            "rows": labels,
+            "page_obj": page_obj,
+            "q": q,
+            "platform": platform,
+            "platforms": JobBoardPlatform.objects.filter(labels__isnull=False).distinct().order_by("slug"),
+        })
+        return ctx
+
+    def post(self, request, *args, **kwargs):
+        label = get_object_or_404(CompanyPlatformLabel, pk=request.POST.get("label_id"))
+        action = request.POST.get("action")
+        if action == "skip":
+            try:
+                days = int(request.POST.get("days") or 30)
+            except ValueError:
+                days = 30
+            days = max(1, min(days, 365))
+            label.skip_in_selective_harvest = True
+            label.skip_expires_at = timezone.now() + timedelta(days=days)
+            label.zero_tech_last_flagged_at = timezone.now()
+            label.save(update_fields=["skip_in_selective_harvest", "skip_expires_at", "zero_tech_last_flagged_at"])
+            messages.success(request, f"{label.company.name} excluded from selective harvest for {days} days.")
+        elif action == "reset":
+            label.skip_in_selective_harvest = False
+            label.skip_expires_at = None
+            label.consecutive_zero_tech_fetches = 0
+            label.zero_tech_last_flagged_at = None
+            label.save(update_fields=[
+                "skip_in_selective_harvest",
+                "skip_expires_at",
+                "consecutive_zero_tech_fetches",
+                "zero_tech_last_flagged_at",
+            ])
+            messages.success(request, f"{label.company.name} reset and re-included.")
+        else:
+            messages.error(request, "Unsupported zero-tech action.")
+        return redirect(request.META.get("HTTP_REFERER") or "harvest-zero-tech-companies")
+
+
+class FilterSnapshotListView(SuperuserRequiredMixin, TemplateView):
+    template_name = "harvest/filter_snapshots.html"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        qs = HarvestFilterSnapshot.objects.select_related("batch").order_by("-taken_at")
+        paginator = Paginator(qs, 50)
+        page_obj = paginator.get_page(self.request.GET.get("page"))
+        ctx.update({
+            "rows": page_obj.object_list,
+            "page_obj": page_obj,
+        })
+        return ctx
+
+
+class FilterSnapshotDetailView(SuperuserRequiredMixin, DetailView):
+    model = HarvestFilterSnapshot
+    template_name = "harvest/filter_snapshot_detail.html"
+    context_object_name = "snapshot"
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["categories"] = self.object.get_categories()
+        ctx["hard_negatives"] = self.object.get_hard_negatives()
+        return ctx
 
 
 # ── Duplicate Engine Views ────────────────────────────────────────────────────

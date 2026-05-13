@@ -334,6 +334,287 @@ class HarvestEngineHardeningTests(TestCase):
         self.assertFalse(eligible.filter(pk=fresh.pk).exists())
 
 
+class SelectiveHarvestEngineTests(TestCase):
+    def setUp(self):
+        from companies.models import Company
+        from harvest.models import CompanyPlatformLabel, HarvestEngineConfig, HarvestRoleCategory, JobBoardPlatform
+
+        self.company = Company.objects.create(name="Selective Co")
+        self.platform, _ = JobBoardPlatform.objects.update_or_create(
+            slug="greenhouse",
+            defaults={
+                "name": "Greenhouse",
+                "title_in_list": True,
+                "unknown_jd_budget_per_run": 1,
+            },
+        )
+        self.label = CompanyPlatformLabel.objects.create(
+            company=self.company,
+            platform=self.platform,
+            tenant_id="selective",
+        )
+        HarvestRoleCategory.objects.update_or_create(
+            slug="devops",
+            defaults={
+                "name": "DevOps",
+                "include_phrases": ["devops engineer", "site reliability engineer"],
+                "exclude_phrases": ["sales"],
+                "is_active": True,
+            },
+        )
+        cfg = HarvestEngineConfig.get()
+        cfg.hard_negative_phrases = ["registered nurse", "warehouse associate"]
+        cfg.save()
+
+    def _raw_job(self, **overrides):
+        from harvest.models import RawJob
+
+        defaults = {
+            "company": self.company,
+            "platform_label": self.label,
+            "job_platform": self.platform,
+            "platform_slug": self.platform.slug,
+            "company_name": self.company.name,
+            "title": "Warehouse Associate",
+            "url_hash": overrides.pop("url_hash", "selective-hash"),
+            "original_url": overrides.pop("original_url", "https://selective.example/jobs/1"),
+            "has_description": False,
+            "is_priority": True,
+        }
+        defaults.update(overrides)
+        return RawJob.objects.create(**defaults)
+
+    def test_classifier_floors_to_possible_when_include_and_category_exclude_match(self):
+        from harvest.models import HarvestFilterSnapshot
+        from harvest.role_filter import classify_title
+
+        snapshot = HarvestFilterSnapshot.create_snapshot()
+        result = classify_title(
+            title="DevOps Engineer Sales Tools",
+            categories=snapshot.get_categories(),
+            hard_negatives=["sales tools"],
+            snapshot_id=str(snapshot.snapshot_id),
+        )
+
+        self.assertEqual(result.decision, "POSSIBLE")
+        self.assertEqual(result.category, "devops")
+
+    def test_hard_negative_without_include_is_no_match(self):
+        from harvest.models import HarvestFilterSnapshot
+        from harvest.role_filter import classify_title
+
+        snapshot = HarvestFilterSnapshot.create_snapshot()
+        result = classify_title(
+            title="Registered Nurse",
+            categories=snapshot.get_categories(),
+            hard_negatives=snapshot.get_hard_negatives(),
+            snapshot_id=str(snapshot.snapshot_id),
+        )
+
+        self.assertEqual(result.decision, "NO_MATCH")
+
+    def test_backfill_eligible_excludes_cold_and_skipped_rows(self):
+        from harvest.tasks import _backfill_eligible_queryset
+
+        cold = self._raw_job(url_hash="cold", original_url="https://selective.example/jobs/cold", is_cold=True)
+        skipped = self._raw_job(
+            url_hash="skipped",
+            original_url="https://selective.example/jobs/skipped",
+            jd_fetch_skipped=True,
+        )
+        eligible = self._raw_job(
+            url_hash="eligible",
+            original_url="https://selective.example/jobs/eligible",
+        )
+
+        qs = _backfill_eligible_queryset(None)
+        self.assertFalse(qs.filter(pk=cold.pk).exists())
+        self.assertFalse(qs.filter(pk=skipped.pk).exists())
+        self.assertTrue(qs.filter(pk=eligible.pk).exists())
+
+    def test_selective_gui_title_tester_requires_superuser_and_returns_decision(self):
+        from django.contrib.auth import get_user_model
+
+        user = get_user_model().objects.create_superuser("admin@example.com", "admin@example.com", "pw")
+        self.client.force_login(user)
+        response = self.client.get(reverse("harvest-title-test-api"), {"title": "Site Reliability Engineer"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["decision"], "STRONG")
+        self.assertEqual(response.json()["category"], "devops")
+
+    def test_commands_support_dry_run_paths(self):
+        from harvest.models import HarvestFilterSnapshot, HarvestSkippedTitle
+
+        raw = self._raw_job(filter_decision="NO_MATCH", jd_fetch_skipped=True, is_cold=True)
+        HarvestSkippedTitle.objects.create(
+            raw_job=raw,
+            company_name=self.company.name,
+            platform_slug=self.platform.slug,
+            job_title=raw.title,
+            filter_decision="NO_MATCH",
+            filter_reason="test",
+            is_sampled=True,
+        )
+        snapshot = HarvestFilterSnapshot.create_snapshot()
+
+        out = StringIO()
+        call_command("audit_cold_sample", "--dry-run", stdout=out)
+        self.assertIn("NO_MATCH", out.getvalue())
+
+        out = StringIO()
+        call_command("export_filter_snapshot", "--snapshot-id", str(snapshot.snapshot_id), stdout=out)
+        self.assertIn("phrase_hash", out.getvalue())
+
+        out = StringIO()
+        call_command("purge_skipped_titles", "--days", "1", "--dry-run", stdout=out)
+        self.assertIn("dry_run=True", out.getvalue())
+
+    def test_title_tester_does_not_create_persistent_snapshot(self):
+        from django.contrib.auth import get_user_model
+        from harvest.models import HarvestFilterSnapshot
+
+        user = get_user_model().objects.create_superuser("snap@example.com", "snap@example.com", "pw")
+        self.client.force_login(user)
+        before = HarvestFilterSnapshot.objects.count()
+        response = self.client.get(reverse("harvest-title-test-api"), {"title": "Site Reliability Engineer"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(HarvestFilterSnapshot.objects.count(), before)
+
+    def test_classify_existing_does_not_mark_existing_jd_as_skipped(self):
+        from harvest.models import RawJob
+
+        raw = self._raw_job(
+            url_hash="has-jd",
+            original_url="https://selective.example/jobs/has-jd",
+            title="Registered Nurse",
+            description="Existing description was fetched before classification.",
+            has_description=True,
+        )
+        call_command("classify_existing_rawjobs", "--limit", "1")
+
+        raw.refresh_from_db()
+        self.assertEqual(raw.filter_decision, "NO_MATCH")
+        self.assertTrue(raw.is_cold)
+        self.assertFalse(raw.jd_fetch_skipped)
+
+    def test_reclassify_stale_can_include_unclassified_null_snapshot_rows(self):
+        raw = self._raw_job(
+            url_hash="null-snapshot",
+            original_url="https://selective.example/jobs/null-snapshot",
+            title="Registered Nurse",
+            filter_decision=None,
+            filter_snapshot_id=None,
+        )
+        call_command("reclassify_stale_rawjobs", "--include-unclassified", "--limit", "1")
+
+        raw.refresh_from_db()
+        self.assertEqual(raw.filter_decision, "NO_MATCH")
+        self.assertIsNotNone(raw.filter_snapshot_id)
+
+    def test_fetch_all_bypasses_selective_jd_skip(self):
+        from harvest.models import HarvestEngineConfig, RawJob
+        from harvest.tasks import fetch_raw_jobs_for_company_task
+
+        cfg = HarvestEngineConfig.get()
+        cfg.selective_filter_enabled = True
+        cfg.filter_audit_mode = False
+        cfg.hard_negative_phrases = ["registered nurse"]
+        cfg.save()
+        self.platform.title_in_list = True
+        self.platform.save(update_fields=["title_in_list"])
+
+        class _FakeHarvester:
+            last_total_available = 1
+            last_detail_fetched = 1
+
+            def fetch_jobs(self, *args, **kwargs):
+                return [{
+                    "original_url": "https://selective.example/jobs/full-fetch",
+                    "apply_url": "https://selective.example/jobs/full-fetch",
+                    "external_id": "full-fetch",
+                    "title": "Registered Nurse",
+                    "company_name": "Selective Co",
+                    "description": "Full fetch must keep this detail text.",
+                }]
+
+        with patch("harvest.harvesters.get_harvester", return_value=_FakeHarvester()):
+            out = fetch_raw_jobs_for_company_task.apply(
+                kwargs={"label_pk": self.label.pk, "fetch_all": True}
+            ).get()
+
+        raw = RawJob.objects.get(platform_label=self.label, external_id="full-fetch")
+        self.assertEqual(raw.filter_decision, "NO_MATCH")
+        self.assertFalse(raw.is_cold)
+        self.assertFalse(raw.jd_fetch_skipped)
+        self.assertIn("Full fetch", raw.description)
+        self.assertTrue(out["filter"]["fetch_all_bypass"])
+
+    def test_title_not_in_list_platform_classifies_after_detail_without_marking_jd_skipped(self):
+        from harvest.models import HarvestEngineConfig, JobBoardPlatform, RawJob
+        from harvest.tasks import fetch_raw_jobs_for_company_task
+
+        platform = JobBoardPlatform.objects.create(
+            name="Detail First ATS",
+            slug="detail-first-ats",
+            title_in_list=False,
+            is_enabled=True,
+        )
+        self.label.platform = platform
+        self.label.save(update_fields=["platform"])
+        cfg = HarvestEngineConfig.get()
+        cfg.selective_filter_enabled = True
+        cfg.filter_audit_mode = False
+        cfg.hard_negative_phrases = ["registered nurse"]
+        cfg.save()
+
+        class _FakeHarvester:
+            last_total_available = 1
+            last_detail_fetched = 1
+
+            def fetch_jobs(self, *args, **kwargs):
+                return [{
+                    "original_url": "https://selective.example/jobs/detail-first",
+                    "apply_url": "https://selective.example/jobs/detail-first",
+                    "external_id": "detail-first",
+                    "title": "Registered Nurse",
+                    "company_name": "Selective Co",
+                    "description": "Detail was already fetched on this platform.",
+                }]
+
+        with patch("harvest.harvesters.get_harvester", return_value=_FakeHarvester()):
+            fetch_raw_jobs_for_company_task.apply(kwargs={"label_pk": self.label.pk}).get()
+
+        raw = RawJob.objects.get(platform_label=self.label, external_id="detail-first")
+        self.assertEqual(raw.filter_decision, "NO_MATCH")
+        self.assertTrue(raw.is_cold)
+        self.assertFalse(raw.jd_fetch_skipped)
+        self.assertIn("Detail was already fetched", raw.description)
+
+    def test_manual_recovery_single_fetch_queues_company_fallback_when_single_fetch_misses(self):
+        from harvest.tasks import backfill_single_rawjob_description_task
+
+        raw = self._raw_job(
+            url_hash="recover-fallback",
+            original_url="https://selective.example/jobs/recover-fallback",
+            filter_decision="POSSIBLE",
+            is_cold=False,
+            jd_fetch_skipped=False,
+        )
+        with patch(
+            "harvest.tasks._backfill_process_one_job",
+            return_value=("skipped", {"status": "skipped", "reason": "No description"}),
+        ), patch(
+            "harvest.tasks.fetch_raw_jobs_for_company_task.apply_async",
+            return_value=SimpleNamespace(id="fallback-task"),
+        ) as mocked:
+            result = backfill_single_rawjob_description_task(raw.pk)
+
+        self.assertEqual(result["fallback_company_fetch_task_id"], "fallback-task")
+        self.assertTrue(mocked.called)
+
+
 class RawJobPayloadArchiveTests(TestCase):
     def _raw_job(self):
         from companies.models import Company
