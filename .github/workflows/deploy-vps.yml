@@ -1,9 +1,11 @@
 name: Deploy to Hetzner VPS
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type DEPLOY to confirm production restart"
+        required: true
 
 concurrency:
   group: deploy-production
@@ -23,6 +25,10 @@ jobs:
           command_timeout: 30m
           script: |
             set -e
+            if [ "${{ github.event.inputs.confirm }}" != "DEPLOY" ]; then
+              echo "Refusing production deploy: confirmation input must be exactly DEPLOY."
+              exit 1
+            fi
             cd /opt/consulting
             git pull --ff-only origin main
             # Keep Redis/Postgres up during deploy. Never use `down` here; it
@@ -34,5 +40,18 @@ jobs:
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py repair_harvest_migration_state
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py migrate --no-input
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps -e RUN_MIGRATIONS=0 web python manage.py check
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.models import HarvestEngineConfig; cfg=HarvestEngineConfig.get(); cfg.worker_concurrency=2; cfg.task_rate_limit=3; cfg.api_stagger_ms=1000; cfg.scraper_stagger_ms=5000; cfg.full_fetch_cooldown_minutes=360; cfg.backfill_jd_workers=1; cfg.auto_backfill_jd=False; cfg.auto_sync_to_pool=False; cfg.save(); print('Applied strict harvest uptime config')"
-            docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+            RUN_MIGRATIONS=0 docker compose -f docker-compose.prod.yml --env-file .env.production up -d
+            for i in $(seq 1 30); do
+              if curl -fsS --max-time 5 https://chennu.co/ >/dev/null; then
+                echo "Production health check passed."
+                exit 0
+              fi
+              echo "Waiting for production health check ($i/30)..."
+              sleep 2
+            done
+            docker compose -f docker-compose.prod.yml --env-file .env.production ps
+            docker compose -f docker-compose.prod.yml --env-file .env.production logs --tail=120 web
+            echo "Production deploy failed health check."
+            exit 1
