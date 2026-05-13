@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       platform_slug:
-        description: "Optional platform slug; blank samples all enabled platforms"
-        required: false
-        default: ""
+        description: "Single platform slug to smoke test"
+        required: true
+        default: "greenhouse"
       companies_per_platform:
         description: "Companies per platform"
         required: true
@@ -45,17 +45,110 @@ jobs:
             COMPANIES="${{ github.event.inputs.companies_per_platform }}"
             MAX_JOBS="${{ github.event.inputs.test_max_jobs }}"
             AUDIT_MODE="${{ github.event.inputs.audit_mode }}"
+            DC="docker compose -f docker-compose.prod.yml --env-file .env.production"
 
-            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.models import HarvestEngineConfig; cfg=HarvestEngineConfig.get(); cfg.selective_filter_enabled=True; cfg.filter_audit_mode=('$AUDIT_MODE' == 'true'); cfg.worker_concurrency=2; cfg.task_rate_limit=3; cfg.api_stagger_ms=1000; cfg.scraper_stagger_ms=5000; cfg.backfill_jd_workers=1; cfg.auto_backfill_jd=False; cfg.auto_sync_to_pool=False; cfg.save(); print('Selective smoke config applied', {'selective': cfg.selective_filter_enabled, 'audit': cfg.filter_audit_mode, 'task_rate_limit': cfg.task_rate_limit})"
+            case "$COMPANIES" in ''|*[!0-9]*) echo "companies_per_platform must be numeric"; exit 2;; esac
+            case "$MAX_JOBS" in ''|*[!0-9]*) echo "test_max_jobs must be numeric"; exit 2;; esac
+            if [ "$COMPANIES" -lt 1 ] || [ "$COMPANIES" -gt 2 ]; then
+              echo "Strict smoke guard: companies_per_platform must be 1 or 2"
+              exit 2
+            fi
+            if [ "$MAX_JOBS" -lt 1 ] || [ "$MAX_JOBS" -gt 25 ]; then
+              echo "Strict smoke guard: test_max_jobs must be between 1 and 25"
+              exit 2
+            fi
+            if [ -z "$PLATFORM" ]; then
+              echo "Strict smoke guard: platform_slug is required; do not run all platforms from smoke"
+              exit 2
+            fi
 
-            TASK_ID="$(docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.tasks import fetch_raw_jobs_batch_task; platform='$PLATFORM' or None; task=fetch_raw_jobs_batch_task.delay(platform_slug=platform, batch_name='Selective Harvest Smoke', test_mode=True, test_max_jobs=int('$MAX_JOBS'), companies_per_platform=int('$COMPANIES'), fetch_all=False, run_kind='platform_smoke'); print(task.id)" | tail -n 1)"
+            AUDIT_MODE="$AUDIT_MODE" $DC exec -T web python manage.py shell <<'PY'
+            import os
+            from harvest.models import HarvestEngineConfig
+
+            cfg = HarvestEngineConfig.get()
+            cfg.selective_filter_enabled = True
+            cfg.filter_audit_mode = os.environ["AUDIT_MODE"] == "true"
+            cfg.worker_concurrency = 2
+            cfg.task_rate_limit = 3
+            cfg.api_stagger_ms = 1000
+            cfg.scraper_stagger_ms = 5000
+            cfg.backfill_jd_workers = 1
+            cfg.auto_backfill_jd = False
+            cfg.auto_sync_to_pool = False
+            cfg.save()
+            print("Selective smoke config applied", {
+                "selective": cfg.selective_filter_enabled,
+                "audit": cfg.filter_audit_mode,
+                "task_rate_limit": cfg.task_rate_limit,
+                "worker_concurrency": cfg.worker_concurrency,
+            })
+            PY
+
+            TASK_ID="$(
+              PLATFORM="$PLATFORM" COMPANIES="$COMPANIES" MAX_JOBS="$MAX_JOBS" \
+                $DC exec -T web python manage.py shell <<'PY'
+            import os
+            from harvest.tasks import fetch_raw_jobs_batch_task
+
+            task = fetch_raw_jobs_batch_task.delay(
+                platform_slug=os.environ["PLATFORM"],
+                batch_name="Selective Harvest Smoke",
+                test_mode=True,
+                test_max_jobs=int(os.environ["MAX_JOBS"]),
+                companies_per_platform=int(os.environ["COMPANIES"]),
+                fetch_all=False,
+                run_kind="platform_smoke",
+            )
+            print(task.id)
+            PY
+            )"
+            TASK_ID="$(printf '%s\n' "$TASK_ID" | tail -n 1)"
             echo "Queued selective harvest smoke task: ${TASK_ID}"
 
-            for i in $(seq 1 60); do
-              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from collections import Counter; from harvest.models import FetchBatch, RawJob, HarvestSkippedTitle; batch=FetchBatch.objects.filter(task_id='$TASK_ID').order_by('-created_at').first() or FetchBatch.objects.order_by('-created_at').first(); print('Batch:', {'id': batch.id if batch else None, 'status': batch.status if batch else None, 'total': batch.total_companies if batch else None, 'completed': batch.completed_companies if batch else None, 'failed': batch.failed_companies if batch else None}); print('RawJob total:', RawJob.objects.count()); print('Filter decisions:', dict(Counter(RawJob.objects.exclude(filter_decision__isnull=True).values_list('filter_decision', flat=True)))); print('JD skipped:', RawJob.objects.filter(jd_fetch_skipped=True).count()); print('Skipped title logs:', HarvestSkippedTitle.objects.count())"
-              STATUS="$(docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.models import FetchBatch; b=FetchBatch.objects.filter(task_id='$TASK_ID').order_by('-created_at').first() or FetchBatch.objects.order_by('-created_at').first(); print(b.status if b else 'MISSING')" | tail -n 1)"
+            BATCH_ID=""
+            STATUS="MISSING"
+            for i in $(seq 1 24); do
+              SUMMARY="$(
+                TASK_ID="$TASK_ID" PLATFORM="$PLATFORM" $DC exec -T web python manage.py shell <<'PY'
+            import os
+            from collections import Counter
+            from harvest.models import FetchBatch, HarvestSkippedTitle, RawJob
+
+            batch = (
+                FetchBatch.objects.filter(task_id=os.environ["TASK_ID"]).order_by("-created_at").first()
+                or FetchBatch.objects.filter(platform_filter=os.environ["PLATFORM"]).order_by("-created_at").first()
+            )
+            status = batch.status if batch else "MISSING"
+            print("Batch:", {
+                "id": batch.id if batch else None,
+                "status": status,
+                "total": batch.total_companies if batch else None,
+                "completed": batch.completed_companies if batch else None,
+                "failed": batch.failed_companies if batch else None,
+            })
+            print("RawJob total:", RawJob.objects.count())
+            print("Filter decisions:", dict(Counter(
+                RawJob.objects.exclude(filter_decision__isnull=True)
+                .values_list("filter_decision", flat=True)
+            )))
+            print("JD skipped:", RawJob.objects.filter(jd_fetch_skipped=True).count())
+            print("Skipped title logs:", HarvestSkippedTitle.objects.count())
+            print("STATUS_FOR_WORKFLOW:", status)
+            print("BATCH_ID_FOR_WORKFLOW:", batch.id if batch else "")
+            PY
+              )"
+              printf '%s\n' "$SUMMARY"
+              STATUS="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/STATUS_FOR_WORKFLOW:/ {print $2}' | tail -n 1)"
+              BATCH_ID="$(printf '%s\n' "$SUMMARY" | awk -F': ' '/BATCH_ID_FOR_WORKFLOW:/ {print $2}' | tail -n 1)"
               if [ "$STATUS" != "RUNNING" ]; then
                 break
               fi
-              sleep 15
+              sleep 30
             done
+
+            if [ "$STATUS" = "RUNNING" ]; then
+              echo "Smoke batch ${BATCH_ID:-unknown} exceeded the strict time limit; stopping it now."
+              $DC exec -T web python manage.py stop_fetch_batch --batch-id "${BATCH_ID:-0}"
+              exit 1
+            fi
