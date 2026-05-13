@@ -1,0 +1,61 @@
+name: Run - Selective Harvest Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform_slug:
+        description: "Optional platform slug; blank samples all enabled platforms"
+        required: false
+        default: ""
+      companies_per_platform:
+        description: "Companies per platform"
+        required: true
+        default: "1"
+      test_max_jobs:
+        description: "Max list jobs per sampled company"
+        required: true
+        default: "20"
+      audit_mode:
+        description: "true = classify only, false = actually skip cold/no-match JD fetch"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Queue selective harvest smoke on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 45m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            git pull --ff-only origin main
+
+            PLATFORM="${{ github.event.inputs.platform_slug }}"
+            COMPANIES="${{ github.event.inputs.companies_per_platform }}"
+            MAX_JOBS="${{ github.event.inputs.test_max_jobs }}"
+            AUDIT_MODE="${{ github.event.inputs.audit_mode }}"
+
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.models import HarvestEngineConfig; cfg=HarvestEngineConfig.get(); cfg.selective_filter_enabled=True; cfg.filter_audit_mode=('$AUDIT_MODE' == 'true'); cfg.worker_concurrency=2; cfg.task_rate_limit=3; cfg.api_stagger_ms=1000; cfg.scraper_stagger_ms=5000; cfg.backfill_jd_workers=1; cfg.auto_backfill_jd=False; cfg.auto_sync_to_pool=False; cfg.save(); print('Selective smoke config applied', {'selective': cfg.selective_filter_enabled, 'audit': cfg.filter_audit_mode, 'task_rate_limit': cfg.task_rate_limit})"
+
+            TASK_ID="$(docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.tasks import fetch_raw_jobs_batch_task; platform='$PLATFORM' or None; task=fetch_raw_jobs_batch_task.delay(platform_slug=platform, batch_name='Selective Harvest Smoke', test_mode=True, test_max_jobs=int('$MAX_JOBS'), companies_per_platform=int('$COMPANIES'), fetch_all=False, run_kind='platform_smoke'); print(task.id)" | tail -n 1)"
+            echo "Queued selective harvest smoke task: ${TASK_ID}"
+
+            for i in $(seq 1 60); do
+              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from collections import Counter; from harvest.models import FetchBatch, RawJob, HarvestSkippedTitle; batch=FetchBatch.objects.filter(task_id='$TASK_ID').order_by('-created_at').first() or FetchBatch.objects.order_by('-created_at').first(); print('Batch:', {'id': batch.id if batch else None, 'status': batch.status if batch else None, 'total': batch.total_companies if batch else None, 'completed': batch.completed_companies if batch else None, 'failed': batch.failed_companies if batch else None}); print('RawJob total:', RawJob.objects.count()); print('Filter decisions:', dict(Counter(RawJob.objects.exclude(filter_decision__isnull=True).values_list('filter_decision', flat=True)))); print('JD skipped:', RawJob.objects.filter(jd_fetch_skipped=True).count()); print('Skipped title logs:', HarvestSkippedTitle.objects.count())"
+              STATUS="$(docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py shell -c "from harvest.models import FetchBatch; b=FetchBatch.objects.filter(task_id='$TASK_ID').order_by('-created_at').first() or FetchBatch.objects.order_by('-created_at').first(); print(b.status if b else 'MISSING')" | tail -n 1)"
+              if [ "$STATUS" != "RUNNING" ]; then
+                break
+              fi
+              sleep 15
+            done
