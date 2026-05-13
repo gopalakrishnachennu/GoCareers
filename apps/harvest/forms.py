@@ -9,7 +9,8 @@ class JobBoardPlatformForm(forms.ModelForm):
         fields = [
             "name", "slug", "url_patterns", "api_type", "fetch_endpoint_tmpl",
             "headers_json", "rate_limit_per_min", "requires_auth",
-            "is_enabled", "support_tier", "color_hex", "notes",
+            "is_enabled", "title_in_list", "unknown_jd_budget_per_run",
+            "support_tier", "color_hex", "notes",
         ]
         widgets = {
             "url_patterns": forms.Textarea(
@@ -29,6 +30,7 @@ class JobBoardPlatformForm(forms.ModelForm):
             "name": forms.TextInput(attrs={"placeholder": "Workday"}),
             "slug": forms.TextInput(attrs={"placeholder": "workday", "class": "font-mono"}),
             "rate_limit_per_min": forms.NumberInput(attrs={"min": 1, "max": 120}),
+            "unknown_jd_budget_per_run": forms.NumberInput(attrs={"min": 0, "max": 100}),
         }
         help_texts = {
             "url_patterns": "JSON array of URL substrings that identify this platform.",

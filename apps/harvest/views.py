@@ -846,8 +846,8 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
             pending_only = not cfg.validate_links_include_synced
 
         kwargs = {
-            "batch_size": 250,
-            "concurrency": 24,
+            "batch_size": 100,
+            "concurrency": 3,
             "pending_only": pending_only,
         }
         if platform:
@@ -857,9 +857,9 @@ class RunValidateRawUrlsView(SuperuserRequiredMixin, View):
         else:
             kwargs["recent_hours"] = cfg.validate_links_recent_hours or 168
         if max_jobs.isdigit():
-            kwargs["max_jobs"] = int(max_jobs)
+            kwargs["max_jobs"] = min(int(max_jobs), 800)
         else:
-            kwargs["max_jobs"] = 0
+            kwargs["max_jobs"] = 800
 
         scope = "PENDING only" if pending_only else "PENDING + SYNCED"
         task = validate_raw_job_urls_task.delay(**kwargs)
@@ -2277,13 +2277,13 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
 
         cfg = HarvestEngineConfig.get()
         platform_slug = request.POST.get("platform_slug", "").strip() or None
-        batch_size = int(request.POST.get("batch_size", "200") or "200")
+        batch_size = min(int(request.POST.get("batch_size", "100") or "100"), 100)
         offset = int(request.POST.get("offset", "0") or "0")
         force_jarvis = request.POST.get("force_jarvis", "") in ("1", "true", "True")
 
         # If caller didn't supply these, pass None → task reads config
         raw_workers = (request.POST.get("parallel_workers") or "").strip()
-        parallel_workers = int(raw_workers) if raw_workers.isdigit() else None
+        parallel_workers = 1 if raw_workers.isdigit() else None
 
         raw_reset = request.POST.get("reset_locks", "")
         reset_locks = None if raw_reset == "" else (raw_reset in ("1", "true", "True"))
@@ -2303,7 +2303,7 @@ class RunBackfillDescriptionsView(SuperuserRequiredMixin, View):
         label = f"platform={platform_slug}" if platform_slug else "all platforms"
         mode = "Deep Scan (Jarvis)" if force_jarvis else "backfill"
         # Display resolved worker count (config default if not supplied)
-        display_workers = parallel_workers if parallel_workers is not None else cfg.backfill_jd_workers
+        display_workers = 1
         cold_note = " +cold" if (include_cold if include_cold is not None else cfg.backfill_jd_include_cold) else ""
         messages.success(
             request,
@@ -3443,7 +3443,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
 
         # Detect server CPU count for the advisory note
         cpu_count = os.cpu_count() or 2
-        recommended_concurrency = max(2, cpu_count)
+        recommended_concurrency = min(2, max(1, cpu_count))
 
         # Try to inspect running Celery workers
         worker_stats = {}
@@ -3477,7 +3477,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "recommended_concurrency": recommended_concurrency,
             "worker_stats": worker_stats,
             "active_tab": "engine",
-            "concurrency_presets": [1, 2, 3, 4, 6, 8],
+            "concurrency_presets": [1, 2],
             "country_options": country_options,
             "selected_countries": selected_countries,
             "geocoding_stats": geocoding_stats,
@@ -3498,6 +3498,7 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "resume_jd_min_words", "resume_jd_min_chars",
             "geocoding_monthly_limit", "geocoding_hourly_limit", "geocoding_warning_pct",
             "jd_backfill_lock_stale_minutes", "portal_health_failure_threshold",
+            "zero_tech_threshold", "zero_tech_skip_ttl_days", "cold_no_match_sample_rate_pct",
         ]
         errors = []
         for field in int_fields:
@@ -3529,9 +3530,18 @@ class EngineConfigView(SuperuserRequiredMixin, View):
             "geocoding_cache_enabled", "geocoding_provider_enabled",
             "legacy_hash_bridge_enabled",
             "rescope_on_target_country_change",
+            "selective_filter_enabled", "filter_audit_mode",
         ]
         for field in bool_fields:
             setattr(cfg, field, field in request.POST)
+
+        hard_negatives_raw = request.POST.get("hard_negative_phrases", "")
+        if hard_negatives_raw:
+            cfg.hard_negative_phrases = [
+                line.strip().lower()
+                for line in hard_negatives_raw.splitlines()
+                if line.strip()
+            ]
 
         target_countries = [
             code.strip().upper()

@@ -87,11 +87,11 @@
         </div>
         <div class="flex items-center gap-3">
           <input type="number" name="worker_concurrency" value="{{ cfg.worker_concurrency }}"
-                 min="1" max="20" step="1"
+                 min="1" max="2" step="1"
                  class="form-input w-24 text-center text-lg font-bold">
           <div class="text-xs text-gray-500 leading-relaxed">
             <strong class="text-gray-700">Current active:</strong> see live workers above.<br>
-            To apply: update <code class="bg-gray-100 px-1 rounded">HARVEST_CONCURRENCY</code> in
+            Strict uptime rule: max 2 on this server. To apply: update <code class="bg-gray-100 px-1 rounded">HARVEST_CONCURRENCY</code> in
             <code class="bg-gray-100 px-1 rounded">.env.production</code>, then<br>
             <code class="bg-gray-100 px-1 rounded">docker compose restart celery_harvest</code>
           </div>
@@ -120,7 +120,7 @@
         </div>
         <div class="flex items-center gap-3">
           <input type="number" name="task_rate_limit" value="{{ cfg.task_rate_limit }}"
-                 min="1" max="60" step="1"
+                 min="1" max="3" step="1"
                  class="form-input w-24 text-center text-lg font-bold">
           <div class="text-xs text-gray-500 leading-relaxed">
             <strong class="text-gray-700">Total throughput</strong> =
@@ -137,16 +137,16 @@
             <div class="text-[11px] mt-0.5">Gentle<br>Low CPU</div>
           </div>
           <div class="bg-blue-50 border border-blue-200 rounded-lg p-2 text-center">
-            <div class="font-bold text-blue-700 text-base">6</div>
-            <div class="text-[11px] mt-0.5">Default<br>Balanced</div>
+            <div class="font-bold text-blue-700 text-base">3</div>
+            <div class="text-[11px] mt-0.5">Strict<br>Max</div>
           </div>
           <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-2 text-center">
-            <div class="font-bold text-yellow-700 text-base">10–15</div>
-            <div class="text-[11px] mt-0.5">Fast<br>Watch CPU</div>
+            <div class="font-bold text-yellow-700 text-base">6+</div>
+            <div class="text-[11px] mt-0.5">Unsafe<br>Blocked</div>
           </div>
           <div class="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
-            <div class="font-bold text-red-700 text-base">&gt;20</div>
-            <div class="text-[11px] mt-0.5">⚠ Risk<br>May spike</div>
+            <div class="font-bold text-red-700 text-base">&gt;10</div>
+            <div class="text-[11px] mt-0.5">Danger<br>Blocked</div>
           </div>
         </div>
       </div>
@@ -445,6 +445,73 @@
     <!-- RIGHT col: auto-pipeline, stagger, freshness, timeout -->
     <div class="space-y-5">
 
+      <!-- Selective role filter -->
+      <div class="card-padded">
+        <div class="flex items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Selective Role Filter</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Stores every list row, then skips expensive JD work only for COLD or NO_MATCH decisions when audit mode is off.</p>
+          </div>
+          {% if cfg.selective_filter_enabled %}
+            <span class="badge-green text-xs font-semibold">Enabled</span>
+          {% else %}
+            <span class="badge-blue text-xs font-semibold">Off</span>
+          {% endif %}
+        </div>
+
+        <div class="space-y-3">
+          <label class="flex items-start gap-3 p-3 rounded-lg border {% if cfg.selective_filter_enabled %}border-green-200 bg-green-50{% else %}border-gray-200 bg-gray-50{% endif %}">
+            <input type="checkbox" name="selective_filter_enabled" value="1"
+                   {% if cfg.selective_filter_enabled %}checked{% endif %}
+                   class="mt-0.5 w-4 h-4 rounded text-green-600 border-gray-300">
+            <span>
+              <span class="block text-sm font-semibold text-gray-800">Enable selective harvest</span>
+              <span class="block text-xs text-gray-500">Master switch. Leave off for legacy full-fetch behavior.</span>
+            </span>
+          </label>
+
+          <label class="flex items-start gap-3 p-3 rounded-lg border {% if cfg.filter_audit_mode %}border-amber-200 bg-amber-50{% else %}border-gray-200 bg-white{% endif %}">
+            <input type="checkbox" name="filter_audit_mode" value="1"
+                   {% if cfg.filter_audit_mode %}checked{% endif %}
+                   class="mt-0.5 w-4 h-4 rounded text-amber-600 border-gray-300">
+            <span>
+              <span class="block text-sm font-semibold text-gray-800">Audit mode</span>
+              <span class="block text-xs text-gray-500">Classify and log what would be skipped, but do not skip JD work. Recommended for rollout.</span>
+            </span>
+          </label>
+
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div>
+              <label class="form-label">Zero-tech threshold</label>
+              <input type="number" name="zero_tech_threshold" value="{{ cfg.zero_tech_threshold }}"
+                     min="1" max="100" step="1"
+                     class="form-input w-full text-center font-mono">
+            </div>
+            <div>
+              <label class="form-label">Skip TTL days</label>
+              <input type="number" name="zero_tech_skip_ttl_days" value="{{ cfg.zero_tech_skip_ttl_days }}"
+                     min="1" max="365" step="1"
+                     class="form-input w-full text-center font-mono">
+            </div>
+            <div>
+              <label class="form-label">Audit sample %</label>
+              <input type="number" name="cold_no_match_sample_rate_pct" value="{{ cfg.cold_no_match_sample_rate_pct }}"
+                     min="0" max="100" step="1"
+                     class="form-input w-full text-center font-mono">
+            </div>
+          </div>
+
+          <div>
+            <label class="form-label">Hard negative phrases</label>
+            <textarea name="hard_negative_phrases" rows="8"
+                      class="form-input w-full font-mono text-xs"
+                      placeholder="registered nurse&#10;retail associate&#10;warehouse worker">{% for phrase in cfg.hard_negative_phrases %}{{ phrase }}
+{% endfor %}</textarea>
+            <p class="mt-1 text-[10px] text-gray-400">One phrase per line. Avoid single broad words like manager, analyst, associate, or consultant.</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Auto-pipeline funnel -->
       <div class="card-padded">
         <div class="flex items-start justify-between gap-3 mb-4">
@@ -540,7 +607,7 @@
             <label class="form-label">API Platforms (Greenhouse, Lever, Workday…) — ms</label>
             <div class="flex items-center gap-3">
               <input type="number" name="api_stagger_ms" value="{{ cfg.api_stagger_ms }}"
-                     min="0" max="5000" step="50"
+                     min="1000" max="10000" step="250"
                      class="form-input w-28 text-center font-mono">
               <span class="text-xs text-gray-400">{{ cfg.api_stagger_ms }}ms = {{ cfg.api_stagger_ms|floatformat:1 }}s between tasks</span>
             </div>
@@ -549,9 +616,9 @@
             <label class="form-label">Scraper Platforms (iCIMS, Taleo, Jobvite…) — ms</label>
             <div class="flex items-center gap-3">
               <input type="number" name="scraper_stagger_ms" value="{{ cfg.scraper_stagger_ms }}"
-                     min="500" max="10000" step="100"
+                     min="5000" max="30000" step="500"
                      class="form-input w-28 text-center font-mono">
-              <span class="text-xs text-gray-400">Keep ≥1000ms — scrapers need breathing room</span>
+              <span class="text-xs text-gray-400">Strict minimum 5000ms — scrapers need breathing room</span>
             </div>
           </div>
         </div>

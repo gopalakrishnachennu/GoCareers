@@ -24,11 +24,20 @@ jobs:
             set -e
             cd /opt/consulting
             git pull --ff-only origin main
-            # Stop containers first so their images become "unused" and can be pruned
-            docker compose -f docker-compose.prod.yml --env-file .env.production down --remove-orphans || true
-            # Prune unused images + build cache to free disk — NO --volumes flag so
-            # Redis task queue and DB data are preserved across deploys.
-            docker system prune -a -f || true
+            # Keep Redis/Postgres up during deploy. Never use `down` here; it
+            # interrupts workers and can create avoidable downtime.
+            set_env() {
+              key="$1"
+              value="$2"
+              if grep -q "^${key}=" .env.production; then
+                sed -i "s/^${key}=.*/${key}=${value}/" .env.production
+              else
+                printf '\n%s=%s\n' "$key" "$value" >> .env.production
+              fi
+            }
+            set_env WEB_CONCURRENCY 2
+            set_env WORKER_CONCURRENCY 2
+            set_env HARVEST_CONCURRENCY 2
             docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production up -d
             if ! docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input; then
@@ -36,5 +45,4 @@ jobs:
               docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate harvest 0027 --fake || true
               docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py migrate --no-input
             fi
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from django.utils import timezone; from datetime import timedelta; from harvest.models import RawJob; from harvest.tasks import backfill_descriptions_task; freed = RawJob.objects.filter(jd_backfill_locked_at__lt=timezone.now()-timedelta(minutes=5)).update(jd_backfill_locked_at=None); missing = RawJob.objects.missing_jd().count(); print(f'JD backfill check: missing={missing}, freed={freed}'); backfill_descriptions_task.delay(batch_size=500, parallel_workers=8) if missing > 0 else None"
-            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from harvest.tasks import validate_raw_job_urls_task; task = validate_raw_job_urls_task.delay(batch_size=300, concurrency=25); print(f'validate_live_links queued: {task.id}')"
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web python manage.py shell -c "from harvest.models import HarvestEngineConfig; cfg=HarvestEngineConfig.get(); cfg.worker_concurrency=2; cfg.task_rate_limit=3; cfg.api_stagger_ms=1000; cfg.scraper_stagger_ms=5000; cfg.full_fetch_cooldown_minutes=360; cfg.backfill_jd_workers=1; cfg.auto_backfill_jd=False; cfg.auto_sync_to_pool=False; cfg.save(); print('Applied strict harvest uptime config')"

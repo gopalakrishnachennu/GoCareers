@@ -12,8 +12,8 @@
 #    • venv must be set up (run: ./scripts/harvest.sh once to auto-create it)
 #
 #  Usage:
-#    ./scripts/local_workers.sh              # default: 6 concurrent harvest workers
-#    ./scripts/local_workers.sh 10           # override concurrency
+#    ./scripts/local_workers.sh              # default: 2 concurrent harvest workers
+#    ./scripts/local_workers.sh 2            # strict maximum for uptime
 #    ./scripts/local_workers.sh 4 default    # also listen on default queue
 #
 #  Stop workers:
@@ -37,7 +37,18 @@ info() { echo -e "${B}▶${N} $*"; }
 warn() { echo -e "${Y}⚠${N} $*"; }
 err()  { echo -e "${R}✗${N} $*" >&2; exit 1; }
 
-CONCURRENCY="${1:-6}"
+REQUESTED_CONCURRENCY="${1:-2}"
+if ! [[ "$REQUESTED_CONCURRENCY" =~ ^[0-9]+$ ]]; then
+    REQUESTED_CONCURRENCY=2
+fi
+if [ "$REQUESTED_CONCURRENCY" -gt 2 ]; then
+    warn "Requested concurrency $REQUESTED_CONCURRENCY is unsafe for this deployment; clamping to 2."
+    CONCURRENCY=2
+elif [ "$REQUESTED_CONCURRENCY" -lt 1 ]; then
+    CONCURRENCY=1
+else
+    CONCURRENCY="$REQUESTED_CONCURRENCY"
+fi
 QUEUES="${2:-batches,harvest}"
 
 # ── 1. Env check ─────────────────────────────────────────────────────────────

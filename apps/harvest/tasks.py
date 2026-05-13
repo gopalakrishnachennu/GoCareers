@@ -52,7 +52,14 @@ logger = logging.getLogger(__name__)
 
 # JD backfill parallel workers: locks older than this are treated as stale (worker crash).
 BACKFILL_LOCK_STALE_MINUTES = DEFAULT_JD_BACKFILL_LOCK_STALE_MINUTES
-BACKFILL_MAX_PARALLEL = 8
+HARVEST_SAFE_TASK_RATE_LIMIT = 3
+HARVEST_SAFE_API_STAGGER_MS = 1000
+HARVEST_SAFE_SCRAPER_STAGGER_MS = 5000
+HARVEST_SAFE_VALIDATE_CONCURRENCY = 3
+HARVEST_SAFE_VALIDATE_MAX_JOBS = 800
+HARVEST_SAFE_SYNC_MAX_JOBS = 1000
+HARVEST_SAFE_DUPLICATE_LIMIT = 1000
+BACKFILL_MAX_PARALLEL = 1
 OPS_SINGLETON_STALE_MINUTES = 30
 OPS_SINGLETON_CACHE_TTL_SECONDS = 45 * 60
 
@@ -1012,6 +1019,7 @@ def fetch_raw_jobs_for_company_task(
     max_jobs: int | None = None,
     since_hours: int | None = None,
     fetch_all: bool = False,
+    filter_snapshot_id: str | None = None,
 ):
     """
     Fetch ALL jobs for a single CompanyPlatformLabel and upsert into RawJob.
@@ -1029,7 +1037,7 @@ def fetch_raw_jobs_for_company_task(
     _cfg = require_harvest_engine_config("fetch_raw_jobs_for_company_task")
     # Apply the current rate limit to THIS worker's slot for this task type.
     # This ensures the DB value is always honoured even after a live GUI change.
-    self.rate_limit = f"{_cfg.task_rate_limit}/m"
+    self.rate_limit = f"{min(int(_cfg.task_rate_limit or 1), HARVEST_SAFE_TASK_RATE_LIMIT)}/m"
     _soft_limit = _cfg.task_soft_time_limit_secs
     _hard_limit = _soft_limit + 120
 
@@ -1043,6 +1051,27 @@ def fetch_raw_jobs_for_company_task(
     batch = None
     if batch_id:
         batch = FetchBatch.objects.filter(pk=batch_id).first()
+
+    filter_enabled = bool(getattr(_cfg, "selective_filter_enabled", False))
+    filter_audit_mode = bool(getattr(_cfg, "filter_audit_mode", True))
+    filter_snapshot = None
+    filter_categories: list[dict] = []
+    filter_hard_negatives: list[str] = []
+    if filter_enabled:
+        try:
+            from .models import HarvestFilterSnapshot
+
+            if filter_snapshot_id:
+                filter_snapshot = HarvestFilterSnapshot.objects.filter(snapshot_id=filter_snapshot_id).first()
+            if filter_snapshot is None:
+                filter_snapshot = HarvestFilterSnapshot.create_snapshot(batch=batch, notes="created by company task")
+            filter_snapshot_id = str(filter_snapshot.snapshot_id)
+            filter_categories = filter_snapshot.get_categories()
+            filter_hard_negatives = filter_snapshot.get_hard_negatives()
+        except Exception:
+            logger.exception("Selective filter snapshot load failed; continuing in audit-safe full mode.")
+            filter_enabled = False
+            filter_snapshot_id = None
 
     # ── Stop-gate: bail immediately if operator cancelled the batch ───────────
     # stop_requested is set by StopBatchView. Tasks with countdown that were
@@ -1249,8 +1278,10 @@ def fetch_raw_jobs_for_company_task(
 
     # ── Upsert jobs ───────────────────────────────────────────────────────────
     jobs_new = jobs_updated = jobs_duplicate = jobs_failed = 0
+    filter_strong = filter_possible = filter_unknown = filter_cold = filter_no_match = 0
     upsert_errors: list[str] = []
     new_raw_job_pks: list[int] = []  # PKs of freshly-created RawJobs for auto-pipeline
+    unknown_jd_count = 0
 
     # In test mode, cap to max_jobs so we don't write hundreds of rows
     cap_applied = False
@@ -1260,6 +1291,7 @@ def fetch_raw_jobs_for_company_task(
 
     total_jobs = len(raw_jobs)
     from .enrichments import clean_job_content, clean_job_text, extract_enrichments
+    from .role_filter import COLD, NO_MATCH, POSSIBLE, STRONG, UNKNOWN, ClassifyResult, classify_title
     for idx, job_dict in enumerate(raw_jobs, start=1):
         try:
             original_url = (job_dict.get("original_url") or "").strip()
@@ -1294,26 +1326,86 @@ def fetch_raw_jobs_for_company_task(
                 except Exception:
                     pass
 
-            desc_meta = clean_job_content(job_dict.get("description") or "", max_len=50000)
-            description = desc_meta["clean_text"]
-            requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
-            responsibilities = clean_job_text(job_dict.get("responsibilities") or "", max_len=20000)
-            benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
-            enriched = extract_enrichments(build_enrichment_input(
-                job_dict,
-                overrides={
-                    "description": description,
-                    "description_clean": description[:50000],
-                    "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
-                    "has_html_content": bool(desc_meta.get("has_html_content")),
-                    "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
-                    "requirements": requirements,
-                    "responsibilities": responsibilities,
-                    "benefits": benefits,
-                },
-                company_name=job_dict.get("company_name") or label.company.name,
-                posted_date=posted_date,
-            ))
+            filter_result = ClassifyResult(
+                decision=POSSIBLE,
+                category=None,
+                matched_phrase=None,
+                matched_negative=None,
+                reason="selective filter disabled",
+                snapshot_id=None,
+            )
+            if filter_enabled and filter_snapshot_id:
+                if getattr(label.platform, "title_in_list", False):
+                    filter_result = classify_title(
+                        title=job_dict.get("title") or "",
+                        department=job_dict.get("department") or "",
+                        categories=filter_categories,
+                        hard_negatives=filter_hard_negatives,
+                        custom_phrases=label.custom_include_phrases or [],
+                        snapshot_id=filter_snapshot_id,
+                    )
+                else:
+                    filter_result = ClassifyResult(
+                        decision=POSSIBLE,
+                        category=None,
+                        matched_phrase=None,
+                        matched_negative=None,
+                        reason="platform title_in_list is false - preserving existing fetch behavior",
+                        snapshot_id=filter_snapshot_id,
+                    )
+
+            if filter_enabled and filter_result.decision == UNKNOWN:
+                budget = int(getattr(label.platform, "unknown_jd_budget_per_run", 0) or 0)
+                if unknown_jd_count >= budget:
+                    filter_result = ClassifyResult(
+                        decision=COLD,
+                        category=None,
+                        matched_phrase=None,
+                        matched_negative=filter_result.matched_negative,
+                        reason=f"UNKNOWN budget ({budget}) exceeded for this company",
+                        snapshot_id=filter_snapshot_id,
+                    )
+                else:
+                    unknown_jd_count += 1
+
+            should_skip_jd = (
+                filter_enabled
+                and not filter_audit_mode
+                and filter_result.decision in {COLD, NO_MATCH}
+            )
+            if should_skip_jd:
+                desc_meta = {
+                    "clean_text": "",
+                    "raw_html": "",
+                    "has_html_content": False,
+                    "cleaning_version": "v2",
+                }
+                description = ""
+                requirements = ""
+                responsibilities = ""
+                benefits = ""
+                enriched = {}
+            else:
+                desc_meta = clean_job_content(job_dict.get("description") or "", max_len=50000)
+                description = desc_meta["clean_text"]
+                requirements = clean_job_text(job_dict.get("requirements") or "", max_len=20000)
+                responsibilities = clean_job_text(job_dict.get("responsibilities") or "", max_len=20000)
+                benefits = clean_job_text(job_dict.get("benefits") or "", max_len=10000)
+                enriched = extract_enrichments(build_enrichment_input(
+                    job_dict,
+                    overrides={
+                        "description": description,
+                        "description_clean": description[:50000],
+                        "description_raw_html": (desc_meta.get("raw_html") or "")[:120000],
+                        "has_html_content": bool(desc_meta.get("has_html_content")),
+                        "cleaning_version": (desc_meta.get("cleaning_version") or "v2")[:20],
+                        "requirements": requirements,
+                        "responsibilities": responsibilities,
+                        "benefits": benefits,
+                    },
+                    company_name=job_dict.get("company_name") or label.company.name,
+                    posted_date=posted_date,
+                ))
             supplied_location_candidates = job_dict.get("location_candidates")
             if not isinstance(supplied_location_candidates, list):
                 supplied_location_candidates = []
@@ -1376,6 +1468,13 @@ def fetch_raw_jobs_for_company_task(
                 "vendor_job_shift": (job_dict.get("vendor_job_shift") or "")[:128],
                 "vendor_location_block": (job_dict.get("vendor_location_block") or "")[:512],
                 "raw_payload": job_dict.get("raw_payload") or {},
+                "list_payload_json": job_dict,
+                "role_category": filter_result.category,
+                "filter_decision": filter_result.decision if filter_enabled else None,
+                "filter_reason": filter_result.reason if filter_enabled else None,
+                "filter_snapshot_id": filter_result.snapshot_id if filter_enabled else None,
+                "is_cold": bool(should_skip_jd),
+                "jd_fetch_skipped": bool(should_skip_jd),
                 "is_active": True,
                 "content_hash": compute_content_hash(
                     label.company.pk,
@@ -1427,9 +1526,43 @@ def fetch_raw_jobs_for_company_task(
             obj = upsert.raw_job
             created = upsert.created
             _archive_job_payload(obj)
+            if filter_enabled:
+                if filter_result.decision == STRONG:
+                    filter_strong += 1
+                elif filter_result.decision == POSSIBLE:
+                    filter_possible += 1
+                elif filter_result.decision == UNKNOWN:
+                    filter_unknown += 1
+                elif filter_result.decision == COLD:
+                    filter_cold += 1
+                elif filter_result.decision == NO_MATCH:
+                    filter_no_match += 1
+            if filter_enabled and filter_result.decision in {COLD, NO_MATCH}:
+                try:
+                    import random
+                    from .models import HarvestSkippedTitle
+
+                    sample_rate = max(0, min(100, int(getattr(_cfg, "cold_no_match_sample_rate_pct", 5) or 0)))
+                    HarvestSkippedTitle.objects.create(
+                        raw_job=obj,
+                        company_name=label.company.name[:256],
+                        platform_slug=(label.platform.slug if label.platform else "")[:64],
+                        job_title=(job_dict.get("title") or "")[:512],
+                        job_external_id=external_id[:256],
+                        department=(job_dict.get("department") or "")[:256],
+                        filter_decision=filter_result.decision,
+                        filter_reason=filter_result.reason[:512],
+                        matched_negative=(filter_result.matched_negative or "")[:256],
+                        snapshot_id=filter_result.snapshot_id,
+                        batch_id=batch.pk if batch else None,
+                        is_sampled=bool(random.randint(1, 100) <= sample_rate) or filter_result.reason.startswith("UNKNOWN budget"),
+                    )
+                except Exception:
+                    logger.exception("Failed to write HarvestSkippedTitle for RawJob %s", obj.pk)
             if created:
                 jobs_new += 1
-                new_raw_job_pks.append(obj.pk)
+                if not should_skip_jd:
+                    new_raw_job_pks.append(obj.pk)
             else:
                 jobs_updated += 1
 
@@ -1493,6 +1626,23 @@ def fetch_raw_jobs_for_company_task(
             _fp["category"] += 1
         if (jd.get("schedule_type") and jd.get("schedule_type") not in ("", "UNKNOWN")) or jd.get("vendor_job_schedule"):
             _fp["schedule"] += 1
+
+    if filter_enabled and not filter_audit_mode:
+        try:
+            tech_matched = filter_strong + filter_possible + filter_unknown
+            if tech_matched == 0 and len(raw_jobs):
+                CompanyPlatformLabel.objects.filter(pk=label.pk).update(
+                    consecutive_zero_tech_fetches=F("consecutive_zero_tech_fetches") + 1
+                )
+                label.refresh_from_db(fields=["consecutive_zero_tech_fetches"])
+                if label.consecutive_zero_tech_fetches >= int(getattr(_cfg, "zero_tech_threshold", 5) or 5):
+                    CompanyPlatformLabel.objects.filter(pk=label.pk).update(
+                        zero_tech_last_flagged_at=timezone.now()
+                    )
+            else:
+                CompanyPlatformLabel.objects.filter(pk=label.pk).update(consecutive_zero_tech_fetches=0)
+        except Exception:
+            logger.exception("Failed to update selective harvest zero-tech counters for label %s", label.pk)
 
     # ── Update run record ─────────────────────────────────────────────────────
     _total_found = len(raw_jobs)
@@ -1774,9 +1924,9 @@ def fetch_raw_jobs_for_company_task(
             # before promotion into Vet Queue.
             validate_raw_job_urls_task.apply_async(
                 kwargs={
-                    "batch_size": 250,
-                    "concurrency": 24,
-                    "max_jobs": 6000,
+                    "batch_size": 100,
+                    "concurrency": HARVEST_SAFE_VALIDATE_CONCURRENCY,
+                    "max_jobs": HARVEST_SAFE_VALIDATE_MAX_JOBS,
                     "pending_only": True,
                     "recent_hours": 96,
                 },
@@ -1785,11 +1935,14 @@ def fetch_raw_jobs_for_company_task(
             logger.info("Auto URL validation queued before sync (batch #%s)", batch.pk)
             if _sync_cfg.auto_sync_to_pool:
                 sync_harvested_to_pool_task.apply_async(
-                    kwargs={"max_jobs": 5000},
+                    kwargs={"max_jobs": HARVEST_SAFE_SYNC_MAX_JOBS},
                     countdown=90,  # wait for URL validation pass first
                 )
                 logger.info("Auto-sync queued 90 s after batch #%s completion", batch.pk)
-            duplicate_limit = min(5000, max(1000, int(getattr(batch, "total_jobs_new", 0) or 0) * 2))
+            duplicate_limit = min(
+                HARVEST_SAFE_DUPLICATE_LIMIT,
+                max(200, int(getattr(batch, "total_jobs_new", 0) or 0)),
+            )
             run_duplicate_detection_task.apply_async(
                 kwargs={"limit": duplicate_limit},
                 countdown=120,
@@ -1813,6 +1966,15 @@ def fetch_raw_jobs_for_company_task(
         "jobs_updated": jobs_updated,
         "jobs_duplicate": jobs_duplicate,
         "jobs_failed": jobs_failed,
+        "filter": {
+            "strong": filter_strong,
+            "possible": filter_possible,
+            "unknown": filter_unknown,
+            "cold": filter_cold,
+            "no_match": filter_no_match,
+            "audit_mode": filter_audit_mode,
+            "snapshot_id": filter_snapshot_id,
+        },
     }
 
 
@@ -1852,8 +2014,8 @@ def fetch_raw_jobs_batch_task(
     # Default argument sentinel is 6; if it still equals 6, prefer the DB value.
     if min_hours_since_fetch == 6:
         min_hours_since_fetch = _ecfg.min_hours_since_fetch
-    _api_stagger    = _ecfg.api_stagger_ms    / 1000.0   # convert ms → seconds
-    _scraper_stagger = _ecfg.scraper_stagger_ms / 1000.0
+    _api_stagger = max(_ecfg.api_stagger_ms, HARVEST_SAFE_API_STAGGER_MS) / 1000.0
+    _scraper_stagger = max(_ecfg.scraper_stagger_ms, HARVEST_SAFE_SCRAPER_STAGGER_MS) / 1000.0
 
     User = get_user_model()
     triggered_user = None
@@ -1880,6 +2042,15 @@ def fetch_raw_jobs_batch_task(
         task_id=self.request.id or "",
         started_at=timezone.now(),
     )
+    filter_snapshot_id = None
+    if _ecfg.selective_filter_enabled:
+        try:
+            from .models import HarvestFilterSnapshot
+
+            snapshot = HarvestFilterSnapshot.create_snapshot(batch=batch)
+            filter_snapshot_id = str(snapshot.snapshot_id)
+        except Exception:
+            logger.exception("Failed to create selective filter snapshot; batch will run without selective filtering.")
 
     # ── Build label queryset ──────────────────────────────────────────────────
     # Include portal_alive=True (confirmed up) AND portal_alive=None (never checked).
@@ -1890,6 +2061,9 @@ def fetch_raw_jobs_batch_task(
         platform__isnull=False,
         platform__is_enabled=True,
     ).exclude(tenant_id="").select_related("platform", "company").order_by("company__name")
+
+    if _ecfg.selective_filter_enabled and not fetch_all and not test_mode:
+        qs = qs.exclude(skip_in_selective_harvest=True)
 
     if platform_slug:
         qs = qs.filter(platform__slug=platform_slug)
@@ -1970,6 +2144,9 @@ def fetch_raw_jobs_batch_task(
         ),
         "queued_companies": total,
         "min_hours_since_successful_fetch": min_hours_since_fetch,
+        "selective_filter_enabled": bool(_ecfg.selective_filter_enabled),
+        "filter_audit_mode": bool(_ecfg.filter_audit_mode),
+        "filter_snapshot_id": filter_snapshot_id,
         "incremental_since_hours_for_api_boards": 25,
         "what_quick_fetch_does_not_do": (
             "Does not bypass fresh skip; does not crawl disabled/dead labels; "
@@ -2024,6 +2201,8 @@ def fetch_raw_jobs_batch_task(
         kwargs = {"max_jobs": test_max_jobs} if test_mode else {}
         if fetch_all and not test_mode:
             kwargs["fetch_all"] = True   # pass full-crawl flag to child tasks
+        if filter_snapshot_id:
+            kwargs["filter_snapshot_id"] = filter_snapshot_id
         fetch_raw_jobs_for_company_task.apply_async(
             args=[label_pk, batch.pk, "BATCH"],
             kwargs=kwargs,
@@ -2539,6 +2718,7 @@ def sync_harvested_to_pool_task(
             ],
         )
         .exclude(original_url="")
+        .exclude(Q(is_cold=True) | Q(filter_decision="NO_MATCH") | Q(jd_fetch_skipped=True))
     )
 
     if qualified_only:

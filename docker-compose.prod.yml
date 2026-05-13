@@ -37,7 +37,7 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       CELERY_TASK_ALWAYS_EAGER: "0"
-      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-2}
       WEB_TIMEOUT: ${WEB_TIMEOUT:-120}
       HARVEST_PUSH_SECRET: ${HARVEST_PUSH_SECRET:-}
     depends_on:
@@ -50,13 +50,13 @@ services:
     restart: unless-stopped
 
   # ── General worker: handles UI-triggered tasks, approvals, validation ────────
-  # WORKER_CONCURRENCY default = cpu_count (set in .env.production to override).
+  # WORKER_CONCURRENCY default is conservative for a 2-vCPU VPS.
   celery_worker:
     build: .
     image: ${IMAGE_WORKER:-consulting-worker:local}
     command: >
       celery -A config worker -l info
-      --concurrency=${WORKER_CONCURRENCY:-3}
+      --concurrency=${WORKER_CONCURRENCY:-2}
       -Q default
       --hostname=worker@%h
     environment:
@@ -74,14 +74,14 @@ services:
   # ── Harvest worker: dedicated to batch scraping ───────────────────────────
   # HARVEST_CONCURRENCY — parallel Celery processes for company fetches.
   # Each process handles one company at a time (HTTP I/O bound).
-  # Default raised to 8 so Full Fetch runs ~8 companies in parallel.
-  # Set HARVEST_CONCURRENCY in .env.production to override without code change.
+  # Default is strict to protect web uptime on a small VPS.
+  # Set HARVEST_CONCURRENCY in .env.production only after capacity is increased.
   celery_harvest:
     build: .
     image: ${IMAGE_WORKER:-consulting-worker:local}
     command: >
       celery -A config worker -l warning
-      --concurrency=${HARVEST_CONCURRENCY:-8}
+      --concurrency=${HARVEST_CONCURRENCY:-2}
       -Q batches,harvest
       --hostname=harvest@%h
       --max-tasks-per-child=50
@@ -92,7 +92,7 @@ services:
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
       CELERY_TASK_ALWAYS_EAGER: "0"
-      HARVEST_CONCURRENCY: ${HARVEST_CONCURRENCY:-8}
+      HARVEST_CONCURRENCY: ${HARVEST_CONCURRENCY:-2}
     depends_on:
       - db
       - redis
@@ -118,4 +118,3 @@ volumes:
   postgres_data:
   redis_data:     # Celery task queue — persists across container restarts/redeploys
   media_files:    # user-uploaded files — persists across container rebuilds
-

@@ -1,5 +1,6 @@
 import hashlib
 import gzip
+import uuid
 from datetime import timedelta
 
 from django.conf import settings
@@ -58,6 +59,14 @@ class JobBoardPlatform(models.Model):
     )
     notes = models.TextField(blank=True)
     last_harvested_at = models.DateTimeField(null=True, blank=True)
+    title_in_list = models.BooleanField(
+        default=False,
+        help_text="True when the list endpoint exposes enough title data for selective role filtering before JD fetch.",
+    )
+    unknown_jd_budget_per_run = models.PositiveSmallIntegerField(
+        default=2,
+        help_text="Max UNKNOWN title decisions per company run that may continue to JD fetch in selective harvest.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -159,6 +168,11 @@ class CompanyPlatformLabel(models.Model):
         db_index=True,
         help_text="Consecutive failed health checks. Portal is marked down only after the configured threshold.",
     )
+    consecutive_zero_tech_fetches = models.PositiveSmallIntegerField(default=0)
+    zero_tech_last_flagged_at = models.DateTimeField(null=True, blank=True)
+    skip_in_selective_harvest = models.BooleanField(default=False)
+    skip_expires_at = models.DateTimeField(null=True, blank=True)
+    custom_include_phrases = models.JSONField(default=list, blank=True)
 
     class Meta:
         ordering = ["company__name"]
@@ -286,6 +300,81 @@ class FetchBatch(models.Model):
         if self.started_at and self.completed_at:
             return int((self.completed_at - self.started_at).total_seconds())
         return None
+
+
+class HarvestRoleCategory(models.Model):
+    name = models.CharField(max_length=100)
+    slug = models.SlugField(unique=True)
+    is_active = models.BooleanField(default=True)
+    priority = models.PositiveSmallIntegerField(default=0)
+    include_phrases = models.JSONField(default=list)
+    exclude_phrases = models.JSONField(default=list)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "name"]
+        verbose_name = "Harvest role category"
+        verbose_name_plural = "Harvest role categories"
+
+    def __str__(self):
+        return self.name
+
+
+class HarvestFilterSnapshot(models.Model):
+    snapshot_id = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
+    taken_at = models.DateTimeField(auto_now_add=True)
+    category_data = models.JSONField()
+    phrase_hash = models.CharField(max_length=64)
+    batch = models.ForeignKey(
+        FetchBatch,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="filter_snapshots",
+    )
+    notes = models.TextField(blank=True)
+
+    class Meta:
+        ordering = ["-taken_at"]
+        verbose_name = "Harvest filter snapshot"
+        verbose_name_plural = "Harvest filter snapshots"
+
+    def __str__(self):
+        return str(self.snapshot_id)
+
+    @classmethod
+    def create_snapshot(cls, batch=None, notes: str = ""):
+        from .role_filter import compute_phrase_hash
+
+        cfg = HarvestEngineConfig.get()
+        categories = list(
+            HarvestRoleCategory.objects.filter(is_active=True)
+            .order_by("priority", "name")
+            .values("name", "slug", "priority", "include_phrases", "exclude_phrases")
+        )
+        hard_negatives = cfg.hard_negative_phrases if isinstance(cfg.hard_negative_phrases, list) else []
+        payload = {
+            "categories": categories,
+            "hard_negative_phrases": hard_negatives,
+        }
+        return cls.objects.create(
+            batch=batch,
+            category_data=payload,
+            phrase_hash=compute_phrase_hash(payload),
+            notes=notes,
+        )
+
+    def get_categories(self) -> list[dict]:
+        data = self.category_data if isinstance(self.category_data, dict) else {}
+        categories = data.get("categories") or []
+        return categories if isinstance(categories, list) else []
+
+    def get_hard_negatives(self) -> list[str]:
+        data = self.category_data if isinstance(self.category_data, dict) else {}
+        phrases = data.get("hard_negative_phrases") or []
+        return phrases if isinstance(phrases, list) else []
 
 
 class HarvestOpsRun(models.Model):
@@ -481,7 +570,9 @@ class RawJobManager(models.Manager):
         stale_before = timezone.now() - timedelta(minutes=stale_minutes)
         return self.filter(
             has_description=False,
-        ).exclude(original_url="").filter(
+        ).exclude(original_url="").exclude(
+            Q(is_cold=True) | Q(jd_fetch_skipped=True) | Q(filter_decision="NO_MATCH")
+        ).filter(
             Q(jd_backfill_locked_at__isnull=True)
             | Q(jd_backfill_locked_at__lt=stale_before),
         )
@@ -686,6 +777,15 @@ class RawJob(models.Model):
     vendor_job_shift = models.CharField(max_length=128, blank=True)
     vendor_location_block = models.CharField(max_length=512, blank=True)
     raw_payload = models.JSONField(default=dict, blank=True)
+    list_payload_json = models.JSONField(null=True, blank=True)
+
+    # ── Selective harvest role filter ────────────────────────────────────────
+    role_category = models.CharField(max_length=64, null=True, blank=True, db_index=True)
+    filter_decision = models.CharField(max_length=16, null=True, blank=True, db_index=True)
+    filter_reason = models.CharField(max_length=512, null=True, blank=True)
+    filter_snapshot_id = models.UUIDField(null=True, blank=True, db_index=True)
+    is_cold = models.BooleanField(default=False, db_index=True)
+    jd_fetch_skipped = models.BooleanField(default=False)
 
     # ── Enriched: skills & tech ───────────────────────────────────────────────
     # All extracted skills (tech + soft); populated by enrichments.extract_enrichments()
@@ -817,6 +917,8 @@ class RawJob(models.Model):
             models.Index(fields=["fetched_at"],       name="harvest_raw_fetched_idx"),
             models.Index(fields=["is_remote"],         name="harvest_raw_remote_idx"),
             models.Index(fields=["has_description"],   name="harvest_raw_hasdesc_idx"),
+            models.Index(fields=["filter_decision"]),
+            models.Index(fields=["is_cold"]),
             models.Index(fields=["posted_date"]),
             models.Index(fields=["employment_type"]),
             models.Index(fields=["location_type"]),
@@ -989,6 +1091,42 @@ class RawJob(models.Model):
 
     def __str__(self):
         return f"{self.title} @ {self.company_name}"
+
+
+class HarvestSkippedTitle(models.Model):
+    raw_job = models.ForeignKey(
+        RawJob,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="skip_log",
+    )
+    company_name = models.CharField(max_length=256)
+    platform_slug = models.CharField(max_length=64)
+    job_title = models.CharField(max_length=512)
+    job_external_id = models.CharField(max_length=256, blank=True)
+    department = models.CharField(max_length=256, blank=True)
+    filter_decision = models.CharField(max_length=16)
+    filter_reason = models.CharField(max_length=512)
+    matched_negative = models.CharField(max_length=256, blank=True)
+    snapshot_id = models.UUIDField(null=True, blank=True)
+    batch_id = models.IntegerField(null=True, blank=True)
+    skipped_at = models.DateTimeField(auto_now_add=True)
+    is_sampled = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ["-skipped_at"]
+        indexes = [
+            models.Index(fields=["skipped_at"]),
+            models.Index(fields=["platform_slug"]),
+            models.Index(fields=["filter_decision"]),
+            models.Index(fields=["is_sampled"]),
+        ]
+        verbose_name = "Harvest skipped title"
+        verbose_name_plural = "Harvest skipped titles"
+
+    def __str__(self):
+        return f"{self.filter_decision}: {self.job_title}"
 
 
 class RawJobPayloadSnapshot(models.Model):
@@ -1186,7 +1324,7 @@ class HarvestEngineConfig(models.Model):
 
     # ── Worker-level concurrency ──────────────────────────────────────────────
     worker_concurrency = models.PositiveSmallIntegerField(
-        default=3,
+        default=2,
         verbose_name="Worker concurrency",
         help_text=(
             "How many company-fetch tasks run in parallel per worker. "
@@ -1198,7 +1336,7 @@ class HarvestEngineConfig(models.Model):
 
     # ── Task rate limit (applies LIVE via Celery broadcast on save) ───────────
     task_rate_limit = models.PositiveSmallIntegerField(
-        default=6,
+        default=3,
         verbose_name="Tasks per worker per minute",
         help_text=(
             "Max fetch tasks each worker runs per minute. "
@@ -1209,7 +1347,7 @@ class HarvestEngineConfig(models.Model):
 
     # ── Batch dispatch stagger ────────────────────────────────────────────────
     api_stagger_ms = models.PositiveIntegerField(
-        default=100,
+        default=1000,
         verbose_name="API platform stagger (ms)",
         help_text=(
             "Milliseconds between queuing tasks for JSON-API platforms "
@@ -1218,7 +1356,7 @@ class HarvestEngineConfig(models.Model):
         ),
     )
     scraper_stagger_ms = models.PositiveIntegerField(
-        default=1500,
+        default=5000,
         verbose_name="Scraper platform stagger (ms)",
         help_text=(
             "Milliseconds between queuing tasks for HTML-scraper platforms "
@@ -1406,7 +1544,7 @@ class HarvestEngineConfig(models.Model):
 
     # ── Full-fetch cooldown ───────────────────────────────────────────────────
     full_fetch_cooldown_minutes = models.PositiveSmallIntegerField(
-        default=120,
+        default=360,
         verbose_name="Full fetch cooldown (minutes)",
         help_text=(
             "Minimum minutes between two Full Crawl runs. "
@@ -1417,12 +1555,11 @@ class HarvestEngineConfig(models.Model):
 
     # ── JD backfill controls ──────────────────────────────────────────────────
     backfill_jd_workers = models.PositiveSmallIntegerField(
-        default=4,
+        default=1,
         verbose_name="JD backfill parallel workers",
         help_text=(
             "Concurrent chunk-worker threads for description backfill. "
-            "Hard-capped at 8 internally. Keep ≤ half your Celery pool size to "
-            "avoid starving other tasks. Takes effect on next Backfill JD run."
+            "Hard-capped at 1 internally on this deployment to protect web uptime."
         ),
     )
     backfill_jd_reset_locks = models.BooleanField(
@@ -1462,6 +1599,22 @@ class HarvestEngineConfig(models.Model):
             "Default 168 (7 days). Set 0 to validate all active jobs regardless of age."
         ),
     )
+
+    # ── Selective harvest role filter ────────────────────────────────────────
+    selective_filter_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Selective role filter enabled",
+        help_text="Master switch. When False, harvest keeps the existing full-storage behavior.",
+    )
+    filter_audit_mode = models.BooleanField(
+        default=True,
+        verbose_name="Selective filter audit mode",
+        help_text="When True, classify and audit decisions without skipping JD fetch/backfill.",
+    )
+    zero_tech_threshold = models.PositiveSmallIntegerField(default=5)
+    zero_tech_skip_ttl_days = models.PositiveSmallIntegerField(default=30)
+    cold_no_match_sample_rate_pct = models.PositiveSmallIntegerField(default=5)
+    hard_negative_phrases = models.JSONField(default=list, blank=True)
 
     # ── Cleanup controls ──────────────────────────────────────────────────────
     cleanup_inactive_age_days = models.PositiveSmallIntegerField(
@@ -1552,6 +1705,14 @@ class HarvestEngineConfig(models.Model):
         return cleaned or ["US", "IN", "CA", "GB", "AU"]
 
     def save(self, *args, **kwargs):
+        self.worker_concurrency = max(1, min(int(self.worker_concurrency or 1), 2))
+        self.task_rate_limit = max(1, min(int(self.task_rate_limit or 1), 3))
+        self.api_stagger_ms = max(int(self.api_stagger_ms or 0), 1000)
+        self.scraper_stagger_ms = max(int(self.scraper_stagger_ms or 0), 5000)
+        self.full_fetch_cooldown_minutes = max(int(self.full_fetch_cooldown_minutes or 0), 360)
+        self.backfill_jd_workers = 1
+        self.detect_batch_size = max(10, min(int(self.detect_batch_size or 50), 50))
+        self.classify_chunk_limit = min(int(self.classify_chunk_limit or 0), 20000)
         old_target_countries = None
         try:
             old_target_countries = type(self).objects.filter(pk=1).values_list(

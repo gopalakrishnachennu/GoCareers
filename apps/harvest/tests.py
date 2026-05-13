@@ -2647,3 +2647,64 @@ class HarvestEngineGuardrailTests(TestCase):
         self.assertEqual(status["hourly_used"], 1)
         self.assertTrue(status["hourly_warning"])
         self.assertTrue(status["available"])
+
+
+class SelectiveHarvestRoleFilterTests(SimpleTestCase):
+    def test_strips_seniority_and_matches_whole_phrase(self):
+        from harvest.role_filter import STRONG, classify_title
+
+        result = classify_title(
+            title="Distinguished Staff Senior Principal DevOps Engineer III",
+            categories=[
+                {
+                    "slug": "devops",
+                    "name": "DevOps",
+                    "include_phrases": ["devops engineer"],
+                    "exclude_phrases": [],
+                }
+            ],
+            hard_negatives=[],
+            snapshot_id="snap",
+        )
+
+        self.assertEqual(result.decision, STRONG)
+        self.assertEqual(result.category, "devops")
+
+    def test_hard_negative_blocks_without_include_phrase(self):
+        from harvest.role_filter import NO_MATCH, classify_title
+
+        result = classify_title(
+            title="Registered Nurse",
+            categories=[],
+            hard_negatives=["registered nurse"],
+            snapshot_id="snap",
+        )
+
+        self.assertEqual(result.decision, NO_MATCH)
+        self.assertEqual(result.matched_negative, "registered nurse")
+
+    def test_department_floor_preserves_possible(self):
+        from harvest.role_filter import POSSIBLE, classify_title
+
+        result = classify_title(
+            title="Analyst II",
+            department="Engineering",
+            categories=[],
+            hard_negatives=[],
+            snapshot_id="snap",
+        )
+
+        self.assertEqual(result.decision, POSSIBLE)
+
+    def test_generic_title_in_non_tech_department_goes_cold(self):
+        from harvest.role_filter import COLD, classify_title
+
+        result = classify_title(
+            title="Quality Engineer",
+            department="Manufacturing / Warehouse Operations",
+            categories=[],
+            hard_negatives=[],
+            snapshot_id="snap",
+        )
+
+        self.assertEqual(result.decision, COLD)

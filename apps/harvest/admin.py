@@ -3,6 +3,9 @@ from django.db.models import Count
 
 from .models import (
     CompanyPlatformLabel,
+    HarvestFilterSnapshot,
+    HarvestRoleCategory,
+    HarvestSkippedTitle,
     JobBoardPlatform,
     LocationCache,
     PlatformEngineConfig,
@@ -13,8 +16,8 @@ from .models import (
 
 @admin.register(JobBoardPlatform)
 class JobBoardPlatformAdmin(admin.ModelAdmin):
-    list_display = ["name", "slug", "api_type", "company_count", "is_enabled", "last_harvested_at"]
-    list_filter = ["api_type", "is_enabled"]
+    list_display = ["name", "slug", "api_type", "company_count", "title_in_list", "unknown_jd_budget_per_run", "is_enabled", "last_harvested_at"]
+    list_filter = ["api_type", "title_in_list", "is_enabled"]
     search_fields = ["name", "slug"]
     prepopulated_fields = {"slug": ("name",)}
 
@@ -28,8 +31,8 @@ class JobBoardPlatformAdmin(admin.ModelAdmin):
 
 @admin.register(CompanyPlatformLabel)
 class CompanyPlatformLabelAdmin(admin.ModelAdmin):
-    list_display = ["company", "platform", "confidence", "detection_method", "is_verified", "last_checked_at"]
-    list_filter = ["platform", "confidence", "detection_method", "is_verified"]
+    list_display = ["company", "platform", "confidence", "detection_method", "skip_in_selective_harvest", "consecutive_zero_tech_fetches", "is_verified", "last_checked_at"]
+    list_filter = ["platform", "confidence", "detection_method", "skip_in_selective_harvest", "is_verified"]
     search_fields = ["company__name"]
     raw_id_fields = ["company"]
     readonly_fields = ["detected_at", "last_checked_at", "verified_at"]
@@ -40,16 +43,46 @@ class RawJobAdmin(admin.ModelAdmin):
     list_display = [
         "title", "company_name", "platform_slug",
         "country_code", "scope_status", "is_priority",
+        "filter_decision", "role_category", "is_cold",
         "job_domain", "job_category",
         "sync_status", "employment_type", "fetched_at", "is_active",
     ]
     list_filter = [
         "platform_slug", "sync_status", "employment_type",
+        "filter_decision", "role_category", "is_cold", "jd_fetch_skipped",
         "job_domain", "country_code", "scope_status", "is_priority", "is_active",
     ]
-    search_fields = ["title", "company_name", "url_hash", "job_domain", "location_raw"]
+    search_fields = ["title", "company_name", "url_hash", "job_domain", "location_raw", "filter_reason"]
     raw_id_fields = ["company"]
     readonly_fields = ["url_hash", "fetched_at", "updated_at", "job_domain", "domain_version", "last_scope_evaluated_at"]
+
+
+@admin.register(HarvestRoleCategory)
+class HarvestRoleCategoryAdmin(admin.ModelAdmin):
+    list_display = ["name", "slug", "is_active", "priority", "updated_at"]
+    list_filter = ["is_active"]
+    search_fields = ["name", "slug", "include_phrases", "exclude_phrases"]
+    prepopulated_fields = {"slug": ("name",)}
+
+
+@admin.register(HarvestFilterSnapshot)
+class HarvestFilterSnapshotAdmin(admin.ModelAdmin):
+    list_display = ["snapshot_id", "batch", "phrase_hash", "taken_at"]
+    search_fields = ["snapshot_id", "phrase_hash", "notes"]
+    raw_id_fields = ["batch"]
+    readonly_fields = ["snapshot_id", "taken_at", "category_data", "phrase_hash"]
+
+
+@admin.register(HarvestSkippedTitle)
+class HarvestSkippedTitleAdmin(admin.ModelAdmin):
+    list_display = [
+        "job_title", "company_name", "platform_slug", "filter_decision",
+        "is_sampled", "skipped_at",
+    ]
+    list_filter = ["filter_decision", "platform_slug", "is_sampled", "skipped_at"]
+    search_fields = ["job_title", "company_name", "department", "filter_reason", "matched_negative"]
+    raw_id_fields = ["raw_job"]
+    readonly_fields = ["skipped_at"]
 
 
 @admin.register(RawJobPayloadSnapshot)
