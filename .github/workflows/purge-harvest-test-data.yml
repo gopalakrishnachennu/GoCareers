@@ -1,0 +1,42 @@
+name: Ops - Purge Harvest Test Data
+
+on:
+  workflow_dispatch:
+    inputs:
+      execute:
+        description: "false = dry-run, true = purge harvest test data"
+        required: true
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      confirm:
+        description: "Required for execute=true: DELETE_HARVEST_TEST_DATA"
+        required: false
+        default: ""
+
+jobs:
+  purge:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Purge harvest test data on production
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            git pull --ff-only origin main
+
+            if [ "${{ github.event.inputs.execute }}" = "true" ]; then
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+                python manage.py purge_harvest_test_data --execute --confirm "${{ github.event.inputs.confirm }}"
+            else
+              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+                python manage.py purge_harvest_test_data
+            fi

@@ -1,0 +1,71 @@
+name: Backup - Production Database
+
+on:
+  workflow_dispatch:
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    env:
+      BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+    steps:
+      - name: Validate backup password
+        run: |
+          set -e
+          if [ -z "$BACKUP_ENCRYPTION_PASSWORD" ]; then
+            echo "Missing BACKUP_ENCRYPTION_PASSWORD secret."
+            exit 1
+          fi
+
+      - name: Create encrypted backup on VPS
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          BACKUP_ENCRYPTION_PASSWORD: ${{ secrets.BACKUP_ENCRYPTION_PASSWORD }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          envs: BACKUP_ENCRYPTION_PASSWORD
+          command_timeout: 60m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            mkdir -p /opt/backups/db
+            STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+            FILE="/opt/backups/db/consulting-${STAMP}.pgdump.gz.enc"
+            TMP="/tmp/consulting-${STAMP}.pgdump"
+
+            docker compose -f docker-compose.prod.yml --env-file .env.production exec -T db \
+              sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-acl' \
+              | gzip -9 \
+              | openssl enc -aes-256-cbc -pbkdf2 -salt -pass env:BACKUP_ENCRYPTION_PASSWORD -out "$FILE"
+
+            openssl enc -d -aes-256-cbc -pbkdf2 -pass env:BACKUP_ENCRYPTION_PASSWORD -in "$FILE" \
+              | gzip -dc > "$TMP"
+            cat "$TMP" | docker compose -f docker-compose.prod.yml --env-file .env.production exec -T db pg_restore --list >/dev/null
+            rm -f "$TMP"
+
+            ln -sf "$FILE" /opt/backups/db/latest.pgdump.gz.enc
+            find /opt/backups/db -name 'consulting-*.pgdump.gz.enc' -mtime +14 -delete
+            ls -lh "$FILE"
+
+      - name: Download encrypted backup artifact
+        run: |
+          set -e
+          install -m 700 -d ~/.ssh prod-db-backup
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          scp -o StrictHostKeyChecking=no -i ~/.ssh/vps_key \
+            "${VPS_USER}@${VPS_HOST}:/opt/backups/db/latest.pgdump.gz.enc" \
+            prod-db-backup/latest.pgdump.gz.enc
+          ls -lh prod-db-backup/latest.pgdump.gz.enc
+
+      - name: Upload encrypted backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-db-backup-encrypted
+          path: prod-db-backup/latest.pgdump.gz.enc
+          retention-days: 7
