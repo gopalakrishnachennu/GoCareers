@@ -20,7 +20,8 @@ jobs:
   purge:
     runs-on: ubuntu-latest
     steps:
-      - name: Purge harvest test data on production
+      - name: Dry-run harvest test data purge on production
+        if: ${{ github.event.inputs.execute != 'true' }}
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -32,11 +33,21 @@ jobs:
             set -e
             cd /opt/consulting
             git pull --ff-only origin main
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
+              python manage.py purge_harvest_test_data
 
-            if [ "${{ github.event.inputs.execute }}" = "true" ]; then
-              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
-                python manage.py purge_harvest_test_data --execute --confirm "${{ github.event.inputs.confirm }}"
-            else
-              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
-                python manage.py purge_harvest_test_data
-            fi
+      - name: Execute harvest test data purge on production
+        if: ${{ github.event.inputs.execute == 'true' }}
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -e
+            cd /opt/consulting
+            git pull --ff-only origin main
+            docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
+              python manage.py purge_harvest_test_data --execute --confirm "${{ github.event.inputs.confirm }}"
