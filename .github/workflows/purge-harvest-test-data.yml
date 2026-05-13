@@ -34,9 +34,9 @@ jobs:
             git pull --ff-only origin main
 
             if [ "${{ github.event.inputs.execute }}" = "true" ]; then
-              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
                 python manage.py purge_harvest_test_data --execute --confirm "${{ github.event.inputs.confirm }}"
             else
-              docker compose -f docker-compose.prod.yml --env-file .env.production exec -T web \
+              docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web \
                 python manage.py purge_harvest_test_data
             fi
