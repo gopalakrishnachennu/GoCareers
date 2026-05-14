@@ -25,30 +25,57 @@
     <!-- Meta row -->
     <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm mb-4">
       <h2 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Category Info</h2>
-      <div class="grid gap-4 sm:grid-cols-2">
+
+      <!-- Row 1: Name (full width) -->
+      <div class="mb-4">
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Name</label>
+        <input type="text" name="{{ form.name.html_name }}"
+               value="{{ form.name.value|default:'' }}"
+               class="form-input w-full text-sm font-semibold"
+               placeholder="e.g. DevOps / Cloud / Infrastructure">
+        {% if form.name.errors %}<p class="mt-1 text-xs text-red-600">{{ form.name.errors }}</p>{% endif %}
+      </div>
+
+      <!-- Row 2: Slug · Priority · Active -->
+      <div class="grid gap-4 sm:grid-cols-3 mb-4">
         <div>
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Name</label>
-          {{ form.name }}
-          {% if form.name.errors %}<p class="mt-1 text-xs text-red-600">{{ form.name.errors }}</p>{% endif %}
+          <label class="block text-xs font-semibold text-gray-600 mb-1">
+            Slug <span class="font-normal text-gray-400">(auto-generated)</span>
+          </label>
+          <input type="text" name="{{ form.slug.html_name }}"
+                 value="{{ form.slug.value|default:'' }}"
+                 class="form-input w-full font-mono text-sm"
+                 placeholder="devops">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Slug <span class="font-normal text-gray-400">(auto)</span></label>
-          {{ form.slug }}
+          <label class="block text-xs font-semibold text-gray-600 mb-1">
+            Priority <span class="font-normal text-gray-400">(lower = checked first)</span>
+          </label>
+          <input type="number" name="{{ form.priority.html_name }}"
+                 value="{{ form.priority.value|default:'10' }}"
+                 class="form-input w-full text-center font-mono text-sm"
+                 min="1" max="999" step="10">
         </div>
-        <div>
-          <label class="block text-xs font-semibold text-gray-600 mb-1">Priority <span class="font-normal text-gray-400">(lower = checked first)</span></label>
-          {{ form.priority }}
-        </div>
-        <div class="flex items-center gap-3 pt-5">
-          <label class="relative inline-flex cursor-pointer items-center gap-3">
-            {{ form.is_active }}
+        <div class="flex items-end pb-1">
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" name="{{ form.is_active.html_name }}"
+                   {% if form.is_active.value %}checked{% endif %}
+                   class="h-4 w-4 rounded border-gray-300 text-indigo-600">
             <span class="text-sm font-semibold text-gray-700">Active</span>
+            <span class="text-xs text-gray-400">(inactive categories are skipped)</span>
           </label>
         </div>
       </div>
-      <div class="mt-4">
-        <label class="block text-xs font-semibold text-gray-600 mb-1">Notes <span class="font-normal text-gray-400">(optional)</span></label>
-        {{ form.notes }}
+
+      <!-- Row 3: Notes (full width) -->
+      <div>
+        <label class="block text-xs font-semibold text-gray-600 mb-1">
+          Notes <span class="font-normal text-gray-400">(optional — what marketing roles does this cover?)</span>
+        </label>
+        <textarea name="{{ form.notes.html_name }}"
+                  rows="2"
+                  class="form-input w-full text-sm resize-none"
+                  placeholder="e.g. Covers MarketingRole: devops-cloud, servicenow-developer…">{{ form.notes.value|default:'' }}</textarea>
       </div>
     </div>
 

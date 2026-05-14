@@ -155,6 +155,39 @@ GENERIC_TECH_SIGNALS = [
 ]
 
 
+# ── Compound-word normalizations ─────────────────────────────────────────────
+# Tech ops portmanteaus are written both as one word ("mlops") and two words
+# ("ml ops").  Job boards use both forms inconsistently.  Apply these after
+# basic cleanup so that "ML Ops Engineer" and "MLOps Engineer" both collapse
+# to the same canonical token before phrase matching.
+#
+# Applied in both normalize() and normalize_phrase() so titles and stored
+# phrases always reach the same form regardless of how they were typed.
+# ─────────────────────────────────────────────────────────────────────────────
+COMPOUND_JOINS = [
+    # ops portmanteaus — order matters: longer patterns first
+    (r"\bdev\s+sec\s+ops\b",   "devsecops"),
+    (r"\bdev\s+ops\b",         "devops"),
+    (r"\bml\s+ops\b",          "mlops"),
+    (r"\bdata\s+ops\b",        "dataops"),
+    (r"\bsec\s+ops\b",         "secops"),
+    (r"\bfin\s+ops\b",         "finops"),
+    (r"\bcloud\s+ops\b",       "cloudops"),
+    (r"\bit\s+ops\b",          "itops"),
+    # Other common split forms
+    (r"\bfull\s+stack\b",      "full stack"),   # keep as two words (already two-word phrase)
+    (r"\bback\s+end\b",        "backend"),
+    (r"\bfront\s+end\b",       "frontend"),
+    (r"\bopen\s+ai\b",         "openai"),
+]
+
+
+def _apply_compound_joins(text: str) -> str:
+    for pattern, replacement in COMPOUND_JOINS:
+        text = re.sub(pattern, replacement, text)
+    return text
+
+
 @dataclass(frozen=True)
 class ClassifyResult:
     decision: str
@@ -168,15 +201,21 @@ class ClassifyResult:
 def normalize(text: str) -> str:
     """Normalize a job TITLE for matching.
 
-    Strips seniority prefixes/suffixes (Senior, Staff, Lead, L5, etc.) so that
-    "Senior AI Engineer" and "AI Engineer" both collapse to "ai engineer" and
-    match the same phrase "ai engineer" without needing duplicate entries.
+    Steps:
+      1. Lowercase + strip
+      2. Separators (- _ / | backslash) → space
+      3. Punctuation → space
+      4. Compound-join ops portmanteaus: "ml ops" → "mlops", "dev ops" → "devops"
+      5. Strip seniority prefixes/suffixes so "Senior ML Ops Engineer" and
+         "MLOps Engineer" both collapse to "mlops engineer"
     """
     if not text:
         return ""
     text = str(text).lower().strip()
     text = re.sub(r"[-_/\\|]", " ", text)
     text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _apply_compound_joins(text)
     for pattern in SENIORITY_PATTERNS:
         text = re.sub(pattern, " ", text)
     return re.sub(r"\s+", " ", text).strip()
@@ -185,17 +224,20 @@ def normalize(text: str) -> str:
 def normalize_phrase(phrase: str) -> str:
     """Normalize a phrase from the category include/exclude bank.
 
-    Intentionally does NOT strip seniority words — phrases must be written as
-    canonical tech terms without seniority prefixes (e.g. "software engineer",
-    NOT "senior software engineer").  Stripping seniority from phrases causes
-    "staff engineer" → "engineer", which then falsely matches every job title
-    that contains the word "engineer" (AI Engineer, Build Engineer, etc.).
+    Same basic cleanup as normalize() + compound joins, but intentionally does
+    NOT strip seniority words.  This means:
+      - Phrases should be written without seniority prefixes ("mlops engineer"
+        not "senior mlops engineer").
+      - "ml ops engineer" entered as a phrase normalizes to "mlops engineer"
+        so it matches titles written either way.
     """
     if not phrase:
         return ""
     text = str(phrase).lower().strip()
     text = re.sub(r"[-_/\\|]", " ", text)
     text = re.sub(r"[^\w\s]", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = _apply_compound_joins(text)
     return re.sub(r"\s+", " ", text).strip()
 
 
