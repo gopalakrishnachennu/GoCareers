@@ -113,9 +113,15 @@ NON_TECH_DEPARTMENT_SIGNALS = [
 ]
 
 GENERIC_TECH_SIGNALS = [
-    # These are last-resort POSSIBLE signals when no category phrase matched.
-    # Keep these as multi-word phrases — single words like "engineer" or
-    # "developer" are too broad and cause false positives on non-tech roles.
+    # Last-resort POSSIBLE signals — job title has no category phrase match but
+    # still looks like a tech role.  POSSIBLE still fetches the JD, only COLD
+    # and NO_MATCH skip it.
+    #
+    # Rules:
+    #   - Multi-word phrases only — single words are too broad.
+    #   - Add here when a real-world title form isn't caught by any category
+    #     phrase but is unambiguously a tech role.  Category phrases take
+    #     priority (they fire first and return STRONG).
     "software engineer",
     "software developer",
     "data engineer",
@@ -128,19 +134,21 @@ GENERIC_TECH_SIGNALS = [
     "quality engineer",
     "test engineer",
     "test automation engineer",
-    "technical lead",
     "technical architect",
     "platform engineer",
     "systems engineer",
     "security engineer",
+    "security analyst",           # catches "Security Operations Analyst" after ops expansion
+    "security operations",        # broad fallback: "Security Operations Analyst" → POSSIBLE
+    "secops",                     # catches "SecOps Analyst/Manager" after sec+ops compound join
     "network engineer",
+    "network analyst",
     "cloud architect",
     "solutions architect",
     "product engineer",
     "research engineer",
     "engineering manager",
-    "tech lead",
-    # Enterprise platform roles (catch-all before dedicated categories are set up)
+    # Enterprise platform roles (catch-all until dedicated category phrases match)
     "servicenow developer",
     "salesforce developer",
     "sap consultant",
@@ -155,35 +163,87 @@ GENERIC_TECH_SIGNALS = [
 ]
 
 
-# ── Compound-word normalizations ─────────────────────────────────────────────
-# Tech ops portmanteaus are written both as one word ("mlops") and two words
-# ("ml ops").  Job boards use both forms inconsistently.  Apply these after
-# basic cleanup so that "ML Ops Engineer" and "MLOps Engineer" both collapse
-# to the same canonical token before phrase matching.
+# ── Canonical-form normalizations ────────────────────────────────────────────
+# Job boards write the same role in wildly inconsistent ways.  Rather than
+# enumerating thousands of phrase variants, we collapse known synonym families
+# to a single canonical token BEFORE phrase matching.
 #
-# Applied in both normalize() and normalize_phrase() so titles and stored
-# phrases always reach the same form regardless of how they were typed.
+# Rules applied in both normalize() (titles) and normalize_phrase() (phrases)
+# so both sides always meet at the same form.
+#
+# Design principles:
+#   1. Patterns must be SPECIFIC — "operations" alone is not collapsed (too
+#      broad: "hospital operations", "retail operations" are non-tech).
+#      Only tech-prefixed "operations" → "ops".
+#   2. Longer / more specific patterns before shorter ones.
+#   3. No pattern should introduce false positives for non-tech roles.
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Step 1 — Verbose → ops  (e.g. "ml operations" → "mlops")
+# Matches "[tech prefix] operations" and collapses to the ops portmanteau.
+# The prefix list is intentionally narrow — only unambiguous tech abbreviations.
+_OPS_VERBOSE = re.compile(
+    # Matches "[tech prefix] operations" and collapses to the ops portmanteau.
+    # "security" is intentionally excluded: "Security Operations Analyst" should
+    # stay as "security operations analyst" so it can match "security analyst"
+    # phrases and GENERIC_TECH_SIGNALS — transforming it to "secops analyst"
+    # would break those matches.  "dev security operations" still becomes
+    # "devsecops" via the three-word COMPOUND_JOINS rule.
+    r"\b(dev\s+sec|dev(?:elopment)?|ml|machine\s+learning|ai|artificial\s+intelligence"
+    r"|data|fin(?:ancial)?|cloud|git|platform|network"
+    r"|it|information\s+technology)\s+operations\b"
+)
+
+def _ops_verbose_to_portmanteau(text: str) -> str:
+    """'ml operations engineer' → 'mlops engineer', 'development operations' → 'devops'."""
+    def _replace(m: re.Match) -> str:
+        prefix = re.sub(r"\s+", "", m.group(1))  # collapse inner spaces
+        # canonicalize verbose prefixes to their short form
+        prefix = {
+            "development":            "dev",
+            "machinelearning":        "ml",
+            "artificialintelligence": "ai",
+            "financial":              "fin",
+            "informationtechnology":  "it",
+            "devsec":                 "devsec",  # handled by 3-word rule below
+        }.get(prefix, prefix)
+        return prefix + "ops"
+    return _OPS_VERBOSE.sub(_replace, text)
+
+
+# Step 2 — "[X] ops" / "[X] op" two-word portmanteau → single token
+# Handles "dev ops" → "devops", "ml ops" → "mlops", etc.
 COMPOUND_JOINS = [
-    # ops portmanteaus — order matters: longer patterns first
-    (r"\bdev\s+sec\s+ops\b",   "devsecops"),
-    (r"\bdev\s+ops\b",         "devops"),
-    (r"\bml\s+ops\b",          "mlops"),
-    (r"\bdata\s+ops\b",        "dataops"),
-    (r"\bsec\s+ops\b",         "secops"),
-    (r"\bfin\s+ops\b",         "finops"),
-    (r"\bcloud\s+ops\b",       "cloudops"),
-    (r"\bit\s+ops\b",          "itops"),
-    # Other common split forms
-    (r"\bfull\s+stack\b",      "full stack"),   # keep as two words (already two-word phrase)
-    (r"\bback\s+end\b",        "backend"),
-    (r"\bfront\s+end\b",       "frontend"),
-    (r"\bopen\s+ai\b",         "openai"),
+    # Three-word ops (longest first)
+    (r"\bdev\s+sec\s+ops\b",              "devsecops"),
+    (r"\bsite\s+reliability\s+engineering\b", "sre"),
+    # Two-word ops
+    (r"\bdev\s+ops\b",                    "devops"),
+    (r"\bml\s+ops\b",                     "mlops"),
+    (r"\bdata\s+ops\b",                   "dataops"),
+    (r"\bsec\s+ops\b",                    "secops"),
+    (r"\bfin\s+ops\b",                    "finops"),
+    (r"\bcloud\s+ops\b",                  "cloudops"),
+    (r"\bit\s+ops\b",                     "itops"),
+    (r"\bgit\s+ops\b",                    "gitops"),
+    (r"\bplatform\s+ops\b",               "platformops"),
+    # Common tech split-words
+    (r"\bback\s+end\b",                   "backend"),
+    (r"\bfront\s+end\b",                  "frontend"),
+    (r"\bfull\s+stack\b",                 "full stack"),  # keep two-word
+    (r"\bopen\s+ai\b",                    "openai"),
+    (r"\bno\s+sql\b",                     "nosql"),
+    (r"\bci\s+cd\b",                      "cicd"),
+    (r"\btype\s+script\b",                "typescript"),
+    (r"\bjava\s+script\b",                "javascript"),
+    (r"\bpower\s+bi\b",                   "power bi"),    # keep two-word (it's a product name)
+    (r"\bmachine\s+learning\b",           "machine learning"),  # keep — it's already a phrase
 ]
 
 
 def _apply_compound_joins(text: str) -> str:
-    for pattern, replacement in COMPOUND_JOINS:
+    text = _ops_verbose_to_portmanteau(text)       # "ml operations" → "mlops"
+    for pattern, replacement in COMPOUND_JOINS:    # "ml ops" → "mlops"
         text = re.sub(pattern, replacement, text)
     return text
 
