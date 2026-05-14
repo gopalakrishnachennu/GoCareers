@@ -12,6 +12,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.tags }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -32,7 +35,10 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=sha
+            type=raw,value=main
             type=ref,event=tag
+          # type=raw,value=main always tags the image as :main on every push.
+          # The VPS pulls ghcr.io/repo:main — keeping it simple and predictable.
 
       - name: Build and push
         uses: docker/build-push-action@v6
@@ -41,4 +47,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
+          # GitHub Actions cache — layers are reused across builds.
+          # pip install only reruns if requirements.txt changed.
+          # npm ci only reruns if package-lock.json changed.
+          # npm run build + COPY always reruns (code changed).
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
