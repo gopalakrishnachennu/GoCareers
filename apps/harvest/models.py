@@ -679,6 +679,14 @@ class RawJob(models.Model):
         blank=True,
         related_name="raw_jobs",
     )
+    fetch_batch = models.ForeignKey(
+        "FetchBatch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="raw_jobs",
+        help_text="Batch that produced or last refreshed this raw job.",
+    )
     job_platform = models.ForeignKey(
         JobBoardPlatform,
         on_delete=models.SET_NULL,
@@ -882,6 +890,11 @@ class RawJob(models.Model):
     resume_ready_score = models.FloatField(null=True, blank=True)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
+    is_test_run = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True for smoke/test harvest rows that must stay out of production backlog counts.",
+    )
     sync_status = models.CharField(
         max_length=16, choices=SyncStatus.choices, default=SyncStatus.PENDING
     )
@@ -914,6 +927,7 @@ class RawJob(models.Model):
             models.Index(fields=["company", "platform_slug"]),
             models.Index(fields=["platform_slug"]),
             models.Index(fields=["sync_status"]),
+            models.Index(fields=["is_test_run"]),
             models.Index(fields=["fetched_at"],       name="harvest_raw_fetched_idx"),
             models.Index(fields=["is_remote"],         name="harvest_raw_remote_idx"),
             models.Index(fields=["has_description"],   name="harvest_raw_hasdesc_idx"),
@@ -953,6 +967,7 @@ class RawJob(models.Model):
             models.Index(fields=["has_html_content"]),
             # Composite — filter + default ORDER BY fetched_at DESC
             models.Index(fields=["sync_status",    "-fetched_at"], name="harvest_raw_sync_fetched_idx"),
+            models.Index(fields=["is_test_run",    "-fetched_at"], name="harvest_raw_test_fetched_idx"),
             models.Index(fields=["is_active",      "-fetched_at"], name="harvest_raw_active_fetched_idx"),
             models.Index(fields=["is_priority",    "-fetched_at"], name="raw_priority_fetched_idx"),
             models.Index(fields=["scope_status",   "-fetched_at"], name="raw_scope_fetched_idx"),
@@ -1046,11 +1061,25 @@ class RawJob(models.Model):
             return "FAILED"
         if self.sync_status == self.SyncStatus.SKIPPED:
             return "DUPLICATE"
+        if self.is_cold or self.jd_fetch_skipped or self.filter_decision in {"COLD", "NO_MATCH"}:
+            return "FILTERED OUT"
+        weak_domains = {
+            "",
+            "general-business",
+            "marketing-specialist",
+            "other-generalist",
+            "uncategorized",
+            "unknown",
+        }
+        filter_allows_pool = self.filter_decision in {None, "", "STRONG", "POSSIBLE"}
         if (
-            self.has_description
+            not self.is_test_run
+            and self.has_description
             and self.is_resume_jd_usable()
             and effective_conf >= get_ready_stage_min_confidence()
             and self.is_active
+            and filter_allows_pool
+            and (self.job_domain or "").strip().lower() not in weak_domains
         ):
             return "READY"
         if effective_conf > 0:

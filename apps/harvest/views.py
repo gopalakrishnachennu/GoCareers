@@ -52,6 +52,7 @@ from .services.pipeline_snapshot import (
 from .services.rawjob_query import (
     apply_rawjob_filters as _svc_apply_rawjob_filters,
     effective_classification_q as _svc_effective_classification_q,
+    production_rawjobs_queryset as _svc_production_rawjobs_queryset,
     ready_stage_q as _svc_ready_stage_q,
     rawjob_filter_state as _svc_rawjob_filter_state,
 )
@@ -1119,7 +1120,7 @@ class RawJobListView(SuperuserRequiredMixin, ListView):
 
         # Platform breakdown
         ctx["platform_stats"] = (
-            RawJob.objects.values("platform_slug")
+            _svc_production_rawjobs_queryset().values("platform_slug")
             .annotate(count=Count("id"))
             .order_by("-count")
         )
@@ -2350,9 +2351,9 @@ class RawJobCompanyBreakdownView(SuperuserRequiredMixin, View):
         filter_type = request.GET.get("filter", "").strip()
 
         if filter_type == "pending":
-            qs = RawJob.objects.filter(sync_status="PENDING")
+            qs = _svc_production_rawjobs_queryset().filter(sync_status="PENDING")
         elif filter_type == "missing_jd":
-            qs = _raw_jobs_missing_jd_base_qs()
+            qs = RawJob.objects.missing_jd().filter(is_test_run=False)
         else:
             return JsonResponse({"error": "Invalid filter. Use pending or missing_jd."}, status=400)
 
@@ -2401,7 +2402,7 @@ class RawJobStatsView(SuperuserRequiredMixin, View):
             "missing_jd_expired_jobs": stats["expired_missing"],
             "running_batch": batch_data,
             "platform_stats": list(
-                RawJob.objects.values("platform_slug")
+                _svc_production_rawjobs_queryset().values("platform_slug")
                 .annotate(count=Count("id"))
                 .order_by("-count")
                 .values("platform_slug", "count")

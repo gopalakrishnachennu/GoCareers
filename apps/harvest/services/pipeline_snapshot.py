@@ -9,12 +9,14 @@ from django.utils import timezone
 
 from harvest.models import CompanyFetchRun, RawJob
 from harvest.runtime_config import get_jd_backfill_lock_stale_minutes, get_ready_stage_min_confidence
-from harvest.services.rawjob_query import build_funnel_counts
+from harvest.services.rawjob_query import build_funnel_counts, filtered_out_q, production_rawjobs_queryset
 
 
 def raw_jobs_missing_description_count() -> int:
     """Count jobs with empty/trivial description that still have a URL."""
-    return RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes()).count()
+    return RawJob.objects.missing_jd(
+        stale_minutes=get_jd_backfill_lock_stale_minutes()
+    ).filter(is_test_run=False).count()
 
 
 def raw_jobs_missing_jd_expired_count() -> int:
@@ -26,6 +28,7 @@ def raw_jobs_missing_jd_expired_count() -> int:
 
     return (
         RawJob.objects.missing_jd(stale_minutes=get_jd_backfill_lock_stale_minutes())
+        .filter(is_test_run=False)
         .filter(
             Q(expires_at__lt=now)
             | Q(closing_date__lt=today)
@@ -49,7 +52,8 @@ def load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
         return stats
 
     last_24h_cutoff = timezone.now() - timedelta(hours=24)
-    agg = RawJob.objects.aggregate(
+    base = production_rawjobs_queryset()
+    agg = base.aggregate(
         total=Count("id"),
         active=Count("id", filter=Q(is_active=True)),
         remote=Count("id", filter=Q(is_remote=True)),
@@ -57,8 +61,13 @@ def load_rawjobs_dashboard_stats(*, force_refresh: bool = False) -> dict:
         pending=Count("id", filter=Q(sync_status="PENDING")),
         failed=Count("id", filter=Q(sync_status="FAILED")),
         new_today=Count("id", filter=Q(fetched_at__gte=last_24h_cutoff)),
-        missing_jd=Count("id", filter=Q(has_description=False)),
+        missing_jd=Count(
+            "id",
+            filter=Q(has_description=False, is_cold=False, jd_fetch_skipped=False)
+            & ~Q(filter_decision__in=["COLD", "NO_MATCH"]),
+        ),
     )
+    agg["test_rows"] = RawJob.objects.filter(is_test_run=True).count()
 
     expired_missing = None if force_refresh else cache.get(expired_key)
     if expired_missing is None:
@@ -82,7 +91,7 @@ def raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
     stale_cutoff = now - timedelta(hours=stale_hours)
     recent_cutoff = now - timedelta(hours=24)
 
-    base = RawJob.objects.all()
+    base = production_rawjobs_queryset()
     funnel = build_funnel_counts(base)
 
     pending_qs = base.filter(sync_status=RawJob.SyncStatus.PENDING)
@@ -110,7 +119,12 @@ def raw_jobs_workflow_insights(*, stale_pending_hours: int = 6) -> dict:
 
     ready_min_conf = get_ready_stage_min_confidence()
     quality_debt = {
-        "missing_jd": base.filter(has_description=False).count(),
+        "missing_jd": base.filter(
+            has_description=False,
+            is_cold=False,
+            jd_fetch_skipped=False,
+        ).exclude(filter_decision__in=["COLD", "NO_MATCH"]).count(),
+        "filtered_out": base.filter(filtered_out_q()).count(),
         "html_heavy": base.filter(has_html_content=True).count(),
         "low_confidence": base.filter(
             Q(category_confidence__lt=ready_min_conf)

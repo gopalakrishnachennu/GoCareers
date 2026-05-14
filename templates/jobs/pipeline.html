@@ -62,7 +62,8 @@
           <span class="w-2 h-2 rounded-full bg-blue-300 inline-block animate-pulse"></span>Harvesting
         </div>
         <div class="text-3xl font-extrabold text-white">{{ raw_total|default:"0" }}</div>
-        <div class="text-blue-200 text-xs mt-0.5">raw jobs collected</div>
+        <div class="text-blue-200 text-xs mt-0.5">production raw jobs</div>
+        {% if raw_test_total %}<div class="text-blue-300 text-[11px] mt-0.5">{{ raw_test_total }} test rows hidden</div>{% endif %}
         {% if last_batch %}<div class="text-blue-300 text-[11px] mt-1">Last run: {{ last_batch.created_at|timesince }} ago</div>{% endif %}
       </a>
       <a href="?tab=live" class="hero-stat group">
@@ -448,7 +449,7 @@
     <a href="{% url 'jobs-pipeline' %}?tab=raw#raw-jobs-table" class="btn-secondary btn-sm">Raw Table</a>
     <a href="{% url 'ops-center' %}#pipelines" class="btn-secondary btn-sm">Run Monitor</a>
     <a href="{% url 'harvest-batch-activity' %}" class="btn-secondary btn-sm" title="Centralized metrics for Quick / Full fetch">Harvest activity</a>
-    <form method="post" action="{% url 'harvest-run-sync' %}">{% csrf_token %}
+    <form method="post" action="{% url 'harvest-run-sync' %}" onsubmit="return confirm('Sync only production READY rows to Vet Queue. Test/smoke, filtered-out, missing-JD, inactive, weak-domain, and low-confidence rows stay blocked. Continue?')">{% csrf_token %}
       <input type="hidden" name="qualified_only" value="1">
       <input type="hidden" name="max_jobs" value="0">
       <input type="hidden" name="chunk_size" value="500">
@@ -462,6 +463,18 @@
   </div>
 </div>
 
+{% if raw_test_total and raw_selected_include_test != '1' and raw_selected_include_test != 'only' %}
+<div class="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+  {{ raw_test_total }} smoke/test raw rows are hidden from production backlog, funnel, and sync counts.
+  <a href="?tab=raw&include_test=1#raw-jobs-table" class="font-semibold underline">Show audit rows</a>
+</div>
+{% elif raw_selected_include_test %}
+<div class="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+  Audit mode is showing smoke/test rows. These rows are still blocked from READY and Vet Queue sync.
+  <a href="?tab=raw#raw-jobs-table" class="font-semibold underline">Return to production rows</a>
+</div>
+{% endif %}
+
 {% if request.user.is_superuser %}
 <div class="mb-3 p-3 rounded-xl border border-slate-200 bg-white" id="raw-controls-panel">
   <div class="flex items-center justify-between mb-2">
@@ -474,7 +487,7 @@
   </div>
   <div class="flex flex-wrap gap-2">
     {# ── Full Fetch Jobs — configurable cooldown enforced server-side ────── #}
-    <form method="post" action="{% url 'harvest-run-fetch-batch' %}">
+    <form method="post" action="{% url 'harvest-run-fetch-batch' %}" onsubmit="return confirm('Full Fetch can create a large production crawl. Use Quick Fetch for normal refresh. Continue Full Fetch?')">
       {% csrf_token %}
       <input type="hidden" name="fetch_mode" value="full">
       <input type="hidden" name="return_to" value="jobs-pipeline">
@@ -532,7 +545,7 @@
     </form>
 
     {# ── Sync Qualified — qualified_only + unlimited from config ────────── #}
-    <form method="post" action="{% url 'harvest-run-sync' %}">
+    <form method="post" action="{% url 'harvest-run-sync' %}" onsubmit="return confirm('Sync only production READY rows to Vet Queue. Test/smoke and filtered rows remain blocked. Continue?')">
       {% csrf_token %}
       <input type="hidden" name="qualified_only" value="1">
       <input type="hidden" name="max_jobs" value="0">
@@ -917,7 +930,7 @@
   <input type="hidden" name="tab" value="raw">
   {% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}
   {% if raw_selected_stage %}<input type="hidden" name="stage" value="{{ raw_selected_stage }}">{% endif %}
-  <div class="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+  <div class="grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
     <div>
       <label class="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Country</label>
       <select name="country_code" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
@@ -937,6 +950,14 @@
         {% for role in raw_marketing_roles %}
         <option value="{{ role.slug }}" {% if raw_selected_marketing_role == role.slug %}selected{% endif %}>{{ role.name }}</option>
         {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label class="block text-[11px] font-semibold uppercase tracking-wide text-slate-500 mb-1">Audit Rows</label>
+      <select name="include_test" class="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-400">
+        <option value="" {% if not raw_selected_include_test %}selected{% endif %}>Production only</option>
+        <option value="1" {% if raw_selected_include_test == '1' %}selected{% endif %}>Include test</option>
+        <option value="only" {% if raw_selected_include_test == 'only' %}selected{% endif %}>Test only</option>
       </select>
     </div>
     <div class="flex gap-2">
@@ -992,7 +1013,7 @@
   {% endif %}
 </div>
 
-<div class="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+<div class="grid grid-cols-2 lg:grid-cols-5 gap-2 mb-3">
   <a href="?{{ raw_blocker_links.qualified_pending }}#raw-jobs-table"
      class="p-3 rounded-lg border border-emerald-200 bg-emerald-50 hover:border-emerald-300 transition">
     <div class="text-[11px] uppercase text-emerald-700">Qualified Pending</div>
@@ -1003,7 +1024,13 @@
      class="p-3 rounded-lg border border-amber-200 bg-amber-50 hover:border-amber-300 transition">
     <div class="text-[11px] uppercase text-amber-700">Blocked: Missing JD</div>
     <div class="text-2xl font-bold text-amber-800">{{ raw_gate_summary.blocked_missing_jd }}</div>
-    <div class="text-[11px] text-amber-700 mt-0.5">no usable description</div>
+    <div class="text-[11px] text-amber-700 mt-0.5">needs description fetch</div>
+  </a>
+  <a href="?{{ raw_blocker_links.blocked_filtered_out }}#raw-jobs-table"
+     class="p-3 rounded-lg border border-slate-200 bg-slate-50 hover:border-slate-300 transition">
+    <div class="text-[11px] uppercase text-slate-600">Filtered Out</div>
+    <div class="text-2xl font-bold text-slate-800">{{ raw_gate_summary.blocked_filtered_out }}</div>
+    <div class="text-[11px] text-slate-600 mt-0.5">stored, no JD fetch</div>
   </a>
   <a href="?{{ raw_blocker_links.blocked_inactive }}#raw-jobs-table"
      class="p-3 rounded-lg border border-rose-200 bg-rose-50 hover:border-rose-300 transition">
@@ -1021,6 +1048,7 @@
 <div class="mb-4 p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs text-slate-600">
   Pending backlog: <strong class="text-slate-800">{{ raw_gate_summary.pending_total }}</strong> ·
   Already synced from ready stage: <strong class="text-emerald-700">{{ raw_gate_summary.qualified_synced }}</strong> ·
+  Filtered out: <strong class="text-slate-800">{{ raw_gate_summary.blocked_filtered_out }}</strong> ·
   Duplicate/skipped rows: <strong class="text-slate-800">{{ raw_gate_summary.duplicates }}</strong>.
   Use the cards above to drill directly into each blocker cohort.
 </div>
@@ -1059,13 +1087,14 @@
     </div>
   </div>
   <div class="overflow-x-auto overflow-y-visible">
-  <table class="w-full min-w-[1780px] text-sm">
+  <table class="w-full min-w-[1920px] text-sm">
     <thead class="tbl-head">
       <tr>
         <th class="tbl-th sticky left-0 z-20 min-w-[280px] bg-slate-50 shadow-[1px_0_0_#e2e8f0]">Job</th>
         <th class="tbl-th min-w-[190px]">Company</th>
         <th class="tbl-th">Platform</th>
         <th class="tbl-th">Domain</th>
+        <th class="tbl-th min-w-[150px]">Filter</th>
         <th class="tbl-th">Confidence</th>
         <th class="tbl-th">Stage</th>
         <th class="tbl-th">JD Status</th>
@@ -1102,6 +1131,22 @@
           {% else %}
             <span class="text-gray-300 text-xs">—</span>
           {% endif %}
+        </td>
+        <td class="tbl-td min-w-[150px]">
+          {% if raw.pipeline_row.is_test_run %}
+            <span class="badge-yellow">TEST</span>
+          {% elif raw.pipeline_row.filter_decision == 'STRONG' %}
+            <span class="badge-green">STRONG</span>
+          {% elif raw.pipeline_row.filter_decision == 'POSSIBLE' %}
+            <span class="badge-blue">POSSIBLE</span>
+          {% elif raw.pipeline_row.filter_decision == 'COLD' or raw.pipeline_row.filter_decision == 'NO_MATCH' %}
+            <span class="badge-gray">{{ raw.pipeline_row.filter_decision }}</span>
+          {% elif raw.pipeline_row.filter_decision %}
+            <span class="badge-yellow">{{ raw.pipeline_row.filter_decision }}</span>
+          {% else %}
+            <span class="text-gray-300 text-xs">—</span>
+          {% endif %}
+          {% if raw.pipeline_row.filter_reason %}<div class="mt-1 max-w-[180px] truncate text-[11px] text-slate-400" title="{{ raw.pipeline_row.filter_reason }}">{{ raw.pipeline_row.filter_reason }}</div>{% endif %}
         </td>
         <td class="tbl-td">
           <span class="{% if raw.pipeline_row.confidence_level == 'high' %}badge-green{% elif raw.pipeline_row.confidence_level == 'medium' %}badge-yellow{% elif raw.pipeline_row.confidence_level == 'low' %}badge-red{% else %}badge-gray{% endif %}">{{ raw.pipeline_row.confidence_label }}</span>
@@ -1389,6 +1434,7 @@
     if (stage === "READY") return "badge-green";
     if (stage === "SYNCED") return "badge-blue";
     if (stage === "DUPLICATE") return "badge-yellow";
+    if (stage === "FILTERED OUT") return "badge-gray";
     if (stage === "BLOCKED" || stage === "INACTIVE" || stage === "FAILED") return "badge-red";
     return "badge-gray";
   };
@@ -1396,8 +1442,13 @@
   const rowHtml = (job) => {
     const platform = job.platform_slug ? `<span class="badge-blue">${esc(job.platform_slug)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
     const domain = job.job_domain ? `<span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-violet-100 text-violet-700 border border-violet-200">${esc(job.job_domain)}</span>` : `<span class="text-gray-300 text-xs">—</span>`;
+    const decision = job.is_test_run ? "TEST" : String(job.filter_decision || "");
+    const filterClass = decision === "STRONG" ? "badge-green" : decision === "POSSIBLE" ? "badge-blue" : decision === "TEST" || decision === "UNKNOWN" ? "badge-yellow" : decision ? "badge-gray" : "";
+    const filterCell = decision
+      ? `<span class="${filterClass}">${esc(decision)}</span>${job.filter_reason ? `<div class="mt-1 max-w-[180px] truncate text-[11px] text-slate-400" title="${esc(job.filter_reason)}">${esc(job.filter_reason)}</div>` : ""}`
+      : `<span class="text-gray-300 text-xs">—</span>`;
     const confidenceClass = job.confidence_level === "high" ? "badge-green" : job.confidence_level === "medium" ? "badge-yellow" : job.confidence_level === "low" ? "badge-red" : "badge-gray";
-    const jdClass = job.jd_level === "good" ? "badge-green" : "badge-yellow";
+    const jdClass = job.jd_level === "good" ? "badge-green" : job.jd_level === "muted" ? "badge-gray" : "badge-yellow";
     const active = job.is_active ? `<span class="badge-green">✓ Active</span>` : `<span class="badge-red">✗ Inactive</span>`;
     const gateBadgeClass = job.gate_pass ? "badge-green" : "badge-red";
     const gate = job.gate_code ? `<span class="${gateBadgeClass}">${esc(job.gate_code)}</span>` : "—";
@@ -1410,6 +1461,7 @@
         <td class="tbl-td min-w-[190px]"><div class="font-medium text-slate-800">${esc(job.company_name || "—")}</div></td>
         <td class="tbl-td">${platform}</td>
         <td class="tbl-td">${domain}</td>
+        <td class="tbl-td min-w-[150px]">${filterCell}</td>
         <td class="tbl-td"><span class="${confidenceClass}">${esc(job.confidence_label || "Unknown")}</span></td>
         <td class="tbl-td"><span class="${toBadgeClass(job.stage)}">${esc(job.stage || "—")}</span></td>
         <td class="tbl-td"><span class="${jdClass}">${esc(job.jd_status || "—")}</span></td>

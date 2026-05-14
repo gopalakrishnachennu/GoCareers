@@ -1459,6 +1459,7 @@ def fetch_raw_jobs_for_company_task(
             defaults = {
                 "company": label.company,
                 "platform_label": label,
+                "fetch_batch": batch,
                 "job_platform": label.platform,
                 "external_id": external_id,
                 "original_url": original_url[:1024],
@@ -1507,6 +1508,7 @@ def fetch_raw_jobs_for_company_task(
                 "filter_snapshot_id": filter_result.snapshot_id if filter_enabled else None,
                 "is_cold": bool(filter_blocks_pool),
                 "jd_fetch_skipped": bool(should_skip_jd),
+                "is_test_run": bool(is_test_run),
                 "is_active": True,
                 "content_hash": compute_content_hash(
                     label.company.pk,

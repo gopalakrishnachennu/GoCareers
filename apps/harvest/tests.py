@@ -244,6 +244,7 @@ class HarvestEngineHardeningTests(TestCase):
                 description="A real job description",
                 has_description=True,
                 category_confidence=0.60,
+                job_domain="devops-engineer",
             )
         )
         high = RawJob.objects.create(
@@ -254,6 +255,7 @@ class HarvestEngineHardeningTests(TestCase):
                 description="A real job description",
                 has_description=True,
                 category_confidence=0.75,
+                job_domain="devops-engineer",
             )
         )
 
@@ -431,6 +433,58 @@ class SelectiveHarvestEngineTests(TestCase):
         self.assertFalse(qs.filter(pk=cold.pk).exists())
         self.assertFalse(qs.filter(pk=skipped.pk).exists())
         self.assertTrue(qs.filter(pk=eligible.pk).exists())
+
+    def test_ready_stage_excludes_test_filtered_and_weak_domain_rows(self):
+        from harvest.models import RawJob
+        from harvest.services.rawjob_query import ready_stage_q
+
+        common = {
+            "description": "Detailed description with enough content for the ready gate.",
+            "category_confidence": 0.95,
+            "word_count": 220,
+        }
+        ready = self._raw_job(
+            url_hash="strict-ready",
+            original_url="https://selective.example/jobs/strict-ready",
+            title="DevOps Engineer",
+            job_domain="devops-engineer",
+            filter_decision="STRONG",
+            **common,
+        )
+        weak_domain = self._raw_job(
+            url_hash="strict-weak",
+            original_url="https://selective.example/jobs/strict-weak",
+            title="Sales Operations Manager",
+            job_domain="general-business",
+            filter_decision="STRONG",
+            **common,
+        )
+        filtered = self._raw_job(
+            url_hash="strict-filtered",
+            original_url="https://selective.example/jobs/strict-filtered",
+            title="Warehouse Associate",
+            job_domain="devops-engineer",
+            filter_decision="NO_MATCH",
+            is_cold=True,
+            jd_fetch_skipped=True,
+            **common,
+        )
+        test_row = self._raw_job(
+            url_hash="strict-test",
+            original_url="https://selective.example/jobs/strict-test",
+            title="DevOps Engineer",
+            job_domain="devops-engineer",
+            filter_decision="STRONG",
+            is_test_run=True,
+            **common,
+        )
+
+        qs = RawJob.objects.filter(ready_stage_q())
+        self.assertTrue(qs.filter(pk=ready.pk).exists())
+        self.assertFalse(qs.filter(pk=weak_domain.pk).exists())
+        self.assertFalse(qs.filter(pk=filtered.pk).exists())
+        self.assertFalse(qs.filter(pk=test_row.pk).exists())
+        self.assertEqual(filtered.pipeline_stage_label(), "FILTERED OUT")
 
     def test_selective_gui_title_tester_requires_superuser_and_returns_decision(self):
         from django.contrib.auth import get_user_model
@@ -2134,6 +2188,8 @@ class RawJobPipelineUnificationTests(TestCase):
             classification_confidence=None,
             is_active: bool = True,
             word_count: int = 0,
+            job_domain: str = "",
+            is_test_run: bool = False,
         ) -> RawJob:
             url = f"https://example.com/jobs/{suffix}"
             return RawJob.objects.create(
@@ -2150,13 +2206,22 @@ class RawJobPipelineUnificationTests(TestCase):
                 classification_confidence=classification_confidence,
                 is_active=is_active,
                 word_count=word_count,
+                job_domain=job_domain,
+                is_test_run=is_test_run,
             )
 
         _mk("fetched", desc="")
         _mk("parsed", desc="Parsed description text")
         _mk("enriched", desc="Enriched text", quality_score=0.71)
         _mk("classified", desc="Classified text", quality_score=0.81, category_confidence=0.24)
-        _mk("ready", desc="Ready text", quality_score=0.92, category_confidence=0.84, word_count=220)
+        _mk(
+            "ready",
+            desc="Ready text",
+            quality_score=0.92,
+            category_confidence=0.84,
+            word_count=220,
+            job_domain="devops-engineer",
+        )
         _mk(
             "synced",
             desc="Synced text",
@@ -2164,6 +2229,7 @@ class RawJobPipelineUnificationTests(TestCase):
             quality_score=0.95,
             category_confidence=0.90,
             word_count=260,
+            job_domain="devops-engineer",
         )
 
     def test_funnel_counts_match_stage_filters(self):
@@ -2227,6 +2293,30 @@ class RawJobPipelineUnificationTests(TestCase):
         self.assertEqual(summary["blocked_missing_jd"], 1)
         self.assertEqual(summary["blocked_inactive"], 0)
         self.assertEqual(summary["blocked_low_conf"], 1)
+
+    def test_jobs_pipeline_hides_test_rows_by_default(self):
+        from harvest.models import RawJob
+
+        RawJob.objects.create(
+            company=self.company,
+            company_name="UnifyCo",
+            title="Smoke only",
+            url_hash="smoke-hidden",
+            original_url="https://example.com/jobs/smoke-hidden",
+            is_test_run=True,
+        )
+
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "raw"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["raw_test_total"], 1)
+        self.assertEqual(response.context["raw_total"], 6)
+        ids = {row.id for row in response.context["tab_raw"]}
+        self.assertFalse(RawJob.objects.get(url_hash="smoke-hidden").id in ids)
+
+        response = self.client.get(reverse("jobs-pipeline"), {"tab": "raw", "include_test": "only"})
+        self.assertEqual(response.status_code, 200)
+        ids = {row.id for row in response.context["tab_raw"]}
+        self.assertTrue(RawJob.objects.get(url_hash="smoke-hidden").id in ids)
 
     def test_jobs_pipeline_raw_stage_filter_uses_shared_filter(self):
         from harvest.models import RawJob

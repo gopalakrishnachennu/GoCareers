@@ -14,6 +14,16 @@ from harvest.runtime_config import get_ready_stage_min_confidence
 
 
 DUPLICATE_SKIP_REASONS = ("DUPLICATE_RISK", "DUPLICATE_EXISTING")
+POOL_ALLOWED_FILTER_DECISIONS = ("", "STRONG", "POSSIBLE")
+FILTERED_OUT_DECISIONS = ("COLD", "NO_MATCH")
+WEAK_OR_NON_TARGET_DOMAINS = (
+    "",
+    "general-business",
+    "marketing-specialist",
+    "other-generalist",
+    "uncategorized",
+    "unknown",
+)
 
 # Shared filter keys used by both Raw Jobs views and stats/funnel drill-downs.
 FILTER_STATE_KEYS = (
@@ -68,6 +78,8 @@ FILTER_STATE_KEYS = (
     "scope_status",
     "country_code",
     "marketing_role",
+    "filter_decision",
+    "include_test",
 )
 
 
@@ -90,7 +102,23 @@ def ready_stage_q(min_conf: float | None = None) -> Q:
     """READY rows for workflow board (active + JD present + confidence)."""
     if min_conf is None:
         min_conf = get_ready_stage_min_confidence()
-    return Q(has_description=True, is_active=True) & effective_classification_q(min_conf=min_conf)
+    return (
+        Q(is_test_run=False)
+        & Q(has_description=True, is_active=True, is_cold=False, jd_fetch_skipped=False)
+        & effective_classification_q(min_conf=min_conf)
+        & (Q(filter_decision__isnull=True) | Q(filter_decision__in=POOL_ALLOWED_FILTER_DECISIONS))
+        & ~Q(job_domain__in=WEAK_OR_NON_TARGET_DOMAINS)
+    )
+
+
+def filtered_out_q() -> Q:
+    """Rows intentionally retained for audit but blocked from JD/pool flow."""
+    return Q(is_cold=True) | Q(jd_fetch_skipped=True) | Q(filter_decision__in=FILTERED_OUT_DECISIONS)
+
+
+def production_rawjobs_queryset() -> QuerySet[RawJob]:
+    """RawJob base queryset for production dashboards and sync-facing views."""
+    return RawJob.objects.filter(is_test_run=False)
 
 
 def json_array_contains_q(field_name: str, value: str) -> Q:
@@ -157,6 +185,12 @@ def build_funnel_counts(base_qs: QuerySet[RawJob] | None = None) -> dict[str, in
 
 def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> QuerySet[RawJob]:
     """Canonical RawJob filters shared by HTML + JSON + funnel drill-downs."""
+
+    include_test = _get(params, "include_test").lower()
+    if include_test in {"only", "test"}:
+        qs = qs.filter(is_test_run=True)
+    elif include_test not in {"1", "true", "yes", "all"}:
+        qs = qs.filter(is_test_run=False)
 
     q = _get(params, "q")
     if q:
@@ -445,6 +479,12 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
     scope_f = _get(params, "scope_status")
     if scope_f:
         qs = qs.filter(scope_status=scope_f)
+
+    filter_decision_f = _get(params, "filter_decision").upper()
+    if filter_decision_f == "FILTERED_OUT":
+        qs = qs.filter(filtered_out_q())
+    elif filter_decision_f:
+        qs = qs.filter(filter_decision=filter_decision_f)
 
     country_code_f = _get(params, "country_code")
     if country_code_f:

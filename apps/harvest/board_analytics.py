@@ -21,7 +21,13 @@ from django.db.models.functions import Coalesce
 from django.utils import timezone
 
 from .board_capabilities import get_capabilities, capability_gap
-from .services.rawjob_query import duplicate_rawjob_q, effective_classification_q, json_array_contains_q, ready_stage_q
+from .services.rawjob_query import (
+    duplicate_rawjob_q,
+    effective_classification_q,
+    json_array_contains_q,
+    production_rawjobs_queryset,
+    ready_stage_q,
+)
 from .enrichments import CURRENT_DOMAIN_VERSION
 from .runtime_config import get_ready_stage_min_confidence
 
@@ -359,7 +365,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
         _field_annotations["has_schedule"] = Count("id", filter=~Q(employment_type="UNKNOWN"))
 
     job_qs = (
-        RawJob.objects
+        production_rawjobs_queryset()
         .annotate(metric_slug=raw_platform_slug)
         .exclude(metric_slug__in=JARVIS_SLUGS)
         .values("metric_slug")
@@ -618,7 +624,7 @@ def _build_board_analytics(window_days: int = 30) -> dict:
     ats_rows.sort(key=lambda x: (x["risk_score"] is None, -(x["risk_score"] or 0), -x["total_jobs"]))
 
     # ── 5. Jarvis summary ────────────────────────────────────────────────────
-    jarvis_qs = RawJob.objects.filter(platform_slug="jarvis")
+    jarvis_qs = production_rawjobs_queryset().filter(platform_slug="jarvis")
     jarvis_total = jarvis_qs.count()
     jarvis_summary = {
         "total_jobs": jarvis_total,
@@ -755,7 +761,8 @@ def _build_scope_summary(target_countries: list[str]) -> dict:
     """
     from .models import RawJob
 
-    total = RawJob.objects.count()
+    base = production_rawjobs_queryset()
+    total = base.count()
     if total == 0:
         return {
             "total": 0,
@@ -765,7 +772,7 @@ def _build_scope_summary(target_countries: list[str]) -> dict:
         }
 
     by_status = dict(
-        RawJob.objects.values("scope_status")
+        base.values("scope_status")
         .annotate(c=Count("id"))
         .values_list("scope_status", "c")
     )
@@ -791,7 +798,7 @@ def _build_scope_summary(target_countries: list[str]) -> dict:
     ]
 
     top_countries = list(
-        RawJob.objects.exclude(country_code="")
+        base.exclude(country_code="")
         .values("country_code")
         .annotate(c=Count("id"))
         .order_by("-c")[:8]

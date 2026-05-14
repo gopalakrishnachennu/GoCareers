@@ -93,6 +93,8 @@ def _rawjob_scope_label(raw_job) -> str:
 def _rawjob_jd_label(raw_job) -> str:
     if raw_job.has_description:
         return "Has JD"
+    if getattr(raw_job, "is_cold", False) or getattr(raw_job, "jd_fetch_skipped", False):
+        return "JD skipped by filter"
     if getattr(raw_job, "jd_backfill_locked_at", None):
         return "Fetching JD"
     return "Missing JD"
@@ -105,6 +107,12 @@ def _rawjob_blocker_label(raw_job, gate) -> str:
         return "DUPLICATE"
     if raw_job.sync_status == "SKIPPED":
         return "SKIPPED"
+    if (
+        getattr(raw_job, "is_cold", False)
+        or getattr(raw_job, "jd_fetch_skipped", False)
+        or raw_job.filter_decision in {"COLD", "NO_MATCH"}
+    ):
+        return "FILTERED_OUT"
     if not raw_job.is_active:
         return "INACTIVE_POSTING"
     if not raw_job.has_description:
@@ -136,6 +144,7 @@ def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") ->
     scope_label = country_label or _rawjob_scope_label(raw_job)
     blocker = _rawjob_blocker_label(raw_job, gate)
     jd_status = _rawjob_jd_label(raw_job)
+    filter_decision = raw_job.filter_decision or ("TEST" if getattr(raw_job, "is_test_run", False) else "")
 
     if raw_job.location_type and raw_job.location_type != "UNKNOWN":
         work_mode = raw_job.location_type.title().replace("_", " ")
@@ -156,7 +165,7 @@ def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") ->
             else "unknown"
         ),
         "jd_status": jd_status,
-        "jd_level": "good" if raw_job.has_description else "warn",
+        "jd_level": "good" if raw_job.has_description else ("muted" if blocker == "FILTERED_OUT" else "warn"),
         "country_scope": scope_label,
         "scope_status": raw_job.scope_status or "",
         "gate_code": blocker or (gate.reason_code if gate else ""),
@@ -167,6 +176,9 @@ def build_rawjob_pipeline_row(raw_job, *, gate=None, country_label: str = "") ->
         "external_id": raw_job.external_id or "",
         "posted": raw_job.posted_date.strftime("%b %-d, %Y") if raw_job.posted_date else "",
         "harvested": raw_job.fetched_at.strftime("%b %-d, %H:%M") if raw_job.fetched_at else "",
+        "filter_decision": filter_decision,
+        "filter_reason": raw_job.filter_reason or "",
+        "is_test_run": bool(getattr(raw_job, "is_test_run", False)),
     }
 
 
@@ -1240,6 +1252,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             "category_confidence", "country_code", "scope_status", "scope_reason",
             "sync_skip_reason", "external_id", "location_type", "salary_currency",
             "salary_period", "jd_backfill_locked_at",
+            "filter_decision", "filter_reason", "is_cold", "jd_fetch_skipped",
+            "is_test_run", "fetch_batch",
         )
 
         paginator = Paginator(qs, 100)
@@ -1265,6 +1279,9 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "title": (job.title or "")[:60],
                 "job_category": job.job_category or "",
                 "job_domain": job.job_domain or "",
+                "filter_decision": row["filter_decision"],
+                "filter_reason": row["filter_reason"][:90],
+                "is_test_run": row["is_test_run"],
                 "location_raw": (job.location_raw or "")[:64],
                 "fetched_at": row["harvested"],
                 "is_active": bool(job.is_active),
@@ -1325,41 +1342,56 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             apply_rawjob_filters,
             build_funnel_counts,
             effective_classification_q,
+            filtered_out_q,
+            production_rawjobs_queryset,
             ready_stage_q,
         )
         from harvest.runtime_config import get_ready_stage_min_confidence
 
         raw_stats = load_rawjobs_dashboard_stats(force_refresh=False)
         raw_insights = raw_jobs_workflow_insights()
+        raw_base_qs = production_rawjobs_queryset()
         raw_total = raw_stats.get("total", 0)
-        raw_funnel = (raw_insights or {}).get("funnel") or build_funnel_counts(RawJob.objects.all())
+        raw_test_total = raw_stats.get("test_rows")
+        if raw_test_total is None:
+            raw_test_total = RawJob.objects.filter(is_test_run=True).count()
+        raw_funnel = (raw_insights or {}).get("funnel") or build_funnel_counts(raw_base_qs)
         ready_min_conf = get_ready_stage_min_confidence()
         raw_ready_q = ready_stage_q(min_conf=ready_min_conf)
-        raw_qualified_pending = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
-        raw_qualified_synced = RawJob.objects.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
+        raw_qualified_pending = raw_base_qs.filter(raw_ready_q, sync_status=RawJob.SyncStatus.PENDING).count()
+        raw_qualified_synced = raw_base_qs.filter(raw_ready_q, sync_status=RawJob.SyncStatus.SYNCED).count()
         raw_pending_total = raw_stats.get("pending", 0)
-        raw_blocked_missing_jd = RawJob.objects.filter(
+        raw_blocked_missing_jd = raw_base_qs.filter(
             sync_status=RawJob.SyncStatus.PENDING,
             has_description=False,
-        ).count()
-        raw_blocked_inactive = RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, is_active=False).count()
+            is_cold=False,
+            jd_fetch_skipped=False,
+        ).exclude(filter_decision__in=["COLD", "NO_MATCH"]).count()
+        raw_blocked_filtered_out = raw_base_qs.filter(
+            sync_status=RawJob.SyncStatus.PENDING,
+        ).filter(filtered_out_q()).count()
+        raw_blocked_inactive = raw_base_qs.filter(sync_status=RawJob.SyncStatus.PENDING, is_active=False).count()
         raw_blocked_low_conf = (
-            RawJob.objects.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=True, is_active=True)
+            raw_base_qs.filter(sync_status=RawJob.SyncStatus.PENDING, has_description=True, is_active=True)
+            .filter(is_cold=False, jd_fetch_skipped=False)
+            .exclude(filter_decision__in=["COLD", "NO_MATCH"])
             .filter(effective_classification_q(min_conf=0.01))
             .exclude(effective_classification_q(min_conf=ready_min_conf))
             .count()
         )
         raw_duplicates_total = (raw_insights or {}).get("duplicates", {}).get("total")
         if raw_duplicates_total is None:
-            raw_duplicates_total = RawJob.objects.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
+            raw_duplicates_total = raw_base_qs.filter(sync_status=RawJob.SyncStatus.SKIPPED).count()
         raw_gate_summary = {
             "pending_total": raw_pending_total,
             "qualified_pending": raw_qualified_pending,
             "qualified_synced": raw_qualified_synced,
             "blocked_missing_jd": raw_blocked_missing_jd,
+            "blocked_filtered_out": raw_blocked_filtered_out,
             "blocked_inactive": raw_blocked_inactive,
             "blocked_low_conf": raw_blocked_low_conf,
             "duplicates": raw_duplicates_total,
+            "test_rows": raw_test_total,
         }
         pool_total = Job.objects.filter(status=Job.Status.POOL, is_archived=False).count()
         pool_qs_all = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
@@ -1416,6 +1448,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "label_pk",
                 "country_code",
                 "marketing_role",
+                "include_test",
                 "date_from",
                 "date_to",
                 "last_hours",
@@ -1446,18 +1479,23 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 ),
                 "blocked_missing_jd": _raw_query_with_overrides(
                     raw_scope_pairs,
-                    {"sync_status": "PENDING", "has_jd": "0"},
-                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                    {"sync_status": "PENDING", "has_jd": "0", "filter_decision": ""},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket", "filter_decision"},
+                ),
+                "blocked_filtered_out": _raw_query_with_overrides(
+                    raw_scope_pairs,
+                    {"sync_status": "PENDING", "filter_decision": "FILTERED_OUT"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket", "filter_decision"},
                 ),
                 "blocked_inactive": _raw_query_with_overrides(
                     raw_scope_pairs,
                     {"sync_status": "PENDING", "is_active": "0"},
-                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket", "filter_decision"},
                 ),
                 "blocked_low_conf": _raw_query_with_overrides(
                     raw_scope_pairs,
                     {"sync_status": "PENDING", "classification_bucket": "low"},
-                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket"},
+                    remove_keys={"stage", "sync_status", "has_jd", "is_active", "classification_bucket", "filter_decision"},
                 ),
             }
             raw_seed_qs = qs.only(
@@ -1496,6 +1534,12 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "is_remote",
                 "jd_backfill_locked_at",
                 "job_domain",
+                "filter_decision",
+                "filter_reason",
+                "is_cold",
+                "jd_fetch_skipped",
+                "is_test_run",
+                "fetch_batch",
                 "state",
                 "country",
                 "word_count",
@@ -1610,6 +1654,8 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
                 "country_code": "Country Code",
                 "state": "State",
                 "marketing_role": "Marketing Role",
+                "filter_decision": "Filter",
+                "include_test": "Test Rows",
             }
             raw_role_label_by_slug = {
                 role.slug: role.name
@@ -1637,6 +1683,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'raw_blocker_links': raw_blocker_links,
             'active_filter_chips': active_filter_chips,
             'raw_total': raw_total,
+            'raw_test_total': raw_test_total,
             'raw_funnel': raw_funnel,
             'raw_gate_summary': raw_gate_summary,
             'pool_total': pool_total,
@@ -1650,7 +1697,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'raw_total_filtered': raw_total_filtered if tab == "raw" else 0,
             'vet_gate_summary': vet_gate_summary,
             'raw_country_code_options': (
-                RawJob.objects.exclude(country_code="")
+                raw_base_qs.exclude(country_code="")
                 .values_list("country_code", flat=True)
                 .distinct()
                 .order_by("country_code")
@@ -1658,6 +1705,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             'raw_marketing_roles': MarketingRole.objects.filter(is_active=True).order_by("name"),
             'raw_selected_country_code': (request.GET.get("country_code") or "").strip(),
             'raw_selected_marketing_role': (request.GET.get("marketing_role") or "").strip(),
+            'raw_selected_include_test': (request.GET.get("include_test") or "").strip(),
         }
         if tab == 'pool':
             ctx.update(pool_extra)
