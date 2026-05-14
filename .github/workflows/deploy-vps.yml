@@ -17,10 +17,14 @@ jobs:
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          envs: GHCR_TOKEN,GHCR_USER
           script_stop: true
           command_timeout: 30m
           script: |
@@ -31,13 +35,18 @@ jobs:
             fi
             cd /opt/consulting
             git pull --ff-only origin main
+            # Pull the pre-built image from GHCR (built by CI, not rebuilt on VPS).
+            # This drops deploy time from ~8 min to ~30 sec.
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            export IMAGE=ghcr.io/${{ github.repository }}:main
+            export IMAGE_WORKER=ghcr.io/${{ github.repository }}:main
+            export IMAGE_BEAT=ghcr.io/${{ github.repository }}:main
+            docker compose -f docker-compose.prod.yml --env-file .env.production pull web celery_worker celery_harvest celery_beat
             # Keep Redis/Postgres up during deploy. Never use `down` here; it
             # interrupts workers and can create avoidable downtime.
             export WEB_CONCURRENCY=2
             export WORKER_CONCURRENCY=2
             export HARVEST_CONCURRENCY=2
-            export COMPOSE_PARALLEL_LIMIT=1
-            docker compose -f docker-compose.prod.yml --env-file .env.production build
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py repair_harvest_migration_state
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps web python manage.py migrate --no-input
             docker compose -f docker-compose.prod.yml --env-file .env.production run --rm --no-deps -e RUN_MIGRATIONS=0 web python manage.py check
