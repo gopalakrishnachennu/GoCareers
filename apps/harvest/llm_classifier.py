@@ -1,0 +1,334 @@
+"""
+LLM-based job classification — two separate functions:
+
+1. classify_batch()  — category classifier (second-pass after enrichment).
+   Asks "what category is this job?" (Engineering, DevOps, etc.)
+   Output: {"id", "category", "confidence"}
+
+2. gate_jobs_batch() — Tier-2 JD relevance gate (new).
+   Asks "is this a tech consulting role we should pursue?" YES | NO.
+   Runs on AMBIGUOUS jobs BEFORE committing to full JD fetch.
+   Output: {"id", "decision", "confidence", "category", "reason"}
+
+Both use the OpenAI chat completions API (model: gpt-4o-mini by default).
+Jobs are batched (20/call for gate, 10/call for classify) to keep cost minimal.
+Estimated cost: ~$0.001 per 20 gate calls, ~$0.001 per 10 classify calls.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Fixed category list — must match _CATEGORY_PATTERNS in enrichments.py
+VALID_CATEGORIES: list[str] = [
+    "AI / ML",
+    "Data & Analytics",
+    "Security",
+    "DevOps / SRE",
+    "Engineering",
+    "Product",
+    "Design",
+    "Marketing",
+    "Sales",
+    "Customer Success",
+    "Finance",
+    "HR & People",
+    "Legal",
+    "Operations",
+    "Healthcare",
+    "Education",
+]
+
+_CATEGORY_SET = frozenset(VALID_CATEGORIES)
+
+BATCH_SIZE = 10          # jobs per LLM call
+LLM_CONFIDENCE = 0.82   # stored category_confidence for LLM-classified jobs
+LLM_SOURCE = "llm"      # classification_source value
+
+_SYSTEM_PROMPT = """\
+You are a job classification assistant. Classify each job into exactly one category from this list:
+
+""" + "\n".join(f"  {c}" for c in VALID_CATEGORIES) + """
+
+Rules:
+- Return ONLY a JSON array — no prose, no markdown fences.
+- Each element: {"id": <integer>, "category": "<category from list>", "confidence": <0.0–1.0>}
+- confidence: 1.0 = obvious match, 0.6 = educated guess
+- If genuinely ambiguous, pick the closest match and set confidence < 0.7
+- Never return a category not in the list above"""
+
+
+def _make_user_prompt(jobs: list[dict]) -> str:
+    lines = []
+    for j in jobs:
+        title = (j.get("title") or "").strip()[:120]
+        desc = (j.get("description") or "").strip()[:300]
+        lines.append(f'ID {j["id"]}: Title="{title}" | Excerpt="{desc}"')
+    return "Classify these jobs:\n\n" + "\n\n".join(lines)
+
+
+def _parse_llm_response(text: str) -> list[dict]:
+    """Extract the JSON array from the LLM response robustly."""
+    # Strip markdown fences if present
+    cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text.strip())
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, list):
+            return data
+    except json.JSONDecodeError:
+        pass
+    # Try finding the first [...] block
+    m = re.search(r"\[.*\]", cleaned, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except json.JSONDecodeError:
+            pass
+    return []
+
+
+def classify_batch(
+    jobs: list[dict],
+    *,
+    api_key: str | None = None,
+    model: str = "gpt-4o-mini",
+) -> dict[int, dict[str, Any]]:
+    """
+    Classify a batch of jobs via LLM.
+
+    Args:
+        jobs: list of dicts with keys: id (int), title (str), description (str)
+        api_key: OpenAI API key. Falls back to OPENAI_API_KEY env var.
+        model: OpenAI model name.
+
+    Returns:
+        dict mapping job id → {"category": str, "confidence": float}
+        Missing IDs = LLM returned no result for that job (caller should skip).
+    """
+    if not jobs:
+        return {}
+
+    key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        logger.warning("llm_classifier: OPENAI_API_KEY not set — skipping LLM pass")
+        return {}
+
+    try:
+        import openai
+    except ImportError:
+        logger.warning("llm_classifier: openai package not installed")
+        return {}
+
+    client = openai.OpenAI(api_key=key)
+    user_prompt = _make_user_prompt(jobs)
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=len(jobs) * 60 + 50,
+        )
+    except Exception as exc:
+        logger.error("llm_classifier: API call failed: %s", exc)
+        return {}
+
+    raw_text = (response.choices[0].message.content or "").strip()
+    items = _parse_llm_response(raw_text)
+
+    results: dict[int, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            job_id = int(item.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        category = str(item.get("category") or "").strip()
+        if category not in _CATEGORY_SET:
+            # Try case-insensitive rescue
+            for valid in VALID_CATEGORIES:
+                if valid.lower() == category.lower():
+                    category = valid
+                    break
+            else:
+                continue  # discard invalid category
+        confidence = float(item.get("confidence") or LLM_CONFIDENCE)
+        results[job_id] = {"category": category, "confidence": min(1.0, max(0.0, confidence))}
+
+    return results
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tier-2 JD Content Gate — binary YES/NO relevance gate
+# ─────────────────────────────────────────────────────────────────────────────
+
+_GATE_SYSTEM_PROMPT = """\
+You are a hiring intake filter for a tech consulting firm called GoCareers.
+We EXCLUSIVELY place consultants in B2B technology roles.
+
+Target roles (answer YES):
+  • Software / backend / frontend / full-stack engineering
+  • DevOps, SRE, Cloud (AWS/GCP/Azure), Infrastructure, Platform engineering
+  • Data engineering, Data pipelines, Analytics engineering
+  • AI / ML / LLM engineering
+  • Cybersecurity, SecOps, Network engineering
+  • Enterprise platforms: ServiceNow, Salesforce, SAP, Workday (IT roles), Oracle, Dynamics
+  • Healthcare IT: Epic, Cerner, Meditech, HL7/FHIR, EHR/EMR analysts
+  • QA automation, Test engineering
+  • IT infrastructure, Systems administration (tech-depth roles)
+
+NOT target roles (answer NO):
+  • Clinical / nursing / pharmacy / lab / radiology / patient care
+  • Finance, accounting, FP&A, audit
+  • HR, recruiting, talent acquisition, payroll
+  • Sales, marketing, PR, communications
+  • Legal, compliance, policy
+  • Operations management (non-tech: logistics, facilities, retail, food service)
+  • General management / C-suite without explicit tech delivery scope
+
+Rules:
+  - When a title is ambiguous, rely on the JD snippet to decide.
+  - "Manager, X Engineering" = YES if they manage engineers.
+  - "Analyst" = YES if the snippet shows data/BI/SQL/cloud; NO if it shows business/finance/marketing.
+  - "Consultant" = YES if the snippet shows IT systems; NO if it shows strategy/management.
+  - Confidence 1.0 = crystal clear. 0.6 = educated guess from limited snippet.
+  - If snippet is empty or too short to judge: confidence ≤ 0.55, lean YES if title sounds tech.
+
+Return ONLY a JSON array — no prose, no markdown fences:
+[{"id": <int>, "decision": "YES"|"NO", "confidence": <0.0-1.0>, "category": "<short tech category or 'non-tech'>", "reason": "<one sentence>"}]"""
+
+
+def _make_gate_prompt(jobs: list[dict]) -> str:
+    """Build the user prompt for gate_jobs_batch()."""
+    lines = []
+    for j in jobs:
+        title = (j.get("title") or "").strip()[:120]
+        company = (j.get("company") or "").strip()[:80]
+        dept = (j.get("department") or "").strip()[:80]
+        snippet = (j.get("snippet") or "").strip()[:800]
+        parts = [f'ID {j["id"]}: Title="{title}"']
+        if company:
+            parts.append(f'Company="{company}"')
+        if dept:
+            parts.append(f'Department="{dept}"')
+        if snippet:
+            parts.append(f'Snippet="{snippet}"')
+        else:
+            parts.append('Snippet=""')
+        lines.append(" | ".join(parts))
+    return "Evaluate these jobs:\n\n" + "\n\n".join(lines)
+
+
+def gate_jobs_batch(
+    jobs: list[dict],
+    *,
+    api_key: str | None = None,
+    model: str = "gpt-4o-mini",
+    confidence_threshold: float = 0.65,
+) -> dict[int, dict[str, Any]]:
+    """
+    Tier-2 JD content gate — binary YES/NO relevance filter.
+
+    Args:
+        jobs: list of dicts with keys:
+              id (int), title (str), company (str), department (str), snippet (str)
+              snippet = first 800 chars of clean JD text (from list payload or detail fetch)
+        api_key: OpenAI API key. Falls back to OPENAI_API_KEY env var.
+        model: OpenAI model. gpt-4o-mini is recommended (cheap + fast).
+        confidence_threshold: results below this are returned with decision="UNCERTAIN".
+
+    Returns:
+        dict mapping job id → {
+            "decision":   "YES" | "NO" | "UNCERTAIN",
+            "confidence": float (0.0–1.0),
+            "category":   str  (e.g. "devops", "data-engineering", "non-tech"),
+            "reason":     str  (one-sentence LLM reason, for audit),
+        }
+        Missing IDs = LLM returned no result (caller treats as UNCERTAIN).
+    """
+    if not jobs:
+        return {}
+
+    key = api_key or os.environ.get("OPENAI_API_KEY", "")
+    if not key:
+        logger.warning("gate_jobs_batch: OPENAI_API_KEY not set — skipping JD gate")
+        return {}
+
+    try:
+        import openai
+    except ImportError:
+        logger.warning("gate_jobs_batch: openai package not installed")
+        return {}
+
+    client = openai.OpenAI(api_key=key)
+    user_prompt = _make_gate_prompt(jobs)
+
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": _GATE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.05,           # near-deterministic for a filter
+            max_tokens=len(jobs) * 80 + 50,
+        )
+    except Exception as exc:
+        logger.error("gate_jobs_batch: API call failed: %s", exc)
+        return {}
+
+    raw_text = (response.choices[0].message.content or "").strip()
+    items = _parse_llm_response(raw_text)
+
+    results: dict[int, dict[str, Any]] = {}
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        try:
+            job_id = int(item.get("id") or 0)
+        except (TypeError, ValueError):
+            continue
+        if not job_id:
+            continue
+
+        raw_decision = str(item.get("decision") or "").strip().upper()
+        conf = float(item.get("confidence") or 0.0)
+        conf = min(1.0, max(0.0, conf))
+        category = str(item.get("category") or "").strip().lower()[:64]
+        reason = str(item.get("reason") or "").strip()[:512]
+
+        # Apply confidence threshold — below it, mark UNCERTAIN for human review
+        if conf < confidence_threshold:
+            decision = "UNCERTAIN"
+        elif raw_decision == "YES":
+            decision = "YES"
+        elif raw_decision == "NO":
+            decision = "NO"
+        else:
+            decision = "UNCERTAIN"
+
+        results[job_id] = {
+            "decision":   decision,
+            "confidence": conf,
+            "category":   category,
+            "reason":     reason,
+        }
+
+    logger.info(
+        "gate_jobs_batch: %d jobs → %d results (YES=%d NO=%d UNCERTAIN=%d)",
+        len(jobs),
+        len(results),
+        sum(1 for r in results.values() if r["decision"] == "YES"),
+        sum(1 for r in results.values() if r["decision"] == "NO"),
+        sum(1 for r in results.values() if r["decision"] == "UNCERTAIN"),
+    )
+    return results

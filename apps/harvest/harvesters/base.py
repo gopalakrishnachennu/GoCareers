@@ -9,7 +9,9 @@ Policies enforced on every request:
   5. Full audit log    — every HTTP call logged with method, URL, status, latency
   6. Timeout           — hard 15-second cap on every request
 """
+import html
 import logging
+import re
 import time
 from abc import ABC, abstractmethod
 from typing import Any
@@ -126,6 +128,78 @@ class BaseHarvester(ABC):
     ) -> list[dict[str, Any]]:
         """Return list of raw job dicts for a company. Never raises — returns [] on error."""
         raise NotImplementedError
+
+    def snippet_from_list_payload(self, raw: dict) -> str:
+        """
+        Extract a JD text snippet from a LIST endpoint job dict (if available).
+
+        Override in subclasses whose list endpoint returns description text
+        (Lever, Ashby, Greenhouse, Workable). Default returns "" meaning a
+        detail fetch is required for Tier-2 JD gate snippet extraction.
+
+        Returns: plain text, max 800 chars, or empty string if unavailable.
+        """
+        return ""
+
+    def fetch_job_snippet(self, url: str, max_chars: int = 800) -> str:
+        """
+        Fetch the first `max_chars` of clean job description text for Tier-2 JD gate.
+
+        Default implementation: calls fetch_job_detail() and extracts text from the
+        returned dict. Subclasses can override for a more efficient implementation
+        (e.g. truncating after parsing, or using a lightweight endpoint).
+
+        Returns: plain text snippet (stripped of HTML), or "" on failure.
+        Never raises — returns "" on any error.
+        """
+        try:
+            detail = self.fetch_job_detail(url)
+            if not detail or isinstance(detail, dict) and detail.get("error"):
+                return ""
+
+            # Try common description field names across platforms
+            candidates = []
+            if isinstance(detail, dict):
+                candidates = [
+                    detail.get("description") or "",
+                    detail.get("descriptionBody") or "",
+                    detail.get("content") or "",
+                    detail.get("jobDescription") or "",
+                    detail.get("body") or "",
+                    detail.get("text") or "",
+                ]
+
+            for raw_text in candidates:
+                if not raw_text:
+                    continue
+                # Strip HTML tags
+                text = re.sub(r"<[^>]+>", " ", str(raw_text))
+                text = html.unescape(text)
+                text = re.sub(r"\s+", " ", text).strip()
+                if len(text) >= 30:
+                    return text[:max_chars]
+
+            return ""
+        except Exception as exc:
+            logger.debug("fetch_job_snippet failed for %s: %s", url, exc)
+            return ""
+
+    def fetch_job_detail(self, url: str) -> dict:
+        """
+        Fetch full job detail for JD backfill. Default is a simple GET to the URL.
+
+        Subclasses override this to hit a dedicated detail API endpoint
+        (e.g. Workday requisition detail, Greenhouse job detail).
+
+        Returns: dict with description and other fields, or {"error": "..."} on failure.
+        """
+        try:
+            resp = self._get(url, check_robots=self.is_scraper)
+            if isinstance(resp, dict):
+                return resp
+            return {}
+        except Exception as exc:
+            return {"error": str(exc)[:200]}
 
     # ── Internal HTTP helpers ─────────────────────────────────────────────────
 

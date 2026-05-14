@@ -188,6 +188,19 @@ class AshbyHarvester(BaseHarvester):
 
     platform_slug = "ashby"
 
+    def snippet_from_list_payload(self, raw: dict) -> str:
+        """
+        Ashby detail fetch already happens during fetch_jobs() (Step 2).
+        The description is stored in the normalized job dict as 'description'.
+        We can extract it from there at zero extra cost.
+        """
+        import re, html as html_mod
+        desc = raw.get("description") or raw.get("descriptionHtml") or ""
+        text = re.sub(r"<[^>]+>", " ", desc)
+        text = html_mod.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:800]
+
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:

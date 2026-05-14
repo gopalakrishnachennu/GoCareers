@@ -123,4 +123,14 @@ app.conf.beat_schedule = {
         "schedule": crontab(minute=15),              # every hour at :15
         "kwargs": {"batch_size": 500, "parallel_workers": 8},
     },
+
+    # Tier-2 JD content gate — runs every 30 min to process AMBIGUOUS jobs.
+    # Gate is a no-op when jd_gate_enabled=False (safe to always have scheduled).
+    # Runs at :00 and :30 each hour; offset from backfill (:15) to avoid overlap.
+    "harvest-jd-gate-30min": {
+        "task": "harvest.run_jd_gate",
+        "schedule": crontab(minute="0,30"),          # every 30 min
+        "kwargs": {"batch_size": 100, "trigger_backfill": True},
+        "options": {"queue": "harvest"},
+    },
 }

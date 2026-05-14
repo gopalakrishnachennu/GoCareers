@@ -103,3 +103,19 @@ apps/
 - Hetzner VPS at `chennu.co` / `62.238.6.14`
 - Stack managed via `docker-compose.prod.yml`
 - Deployed via `deploy.sh` (sources `.env.deploy`) or `deploy-vps.yml` GitHub Action
+
+## AI handoff / current work pointer
+
+For new AI sessions, read this file first, then read:
+
+```bash
+docs_reference/ai-handoff-current-state.md
+```
+
+Current important product direction:
+
+- Raw Jobs filtering must use standardized fields, not loose text filters.
+- Country filter source of truth: `RawJob.country_code`.
+- Marketing role/domain filter source of truth: `RawJob.job_domain`, matched to `MarketingRole.slug`.
+- If filters look empty, standardize/backfill first with `evaluate_rawjob_scope` and `classify_job_domains`, using `--dry-run` before writes.
+- Do not deploy or commit unrelated dirty files. Commit only the files involved in the requested change.

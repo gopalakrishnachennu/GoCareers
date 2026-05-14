@@ -13,6 +13,19 @@ COLD = "COLD"
 UNKNOWN = "UNKNOWN"
 NO_MATCH = "NO_MATCH"
 
+# ── Tier-1 title gate decisions (confidence-aware) ────────────────────────────
+# These are the outputs of the new classify_title_v2() function.
+# HARD_YES  → high confidence phrase match → goes straight to full JD backfill.
+# HARD_NO   → hard negative (or zero signal) → store minimal row, no JD fetch.
+# AMBIGUOUS → borderline match → sent to Tier-2 JD content gate (LLM snippet).
+HARD_YES  = "HARD_YES"
+HARD_NO   = "HARD_NO"
+AMBIGUOUS = "AMBIGUOUS"
+
+# Default confidence threshold: phrase match confidence below this → AMBIGUOUS.
+# Overridable via HarvestEngineConfig.title_hard_yes_confidence.
+DEFAULT_HARD_YES_CONFIDENCE = 0.80
+
 SENIORITY_PATTERNS = [
     r"\bsenior\b",
     r"\bjunior\b",
@@ -256,6 +269,18 @@ class ClassifyResult:
     matched_negative: str | None
     reason: str
     snapshot_id: str | None
+    # Phrase-match confidence: 1.0 for exact include-phrase match, lower for
+    # fallback signals (generic tech → 0.5, department-only → 0.4).
+    # Used by classify_title_v2() to route HARD_YES vs AMBIGUOUS.
+    confidence: float = 1.0
+
+
+@dataclass(frozen=True)
+class TitleGateResult:
+    """Output of classify_title_v2() — the Tier-1 confidence-aware title gate."""
+    gate_decision: str          # HARD_YES | HARD_NO | AMBIGUOUS
+    gate_confidence: float      # 0.0–1.0
+    classify_result: ClassifyResult   # full original classify result for audit
 
 
 def normalize(text: str) -> str:
@@ -344,10 +369,10 @@ def classify_title(
 ) -> ClassifyResult:
     title_raw = title or ""
     if not title_raw.strip():
-        return ClassifyResult(UNKNOWN, None, None, None, "empty or null title - cannot classify", snapshot_id)
+        return ClassifyResult(UNKNOWN, None, None, None, "empty or null title - cannot classify", snapshot_id, confidence=0.0)
 
     if not re.search(r"[A-Za-z]", title_raw):
-        return ClassifyResult(UNKNOWN, None, None, None, "non-ASCII title - cannot match English phrases", snapshot_id)
+        return ClassifyResult(UNKNOWN, None, None, None, "non-ASCII title - cannot match English phrases", snapshot_id, confidence=0.0)
 
     normalized_title = normalize(title_raw)
     normalized_department = normalize(department or "")
@@ -362,11 +387,11 @@ def classify_title(
 
     negative = _first_phrase_match(normalized_title, hard_negatives or [])
     if negative and include_hit is None:
-        return ClassifyResult(NO_MATCH, None, None, negative, f"matched hard negative: {negative}", snapshot_id)
+        return ClassifyResult(NO_MATCH, None, None, negative, f"matched hard negative: {negative}", snapshot_id, confidence=0.0)
 
     custom_hit = _first_phrase_match(normalized_title, custom_phrases or [])
     if custom_hit:
-        return ClassifyResult(STRONG, None, custom_hit, negative, f"company-specific phrase: {custom_hit}", snapshot_id)
+        return ClassifyResult(STRONG, None, custom_hit, negative, f"company-specific phrase: {custom_hit}", snapshot_id, confidence=1.0)
 
     if include_hit is not None:
         category, phrase = include_hit
@@ -381,11 +406,13 @@ def classify_title(
                 negative or category_exclude,
                 f"include '{phrase}' and exclude '{category_exclude}' both matched - keeping as POSSIBLE",
                 snapshot_id,
+                confidence=0.60,   # ambiguous: include + exclude both fire
             )
         reason = f"matched phrase: {phrase} | category: {category_name}"
         if negative:
             reason = f"ambiguous: negative '{negative}' and include phrase '{phrase}' both matched - keeping"
-        return ClassifyResult(STRONG, category_slug, phrase, negative, reason, snapshot_id)
+            return ClassifyResult(STRONG, category_slug, phrase, negative, reason, snapshot_id, confidence=0.75)
+        return ClassifyResult(STRONG, category_slug, phrase, negative, reason, snapshot_id, confidence=1.0)
 
     tech_department = _first_phrase_match(normalized_department, TECH_DEPARTMENT_SIGNALS)
     non_tech_department = _first_phrase_match(normalized_department, NON_TECH_DEPARTMENT_SIGNALS)
@@ -399,6 +426,7 @@ def classify_title(
             None,
             f"generic title but non-tech department: {department}",
             snapshot_id,
+            confidence=0.1,
         )
 
     if tech_department:
@@ -409,9 +437,73 @@ def classify_title(
             None,
             f"no title match but department signals tech: {department}",
             snapshot_id,
+            confidence=0.40,  # department signal only — worth a JD look
         )
 
     if generic_hit:
-        return ClassifyResult(POSSIBLE, None, generic_hit, None, f"generic tech signal: {generic_hit}", snapshot_id)
+        return ClassifyResult(POSSIBLE, None, generic_hit, None, f"generic tech signal: {generic_hit}", snapshot_id, confidence=0.50)
 
-    return ClassifyResult(COLD, None, None, None, "no tech signal in title or department", snapshot_id)
+    return ClassifyResult(COLD, None, None, None, "no tech signal in title or department", snapshot_id, confidence=0.0)
+
+
+def classify_title_v2(
+    *,
+    title: str,
+    department: str = "",
+    categories: list[dict] | None = None,
+    hard_negatives: list[str] | None = None,
+    custom_phrases: list[str] | None = None,
+    snapshot_id: str | None = None,
+    hard_yes_threshold: float = DEFAULT_HARD_YES_CONFIDENCE,
+) -> TitleGateResult:
+    """
+    Tier-1 confidence-aware title gate.
+
+    Wraps classify_title() and maps its output to one of three gate decisions:
+
+      HARD_YES  — confidence >= hard_yes_threshold AND decision is STRONG.
+                  High-confidence phrase match. Skip JD gate, go straight to
+                  full JD backfill.
+
+      HARD_NO   — decision is NO_MATCH or COLD (no tech signal).
+                  Store minimal row. No JD fetch. Done.
+
+      AMBIGUOUS — everything else (STRONG below threshold, POSSIBLE, UNKNOWN).
+                  Send to Tier-2 JD content gate for LLM confirmation.
+
+    Args:
+        hard_yes_threshold: phrase-match confidence floor for HARD_YES.
+                            Controlled by HarvestEngineConfig.title_hard_yes_confidence.
+    """
+    result = classify_title(
+        title=title,
+        department=department,
+        categories=categories,
+        hard_negatives=hard_negatives,
+        custom_phrases=custom_phrases,
+        snapshot_id=snapshot_id,
+    )
+
+    decision = result.decision
+    conf = result.confidence
+
+    # ── Route to gate bin ─────────────────────────────────────────────────────
+    if decision == NO_MATCH:
+        # Explicit hard negative hit — definitively not our target.
+        gate = HARD_NO
+    elif decision == COLD and conf < 0.2:
+        # True COLD: zero signal in title or department.
+        gate = HARD_NO
+    elif decision == STRONG and conf >= hard_yes_threshold:
+        # High-confidence phrase match — skip JD gate.
+        gate = HARD_YES
+    else:
+        # Everything borderline: POSSIBLE, low-confidence STRONG, UNKNOWN, COLD-with-signal.
+        # Send to JD gate for LLM confirmation.
+        gate = AMBIGUOUS
+
+    return TitleGateResult(
+        gate_decision=gate,
+        gate_confidence=conf,
+        classify_result=result,
+    )

@@ -308,6 +308,79 @@ def release_stale_jd_backfill_locks_task(self):
     return completion
 
 
+@shared_task(bind=True, name="harvest.run_jd_gate", max_retries=0, soft_time_limit=1800, time_limit=2100)
+def run_jd_gate_task(
+    self,
+    *,
+    batch_size: int = 100,
+    scope: str | None = None,
+    dry_run: bool = False,
+    trigger_backfill: bool = True,
+):
+    """
+    Tier-2 JD content gate — runs on AMBIGUOUS jobs after the title gate.
+
+    Picks up jobs with title_gate_decision=PENDING (AMBIGUOUS) or legacy POSSIBLE
+    filter_decision, fetches a JD snippet, and calls the LLM binary YES/NO gate.
+
+    Results:
+      CONFIRMED → queued for full JD backfill (same queue as HARD_YES).
+      REJECTED  → marked is_cold=True, jd_fetch_skipped=True. No further processing.
+      UNCERTAIN → jd_gate_decision=UNCERTAIN. Human review queue.
+
+    In audit_mode (HarvestEngineConfig.jd_gate_audit_mode=True):
+      Decisions are recorded but no jobs are suppressed. Safe to run for tuning.
+
+    Scheduled: every 30 minutes (configured in celery.py beat schedule).
+    Also triggered automatically after each company fetch batch completes
+    when HarvestEngineConfig.jd_gate_enabled=True.
+    """
+    from .models import HarvestEngineConfig
+    from .content_gate import run_content_gate
+
+    try:
+        cfg = HarvestEngineConfig.get()
+        if not cfg.jd_gate_enabled:
+            logger.info("run_jd_gate_task: jd_gate_enabled=False — skipping")
+            return {"skipped": True, "reason": "jd_gate_enabled=False"}
+    except Exception as exc:
+        logger.warning("run_jd_gate_task: could not load HarvestEngineConfig: %s", exc)
+        return {"skipped": True, "reason": str(exc)}
+
+    logger.info(
+        "run_jd_gate_task: starting batch_size=%d scope=%s dry_run=%s",
+        batch_size, scope or cfg.jd_gate_scope, dry_run,
+    )
+
+    try:
+        result = run_content_gate(
+            batch_size=batch_size,
+            dry_run=dry_run,
+            scope=scope,
+            trigger_backfill_on_confirm=trigger_backfill,
+        )
+    except SoftTimeLimitExceeded:
+        logger.warning("run_jd_gate_task: soft time limit exceeded — partial run")
+        return {"status": "PARTIAL", "reason": "soft_time_limit"}
+    except Exception as exc:
+        logger.error("run_jd_gate_task: unhandled error: %s", exc, exc_info=True)
+        raise
+
+    summary = {
+        "status":      "OK",
+        "total":       result.total_processed,
+        "confirmed":   result.confirmed,
+        "rejected":    result.rejected,
+        "uncertain":   result.uncertain,
+        "errors":      result.errors,
+        "audit_mode":  result.audit_mode,
+        "duration_s":  round(result.duration_seconds, 1),
+        "model":       result.model,
+    }
+    logger.info("run_jd_gate_task: complete — %s", summary)
+    return summary
+
+
 @shared_task(bind=True, name="harvest.reevaluate_cold_scope_jobs", max_retries=0)
 def reevaluate_cold_scope_jobs_task(
     self,

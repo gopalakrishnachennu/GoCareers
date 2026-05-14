@@ -53,6 +53,46 @@ _REQ_ID_RE = _re.compile(
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
 
+# Minimal set of tech-signal words used for early pagination exit.
+# Not exhaustive — just enough to detect "this page has tech roles" quickly.
+# Full classification uses role_filter.classify_title_v2() with all phrases.
+_TECH_SIGNAL_RE = _re.compile(
+    r"\b(engineer|developer|devops|sre|architect|analyst|administrator|"
+    r"data|cloud|platform|security|infrastructure|python|java|aws|azure|gcp|"
+    r"kubernetes|docker|software|backend|frontend|fullstack|full.stack|"
+    r"mlops|devsecops|servicenow|salesforce|epic|cerner|sap|workday.admin|"
+    r"it\s|it$|technical|system|network|database|dba|qa\s|qa$)\b",
+    _re.I,
+)
+
+
+def _page_has_tech_signal(page_results: list[dict]) -> bool:
+    """
+    Return True if at least one job on this page has a tech-looking title.
+    Used for Workday early pagination exit: 5 consecutive zero-signal pages → stop.
+    """
+    for job in page_results:
+        title = job.get("title") or ""
+        if _TECH_SIGNAL_RE.search(title):
+            return True
+    return False
+
+
+def _save_fetch_offset(company, offset: int) -> None:
+    """
+    Persist pagination checkpoint to CompanyPlatformLabel.last_fetch_offset.
+    Offset=0 means "completed" or "start fresh". Non-zero means "resume here".
+    Silent no-op if DB save fails — pagination is advisory.
+    """
+    try:
+        from harvest.models import CompanyPlatformLabel
+        CompanyPlatformLabel.objects.filter(company=company).update(
+            last_fetch_offset=offset
+        )
+    except Exception:
+        pass
+
+
 def _wd_str(val: Any, *fallback_keys: str) -> str:
     """Safely coerce a Workday field (str / dict / list / None) to a plain string."""
     if val is None:
@@ -515,7 +555,25 @@ class WorkdayHarvester(BaseHarvester):
 
             if fetch_all:
                 total = data.get("total", len(postings))
-                offset = PAGE_SIZE
+                # ── Resume from checkpoint if previous run timed out ──────────
+                # CompanyPlatformLabel.last_fetch_offset stores where we stopped.
+                # On timeout, the next run resumes instead of restarting from 0.
+                resume_offset = 0
+                try:
+                    label = getattr(company, "platform_label", None)
+                    if label and getattr(label, "last_fetch_offset", 0) > PAGE_SIZE:
+                        resume_offset = label.last_fetch_offset
+                except Exception:
+                    pass
+
+                offset = max(PAGE_SIZE, resume_offset)
+
+                # Zero-signal early stop: if N consecutive pages have NO title
+                # that passes the basic tech-signal check, stop paginating.
+                # Avoids fetching 3000+ jobs for a company with 0% hit rate.
+                ZERO_SIGNAL_PAGE_LIMIT = 5   # 5 pages (100 jobs) with no tech signal → stop
+                zero_signal_pages = 0
+
                 while offset < total:
                     time.sleep(MIN_DELAY_API)
                     next_payload = {
@@ -530,11 +588,35 @@ class WorkdayHarvester(BaseHarvester):
                     page_postings = next_data.get("jobPostings") or []
                     if not page_postings:
                         break
-                    results.extend(
+
+                    page_results = [
                         _normalize_workday_job(j, job_domain, company.name, jobboard=path)
                         for j in page_postings
-                    )
+                    ]
+                    results.extend(page_results)
+
+                    # Check if this page had any tech-looking titles
+                    page_has_signal = _page_has_tech_signal(page_results)
+                    if page_has_signal:
+                        zero_signal_pages = 0
+                    else:
+                        zero_signal_pages += 1
+                        if zero_signal_pages >= ZERO_SIGNAL_PAGE_LIMIT:
+                            import logging as _logging
+                            _logging.getLogger(__name__).info(
+                                "Workday early exit: %d consecutive zero-signal pages "
+                                "for %s at offset %d/%d",
+                                zero_signal_pages, company, offset, total,
+                            )
+                            # Save checkpoint for next run (resume from here)
+                            _save_fetch_offset(company, offset + PAGE_SIZE)
+                            break
+
                     offset += PAGE_SIZE
+
+                # Save offset=0 on clean completion (reset checkpoint)
+                if zero_signal_pages < ZERO_SIGNAL_PAGE_LIMIT:
+                    _save_fetch_offset(company, 0)
 
             # ── Inline detail fetch for jobs with no description ──────────────
             # Workday's list/search API returns mostly metadata, so this enriches

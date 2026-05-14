@@ -63,6 +63,13 @@ class JobBoardPlatform(models.Model):
         default=False,
         help_text="True when the list endpoint exposes enough title data for selective role filtering before JD fetch.",
     )
+    list_has_description = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when the list endpoint returns job description text (e.g. Lever, Ashby, Greenhouse). "
+            "Enables Tier-2 JD gate with ZERO extra HTTP calls — snippet is extracted from the list payload."
+        ),
+    )
     unknown_jd_budget_per_run = models.PositiveSmallIntegerField(
         default=2,
         help_text="Max UNKNOWN title decisions per company run that may continue to JD fetch in selective harvest.",
@@ -173,6 +180,52 @@ class CompanyPlatformLabel(models.Model):
     skip_in_selective_harvest = models.BooleanField(default=False)
     skip_expires_at = models.DateTimeField(null=True, blank=True)
     custom_include_phrases = models.JSONField(default=list, blank=True)
+
+    # ── Pagination checkpoint (Workday 3k-job timeout fix) ───────────────────
+    last_fetch_offset = models.PositiveIntegerField(
+        default=0,
+        help_text=(
+            "Pagination checkpoint for incremental harvests. "
+            "Stores the page offset where the last run stopped (e.g. after a timeout). "
+            "Next run resumes from here. Reset to 0 on successful completion."
+        ),
+    )
+
+    # ── Hit-rate intelligence (company-level harvest quality tracking) ────────
+    # Cumulative counts updated after each harvest run. Used to tune per-company
+    # thresholds and identify low-yield vs high-yield companies automatically.
+    historical_hard_yes_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Cumulative HARD_YES title-gate decisions for this company.",
+    )
+    historical_ambiguous_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Cumulative AMBIGUOUS title-gate decisions for this company.",
+    )
+    historical_hard_no_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Cumulative HARD_NO title-gate decisions for this company.",
+    )
+    historical_confirmed_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Cumulative CONFIRMED JD-gate decisions for this company.",
+    )
+    historical_rejected_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Cumulative REJECTED JD-gate decisions for this company.",
+    )
+    last_hit_rate_computed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When hit-rate counters were last updated.",
+    )
+    jd_gate_threshold_override = models.FloatField(
+        null=True, blank=True,
+        help_text=(
+            "Per-company JD gate confidence threshold override. "
+            "NULL = use global HarvestEngineConfig value. "
+            "Set lower (e.g. 0.50) for high-yield companies; higher for low-yield."
+        ),
+    )
 
     class Meta:
         ordering = ["company__name"]
@@ -787,13 +840,54 @@ class RawJob(models.Model):
     raw_payload = models.JSONField(default=dict, blank=True)
     list_payload_json = models.JSONField(null=True, blank=True)
 
-    # ── Selective harvest role filter ────────────────────────────────────────
+    # ── Selective harvest role filter (Tier 1 — title gate) ─────────────────
     role_category = models.CharField(max_length=64, null=True, blank=True, db_index=True)
     filter_decision = models.CharField(max_length=16, null=True, blank=True, db_index=True)
     filter_reason = models.CharField(max_length=512, null=True, blank=True)
     filter_snapshot_id = models.UUIDField(null=True, blank=True, db_index=True)
     is_cold = models.BooleanField(default=False, db_index=True)
     jd_fetch_skipped = models.BooleanField(default=False)
+    # Tier-1 gate outputs (confidence-aware title classification)
+    title_gate_decision = models.CharField(
+        max_length=16, null=True, blank=True, db_index=True,
+        help_text="HARD_YES | HARD_NO | AMBIGUOUS — output of confidence-aware title gate (Tier 1).",
+    )
+    title_gate_confidence = models.FloatField(
+        null=True, blank=True,
+        help_text="0.0–1.0 phrase-match confidence score from Tier-1 title gate.",
+    )
+
+    # ── JD content gate (Tier 2 — LLM relevance gate) ───────────────────────
+    # Tier-2 gate runs on AMBIGUOUS jobs; reads a JD snippet and makes a
+    # binary YES/NO decision via LLM before committing to a full JD fetch.
+    jd_gate_decision = models.CharField(
+        max_length=16, null=True, blank=True, db_index=True,
+        help_text="CONFIRMED | REJECTED | UNCERTAIN | SKIPPED | PENDING — Tier-2 LLM content gate.",
+    )
+    jd_gate_confidence = models.FloatField(
+        null=True, blank=True,
+        help_text="0.0–1.0 LLM confidence score from Tier-2 JD gate.",
+    )
+    jd_gate_reason = models.TextField(
+        blank=True,
+        help_text="LLM-provided one-sentence reason for the gate decision (for audit).",
+    )
+    jd_gate_snippet = models.TextField(
+        blank=True,
+        help_text="First 800 chars of clean JD text used for the gate decision (for audit/debug).",
+    )
+    jd_gate_model = models.CharField(
+        max_length=64, blank=True,
+        help_text="LLM model used for JD gate (e.g. gpt-4o-mini).",
+    )
+    jd_gate_category = models.CharField(
+        max_length=64, blank=True,
+        help_text="Tech-category hint from JD gate LLM (e.g. devops, mlops). Pre-hints enrichment.",
+    )
+    jd_gate_ran_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when the JD content gate was last evaluated for this job.",
+    )
 
     # ── Enriched: skills & tech ───────────────────────────────────────────────
     # All extracted skills (tech + soft); populated by enrichments.extract_enrichments()
@@ -1629,7 +1723,7 @@ class HarvestEngineConfig(models.Model):
         ),
     )
 
-    # ── Selective harvest role filter ────────────────────────────────────────
+    # ── Selective harvest role filter (Tier 1 — title gate) ──────────────────
     selective_filter_enabled = models.BooleanField(
         default=False,
         verbose_name="Selective role filter enabled",
@@ -1644,6 +1738,81 @@ class HarvestEngineConfig(models.Model):
     zero_tech_skip_ttl_days = models.PositiveSmallIntegerField(default=30)
     cold_no_match_sample_rate_pct = models.PositiveSmallIntegerField(default=5)
     hard_negative_phrases = models.JSONField(default=list, blank=True)
+    title_hard_yes_confidence = models.FloatField(
+        default=0.80,
+        verbose_name="Title gate — HARD_YES confidence threshold",
+        help_text=(
+            "Min phrase-match confidence to classify a title as HARD_YES (skips JD gate, goes straight to backfill). "
+            "Below this threshold → AMBIGUOUS (sent to Tier-2 JD gate). "
+            "Range 0.0–1.0. Default 0.80."
+        ),
+    )
+
+    # ── JD content gate (Tier 2 — LLM relevance gate) ───────────────────────
+    # The JD gate intercepts AMBIGUOUS jobs BEFORE committing to full JD fetch.
+    # A JD snippet (800 chars) is run through an LLM binary YES/NO prompt.
+    # CONFIRMED → full JD backfill. REJECTED → stored cheaply, no further work.
+    # Deploy with jd_gate_enabled=False first; enable jd_gate_audit_mode to tune.
+    jd_gate_enabled = models.BooleanField(
+        default=False,
+        verbose_name="JD content gate enabled (Tier 2)",
+        help_text=(
+            "Master switch for the JD relevance gate. Safe to deploy with False — does nothing. "
+            "Enable jd_gate_audit_mode first to tune thresholds before enforcement."
+        ),
+    )
+    jd_gate_audit_mode = models.BooleanField(
+        default=True,
+        verbose_name="JD gate — audit mode (no suppression)",
+        help_text=(
+            "When True: gate runs and records decisions (jd_gate_decision, jd_gate_reason) "
+            "but does NOT suppress any jobs. Use this for 2–4 weeks to tune thresholds. "
+            "Set False only after validating false-negative rate."
+        ),
+    )
+    jd_gate_model = models.CharField(
+        max_length=64,
+        default="gpt-4o-mini",
+        verbose_name="JD gate — LLM model",
+        help_text="OpenAI model for JD content gate. gpt-4o-mini is cheapest/fastest (~$0.001 per 20 jobs).",
+    )
+    jd_gate_confidence_threshold = models.FloatField(
+        default=0.65,
+        verbose_name="JD gate — confidence threshold",
+        help_text=(
+            "Min LLM confidence to enforce a YES/NO decision. "
+            "Below this → UNCERTAIN (human review queue, ~2–3% of cases). "
+            "Range 0.0–1.0. Default 0.65."
+        ),
+    )
+    jd_gate_scope = models.CharField(
+        max_length=32,
+        default="ambiguous_only",
+        verbose_name="JD gate — scope",
+        choices=[
+            ("ambiguous_only", "AMBIGUOUS titles only (safest — recommended start)"),
+            ("all_possible", "AMBIGUOUS + COLD-with-tech-signal (catch more false negatives)"),
+            ("all_non_hard_no", "Everything except HARD_NO (maximum accuracy, highest cost)"),
+        ],
+        help_text=(
+            "Which jobs go through the Tier-2 JD content gate. "
+            "Start with 'ambiguous_only' to validate, then expand scope."
+        ),
+    )
+    jd_gate_batch_size = models.PositiveSmallIntegerField(
+        default=20,
+        verbose_name="JD gate — LLM batch size",
+        help_text="Jobs per LLM API call in JD gate. 20 is the sweet spot for cost vs latency.",
+    )
+    jd_gate_snippet_chars = models.PositiveSmallIntegerField(
+        default=800,
+        verbose_name="JD gate — snippet length (chars)",
+        help_text=(
+            "Max chars of clean JD text sent to the LLM gate per job. "
+            "800 chars (~130 words) is enough to identify tech vs non-tech reliably. "
+            "Increase for borderline roles; decrease to reduce token cost."
+        ),
+    )
 
     # ── Cleanup controls ──────────────────────────────────────────────────────
     cleanup_inactive_age_days = models.PositiveSmallIntegerField(
@@ -1798,3 +1967,62 @@ class HarvestEngineConfig(models.Model):
             )
         except Exception:
             pass  # Non-fatal — workers will apply the rate limit on next restart
+
+
+class HarvestPriorityRole(models.Model):
+    """
+    Roles we're actively trying to fill for clients right now.
+
+    When the JD content gate (Tier 2) confirms a job whose category matches
+    one of these, that job's backfill priority is boosted so it drains first.
+
+    Example: Client needs 3 DevOps engineers urgently → add slug "devops-sre"
+    with priority_boost=1 and an expiry date. Jobs matching that domain jump
+    the backfill queue automatically.
+    """
+
+    role_slug = models.CharField(
+        max_length=120,
+        db_index=True,
+        help_text="MarketingRole slug we're actively prioritizing (e.g. 'devops-sre', 'mlops-engineer').",
+    )
+    priority_boost = models.PositiveSmallIntegerField(
+        default=5,
+        help_text="1 = highest priority, 10 = lowest. Jobs matching this role jump the backfill queue.",
+    )
+    expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="NULL = no expiry. Set a date to auto-expire the priority signal.",
+    )
+    notes = models.TextField(
+        blank=True,
+        help_text="e.g. 'Client X needs 3 engineers by June 2026'.",
+    )
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="+",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority_boost", "role_slug"]
+        verbose_name = "Harvest Priority Role"
+        verbose_name_plural = "Harvest Priority Roles"
+
+    def __str__(self):
+        return f"{self.role_slug} (boost={self.priority_boost})"
+
+    @classmethod
+    def active_slugs(cls) -> list[str]:
+        """Return list of currently active priority role slugs (not expired)."""
+        now = timezone.now()
+        qs = cls.objects.filter(is_active=True).filter(
+            Q(expires_at__isnull=True) | Q(expires_at__gt=now)
+        )
+        return list(qs.values_list("role_slug", flat=True))

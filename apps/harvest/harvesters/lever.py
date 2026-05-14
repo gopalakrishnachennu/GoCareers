@@ -233,6 +233,18 @@ class LeverHarvester(BaseHarvester):
 
     platform_slug = "lever"
 
+    def snippet_from_list_payload(self, raw: dict) -> str:
+        """
+        Lever list response includes descriptionPlain + listsPlain — no extra call needed.
+        This provides the JD snippet for Tier-2 content gate at zero HTTP cost.
+        """
+        import re
+        desc = raw.get("descriptionPlain") or raw.get("description") or ""
+        lists = raw.get("listsPlain") or ""
+        text = f"{desc} {lists}".strip()
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:800]
+
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:

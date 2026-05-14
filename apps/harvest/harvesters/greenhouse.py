@@ -121,6 +121,19 @@ class GreenhouseHarvester(BaseHarvester):
 
     platform_slug = "greenhouse"
 
+    def snippet_from_list_payload(self, raw: dict) -> str:
+        """
+        Greenhouse list API fetched with ?content=true includes the full
+        job description in the 'content' field. We strip HTML and return first
+        800 chars — zero extra HTTP calls needed for Tier-2 JD gate.
+        """
+        import re, html as html_mod
+        desc = raw.get("description") or raw.get("content") or ""
+        text = re.sub(r"<[^>]+>", " ", str(desc))
+        text = html_mod.unescape(text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:800]
+
     def fetch_jobs(
         self, company, tenant_id: str, since_hours: int = 24, fetch_all: bool = False
     ) -> list[dict[str, Any]]:
