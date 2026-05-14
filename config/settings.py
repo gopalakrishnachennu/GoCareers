@@ -131,6 +131,7 @@ TEMPLATES = [
                 'core.context_processors.pending_pool_count',  # Job pool badge in nav
                 'core.context_processors.dup_pending_count',   # Duplicate engine badge in subnav
                 'core.context_processors.user_feature_flags',
+                'core.context_processors.deployment_info',
             ],
         },
     },

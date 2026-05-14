@@ -582,6 +582,26 @@
     </footer>
     {% endif %}
 
+    {% if request.user.is_superuser and DEPLOYMENT_INFO %}
+    <footer class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}ml-64{% else %}w-full max-w-[1600px] mx-auto{% endif %} px-4 pb-4">
+        <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
+            <span class="font-semibold uppercase tracking-wide text-slate-600">Admin deploy</span>
+            {% if DEPLOYMENT_INFO.short_sha %}
+                {% if DEPLOYMENT_INFO.commit_url %}
+                    <a href="{{ DEPLOYMENT_INFO.commit_url }}" target="_blank" rel="noopener" class="font-mono font-semibold text-indigo-600 hover:underline">{{ DEPLOYMENT_INFO.short_sha }}</a>
+                {% else %}
+                    <span class="font-mono font-semibold text-slate-700">{{ DEPLOYMENT_INFO.short_sha }}</span>
+                {% endif %}
+            {% else %}
+                <span class="font-mono font-semibold text-amber-700">unknown</span>
+            {% endif %}
+            {% if DEPLOYMENT_INFO.branch %}<span>branch {{ DEPLOYMENT_INFO.branch }}</span>{% endif %}
+            {% if DEPLOYMENT_INFO.subject %}<span class="max-w-[520px] truncate">{{ DEPLOYMENT_INFO.subject }}</span>{% endif %}
+            {% if DEPLOYMENT_INFO.committed_at %}<span class="font-mono">{{ DEPLOYMENT_INFO.committed_at }}</span>{% endif %}
+        </div>
+    </footer>
+    {% endif %}
+
     <!-- Global Confirmation Modal (Alpine.js) -->
     <div x-data="confirmModal()" x-cloak @confirm-modal.window="open($event.detail)">
         <template x-if="visible">

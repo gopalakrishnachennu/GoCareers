@@ -1,5 +1,6 @@
 from django.test import TestCase, Client, RequestFactory
 from django.urls import reverse
+from unittest.mock import patch
 from users.models import User, UserEmailNotificationPreferences
 from .models import PlatformConfig, LLMConfig, AuditLog, Notification, BroadcastMessage
 from .notification_utils import create_notification, sanitize_internal_link
@@ -31,6 +32,36 @@ class PlatformConfigTests(TestCase):
         config = PlatformConfig.load()
         self.assertEqual(config.site_name, "EduConsult")
         self.assertTrue(config.enable_consultant_registration)
+
+
+class DeploymentInfoContextProcessorTests(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_deployment_info_hidden_for_regular_users(self):
+        from core.context_processors import deployment_info
+
+        request = self.factory.get("/")
+        request.user = User.objects.create_user(username="regular", password="pass")
+
+        self.assertIsNone(deployment_info(request)["DEPLOYMENT_INFO"])
+
+    def test_deployment_info_visible_for_superusers(self):
+        from core.context_processors import deployment_info
+
+        request = self.factory.get("/")
+        request.user = User.objects.create_superuser("admin", "admin@example.com", "pass")
+        payload = {
+            "sha": "608a6610c30d3a59390b82d6fbc4e5ca8061e42d",
+            "short_sha": "608a661",
+            "subject": "Guard harvest smoke rows from production backlog",
+            "committed_at": "2026-05-14T01:00:00+00:00",
+            "branch": "main",
+            "commit_url": "",
+        }
+
+        with patch("core.context_processors._deployment_metadata", return_value=payload):
+            self.assertEqual(deployment_info(request)["DEPLOYMENT_INFO"], payload)
 
 
 class LLMConfigTests(TestCase):

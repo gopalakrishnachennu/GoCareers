@@ -1,4 +1,10 @@
-"""Platform singleton for templates + unread notification count for nav bell."""
+"""Platform singleton for templates + shared nav/footer context."""
+
+from functools import lru_cache
+import os
+import subprocess
+
+from django.conf import settings
 
 from core.notification_utils import get_cached_unread_count
 from core.feature_flags import feature_enabled_for
@@ -9,6 +15,57 @@ def platform_settings(request):
     from core.models import PlatformConfig
 
     return {'PLATFORM_CONFIG': PlatformConfig.load()}
+
+
+@lru_cache(maxsize=1)
+def _deployment_metadata() -> dict[str, str]:
+    """Return immutable deploy metadata for this running process."""
+    base_dir = str(getattr(settings, "BASE_DIR", os.getcwd()))
+
+    def _git(*args: str) -> str:
+        try:
+            return subprocess.check_output(
+                ["git", *args],
+                cwd=base_dir,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                timeout=1.5,
+            ).strip()
+        except Exception:
+            return ""
+
+    sha = (
+        os.environ.get("DEPLOY_SHA")
+        or os.environ.get("GITHUB_SHA")
+        or os.environ.get("SOURCE_COMMIT")
+        or _git("rev-parse", "HEAD")
+    )
+    short_sha = sha[:7] if sha else ""
+    subject = os.environ.get("DEPLOY_COMMIT_MESSAGE") or _git("log", "-1", "--format=%s")
+    committed_at = os.environ.get("DEPLOY_COMMITTED_AT") or _git("log", "-1", "--format=%cI")
+    branch = os.environ.get("DEPLOY_BRANCH") or _git("rev-parse", "--abbrev-ref", "HEAD")
+
+    commit_url = ""
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if repo and sha:
+        commit_url = f"https://github.com/{repo}/commit/{sha}"
+
+    return {
+        "sha": sha,
+        "short_sha": short_sha,
+        "subject": subject,
+        "committed_at": committed_at,
+        "branch": branch,
+        "commit_url": commit_url,
+    }
+
+
+def deployment_info(request):
+    """Expose deployment commit only to superusers."""
+    user = getattr(request, "user", None)
+    if not getattr(user, "is_authenticated", False) or not getattr(user, "is_superuser", False):
+        return {"DEPLOYMENT_INFO": None}
+    return {"DEPLOYMENT_INFO": _deployment_metadata()}
 
 
 def unread_notifications_count(request):
