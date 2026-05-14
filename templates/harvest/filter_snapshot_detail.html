@@ -2,33 +2,100 @@
 {% block content %}
 {% include 'jobs/_pipeline_subnav.html' %}
 <div class="container mx-auto px-4 max-w-6xl">
-  <div class="page-header mb-5">
-    <h1 class="text-2xl font-bold text-gray-900">Filter Snapshot</h1>
-    <p class="font-mono text-xs text-gray-500 mt-1">{{ snapshot.snapshot_id }}</p>
+
+  <div class="page-header flex items-start justify-between mb-5">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">Filter Snapshot</h1>
+      <p class="font-mono text-[11px] text-gray-400 mt-1">{{ snapshot.snapshot_id }}</p>
+    </div>
+    <a href="{% url 'harvest-filter-snapshots' %}" class="btn-secondary text-xs">← All Snapshots</a>
   </div>
+
   {% include 'harvest/_selective_filter_nav.html' %}
-  <div class="mb-5 grid gap-3 md:grid-cols-3">
-    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Taken</p><p class="font-semibold">{{ snapshot.taken_at }}</p></div>
-    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Batch</p><p class="font-semibold">{% if snapshot.batch_id %}#{{ snapshot.batch_id }}{% else %}—{% endif %}</p></div>
-    <div class="rounded-xl border border-gray-200 bg-white p-4"><p class="text-xs uppercase text-gray-500">Phrase Hash</p><p class="font-mono text-xs">{{ snapshot.phrase_hash }}</p></div>
+
+  <!-- Stats row -->
+  <div class="mb-5 grid gap-3 sm:grid-cols-3">
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">Taken</p>
+      <p class="mt-1 font-semibold text-gray-900">{{ snapshot.taken_at|date:"M j, Y, g:i a" }}</p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">Batch</p>
+      <p class="mt-1 font-semibold text-gray-900">{% if snapshot.batch_id %}#{{ snapshot.batch_id }}{% else %}<span class="text-gray-400">—</span>{% endif %}</p>
+    </div>
+    <div class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm overflow-hidden">
+      <p class="text-[10px] font-bold uppercase tracking-wide text-gray-400">Phrase Hash</p>
+      <p class="mt-1 font-mono text-[10px] text-gray-500 truncate">{{ snapshot.phrase_hash }}</p>
+    </div>
   </div>
-  <section class="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Categories</h2>
-    <div class="mt-4 space-y-4">
+
+  <!-- Categories -->
+  <section class="rounded-xl border border-gray-200 bg-white shadow-sm mb-5">
+    <div class="border-b border-gray-100 px-5 py-3">
+      <h2 class="text-xs font-bold uppercase tracking-wide text-gray-500">
+        Categories
+        <span class="ml-2 rounded-full bg-gray-100 px-2 py-0.5 text-gray-600 font-mono">{{ categories|length }}</span>
+      </h2>
+    </div>
+    <div class="divide-y divide-gray-50">
       {% for cat in categories %}
-      <div class="rounded-lg border border-gray-200 p-3">
-        <div class="font-semibold text-gray-900">{{ cat.name }} <span class="font-mono text-xs text-gray-400">{{ cat.slug }}</span></div>
-        <div class="mt-2 grid gap-3 md:grid-cols-2 text-xs">
-          <div><p class="font-bold text-gray-600">Include</p><p class="mt-1 text-gray-600">{{ cat.include_phrases|join:", " }}</p></div>
-          <div><p class="font-bold text-gray-600">Exclude</p><p class="mt-1 text-gray-600">{{ cat.exclude_phrases|join:", "|default:"none" }}</p></div>
+      <div class="px-5 py-4">
+        <!-- Category header -->
+        <div class="flex items-center gap-3 mb-3">
+          <span class="rounded-full bg-indigo-100 px-2.5 py-0.5 text-[10px] font-bold text-indigo-700 uppercase tracking-wide">P{{ forloop.counter0|add:1 }}</span>
+          <span class="font-semibold text-gray-900 text-sm">{{ cat.name }}</span>
+          <span class="font-mono text-xs text-gray-400">{{ cat.slug }}</span>
         </div>
+        <!-- Include chips -->
+        <div class="mb-2">
+          <p class="text-[10px] font-bold uppercase tracking-wide text-green-600 mb-1.5">
+            Include
+            <span class="ml-1 font-mono font-normal normal-case text-gray-400">{{ cat.include_phrases|length }}</span>
+          </p>
+          <div class="flex flex-wrap gap-1">
+            {% for phrase in cat.include_phrases %}
+            <span class="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2.5 py-0.5 text-[11px] font-medium text-green-800">{{ phrase }}</span>
+            {% empty %}
+            <span class="text-xs text-gray-400 italic">none</span>
+            {% endfor %}
+          </div>
+        </div>
+        <!-- Exclude chips -->
+        {% if cat.exclude_phrases %}
+        <div>
+          <p class="text-[10px] font-bold uppercase tracking-wide text-red-500 mb-1.5">
+            Exclude
+            <span class="ml-1 font-mono font-normal normal-case text-gray-400">{{ cat.exclude_phrases|length }}</span>
+          </p>
+          <div class="flex flex-wrap gap-1">
+            {% for phrase in cat.exclude_phrases %}
+            <span class="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-[11px] font-medium text-red-700">{{ phrase }}</span>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
       </div>
       {% endfor %}
     </div>
   </section>
-  <section class="mt-5 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Hard Negatives</h2>
-    <p class="mt-2 text-xs text-gray-600">{{ hard_negatives|join:", " }}</p>
+
+  <!-- Hard Negatives -->
+  <section class="rounded-xl border border-gray-200 bg-white shadow-sm">
+    <div class="border-b border-gray-100 px-5 py-3 flex items-center justify-between">
+      <h2 class="text-xs font-bold uppercase tracking-wide text-gray-500">Hard Negatives</h2>
+      <span class="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-bold text-red-600">{{ hard_negatives|length }}</span>
+    </div>
+    <div class="px-5 py-4">
+      <p class="text-[10px] text-gray-400 mb-2">Titles matching these → <strong class="text-red-600">NO_MATCH</strong>, JD never fetched.</p>
+      <div class="flex flex-wrap gap-1">
+        {% for phrase in hard_negatives %}
+        <span class="inline-flex items-center rounded-full border border-red-100 bg-red-50 px-2.5 py-0.5 text-[11px] text-red-600">{{ phrase }}</span>
+        {% empty %}
+        <span class="text-xs text-gray-400 italic">No hard negatives configured.</span>
+        {% endfor %}
+      </div>
+    </div>
   </section>
+
 </div>
 {% endblock %}

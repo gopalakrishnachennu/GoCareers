@@ -2,80 +2,207 @@
 {% block content %}
 {% include 'jobs/_pipeline_subnav.html' %}
 <div class="container mx-auto px-4 max-w-7xl">
+
   <div class="page-header flex items-start justify-between mb-5">
     <div>
       <h1 class="text-2xl font-bold text-gray-900">Selective Filter</h1>
       <p class="text-sm text-gray-500 mt-0.5">Configure harvest role phrases and test titles before they affect JD fetching.</p>
     </div>
-    <a href="{% url 'harvest-role-category-create' %}" class="btn-primary">Add Category</a>
+    <a href="{% url 'harvest-role-category-create' %}" class="btn-primary">+ Add Category</a>
   </div>
+
   {% include 'harvest/_selective_filter_nav.html' %}
 
   {% if messages %}
-    {% for message in messages %}
-    <div class="mb-4 rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% else %}border-green-200 bg-green-50 text-green-700{% endif %}">{{ message }}</div>
-    {% endfor %}
+  {% for message in messages %}
+  <div class="mb-4 rounded-lg border px-4 py-3 text-sm {% if message.tags == 'error' %}border-red-200 bg-red-50 text-red-700{% else %}border-green-200 bg-green-50 text-green-700{% endif %}">{{ message }}</div>
+  {% endfor %}
   {% endif %}
 
-  <section class="mb-6 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-    <h2 class="text-sm font-bold uppercase tracking-wide text-gray-700">Live Title Tester</h2>
-    <div class="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
-      <input id="title-test-title" class="form-input" placeholder="Senior DevOps Engineer">
-      <input id="title-test-department" class="form-input" placeholder="Department, optional">
-      <button type="button" id="title-test-button" class="btn-primary">Test</button>
+  <!-- ── Live Title Tester ── -->
+  <section class="mb-6 rounded-xl border border-indigo-200 bg-white p-5 shadow-sm">
+    <div class="flex items-center gap-2 mb-3">
+      <span class="inline-flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-white text-[10px] font-bold">⚡</span>
+      <h2 class="text-sm font-bold text-gray-800">Live Title Tester</h2>
+      <span class="text-xs text-gray-400">— test any job title against the active phrase bank</span>
     </div>
-    <div id="title-test-result" class="mt-3 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">Type a title and run the test.</div>
+    <div class="flex gap-2">
+      <input id="title-test-title" class="form-input flex-1" placeholder="e.g. Senior AI Engineer">
+      <input id="title-test-department" class="form-input w-56 shrink-0" placeholder="Department (optional)">
+      <button type="button" id="title-test-button" class="btn-primary shrink-0 px-5">Test</button>
+    </div>
+
+    <!-- Result panel — hidden until first test -->
+    <div id="title-test-result" class="hidden mt-3 rounded-xl border p-4">
+      <div class="flex items-start gap-4">
+        <!-- Decision badge -->
+        <div id="ttr-badge"
+             class="shrink-0 w-24 rounded-lg py-2 text-center text-xs font-bold uppercase tracking-wide"></div>
+        <!-- Detail -->
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span id="ttr-category" class="hidden rounded bg-gray-100 px-2 py-0.5 font-mono text-xs text-gray-600"></span>
+            <span id="ttr-phrase"   class="hidden rounded border border-green-200 bg-green-50 px-2 py-0.5 text-xs text-green-700"></span>
+            <span id="ttr-negative" class="hidden rounded border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-700"></span>
+          </div>
+          <p id="ttr-reason" class="mt-1.5 text-xs text-gray-500"></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Placeholder message when empty -->
+    <div id="title-test-placeholder" class="mt-3 rounded-lg border border-dashed border-gray-200 px-3 py-2 text-xs text-center text-gray-400">
+      Type a job title above and press <kbd class="rounded border border-gray-300 px-1 py-0.5 font-mono text-[10px] bg-gray-50">Test</kbd> to see how the engine classifies it.
+    </div>
   </section>
 
+  <!-- ── Category Table ── -->
   <section class="card-table">
     <div class="table-scroll">
       <table class="w-full text-sm table-min-wide">
         <thead class="tbl-head">
           <tr>
+            <th class="tbl-th w-8">P</th>
             <th class="tbl-th">Category</th>
-            <th class="tbl-th">Phrases</th>
-            <th class="tbl-th">Priority</th>
-            <th class="tbl-th">Matched 7d</th>
-            <th class="tbl-th">Matched 30d</th>
-            <th class="tbl-th">Status</th>
+            <th class="tbl-th">Include phrases</th>
+            <th class="tbl-th">Exclude</th>
+            <th class="tbl-th text-center">Matched 7d</th>
+            <th class="tbl-th text-center">Matched 30d</th>
+            <th class="tbl-th text-center">Status</th>
             <th class="tbl-th-right">Actions</th>
           </tr>
         </thead>
         <tbody>
           {% for row in categories %}
-          <tr class="tbl-row">
+          <tr class="tbl-row group">
+            <td class="tbl-td">
+              <span class="inline-flex h-6 w-6 items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-500">{{ row.obj.priority }}</span>
+            </td>
             <td class="tbl-td">
               <div class="font-semibold text-gray-900">{{ row.obj.name }}</div>
-              <div class="font-mono text-xs text-gray-400">{{ row.obj.slug }}</div>
+              <div class="font-mono text-[10px] text-gray-400">{{ row.obj.slug }}</div>
             </td>
-            <td class="tbl-td text-xs text-gray-600">{{ row.include_count }} include · {{ row.exclude_count }} exclude</td>
-            <td class="tbl-td">{{ row.obj.priority }}</td>
-            <td class="tbl-td">{{ row.matched_7d }}</td>
-            <td class="tbl-td">{{ row.matched_30d }}</td>
-            <td class="tbl-td">{% if row.obj.is_active %}<span class="badge-green">Active</span>{% else %}<span class="badge-gray">Disabled</span>{% endif %}</td>
-            <td class="tbl-td-right"><a href="{% url 'harvest-role-category-edit' row.obj.pk %}" class="link-action">Edit</a></td>
+            <td class="tbl-td max-w-xs">
+              <!-- Show first 5 phrases as chips, rest as +N -->
+              <div class="flex flex-wrap gap-1">
+                {% for phrase in row.obj.include_phrases|slice:":6" %}
+                <span class="inline-flex items-center rounded-full border border-green-200 bg-green-50 px-2 py-0.5 text-[10px] font-medium text-green-800 whitespace-nowrap">{{ phrase }}</span>
+                {% endfor %}
+                {% if row.include_count > 6 %}
+                <span class="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] text-gray-500">+{{ row.include_count|add:"-6" }} more</span>
+                {% endif %}
+              </div>
+            </td>
+            <td class="tbl-td text-xs text-gray-400">
+              {% if row.exclude_count %}
+              <span class="rounded-full bg-red-50 border border-red-100 px-2 py-0.5 text-[10px] text-red-500">{{ row.exclude_count }} rules</span>
+              {% else %}—{% endif %}
+            </td>
+            <td class="tbl-td text-center">
+              {% if row.matched_7d %}
+              <span class="font-semibold text-indigo-600">{{ row.matched_7d }}</span>
+              {% else %}
+              <span class="text-gray-300">0</span>
+              {% endif %}
+            </td>
+            <td class="tbl-td text-center">
+              {% if row.matched_30d %}
+              <span class="font-semibold text-gray-700">{{ row.matched_30d }}</span>
+              {% else %}
+              <span class="text-gray-300">0</span>
+              {% endif %}
+            </td>
+            <td class="tbl-td text-center">
+              {% if row.obj.is_active %}
+              <span class="badge-green">Active</span>
+              {% else %}
+              <span class="badge-gray">Off</span>
+              {% endif %}
+            </td>
+            <td class="tbl-td-right">
+              <a href="{% url 'harvest-role-category-edit' row.obj.pk %}" class="link-action">Edit</a>
+            </td>
           </tr>
           {% empty %}
-          <tr><td colspan="7" class="tbl-empty">No role categories configured.</td></tr>
+          <tr><td colspan="8" class="tbl-empty">No role categories configured. Add one to start filtering.</td></tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </section>
+
 </div>
 
 <script>
-document.getElementById('title-test-button')?.addEventListener('click', async () => {
-  const title = document.getElementById('title-test-title').value;
-  const department = document.getElementById('title-test-department').value;
-  const box = document.getElementById('title-test-result');
-  const url = new URL("{% url 'harvest-title-test-api' %}", window.location.origin);
-  url.searchParams.set('title', title);
-  url.searchParams.set('department', department);
-  box.textContent = 'Testing...';
-  const res = await fetch(url);
-  const data = await res.json();
-  box.innerHTML = `<span class="font-bold text-gray-900">${data.decision}</span>${data.category ? ' · ' + data.category : ''}<br><span class="text-xs">${data.reason}</span>`;
-});
+(function () {
+  const DECISION_STYLES = {
+    STRONG:   { badge: 'bg-green-100 text-green-800 border border-green-200',  panel: 'border-green-200 bg-green-50' },
+    POSSIBLE: { badge: 'bg-yellow-100 text-yellow-800 border border-yellow-200', panel: 'border-yellow-200 bg-yellow-50' },
+    COLD:     { badge: 'bg-gray-100 text-gray-600 border border-gray-200',     panel: 'border-gray-200 bg-gray-50' },
+    NO_MATCH: { badge: 'bg-red-100 text-red-700 border border-red-200',        panel: 'border-red-200 bg-red-50' },
+    UNKNOWN:  { badge: 'bg-blue-100 text-blue-700 border border-blue-200',     panel: 'border-blue-200 bg-blue-50' },
+  };
+
+  const resultPanel      = document.getElementById('title-test-result');
+  const placeholder      = document.getElementById('title-test-placeholder');
+  const badge            = document.getElementById('ttr-badge');
+  const categoryEl       = document.getElementById('ttr-category');
+  const phraseEl         = document.getElementById('ttr-phrase');
+  const negativeEl       = document.getElementById('ttr-negative');
+  const reasonEl         = document.getElementById('ttr-reason');
+
+  async function runTest() {
+    const title = document.getElementById('title-test-title').value.trim();
+    const dept  = document.getElementById('title-test-department').value.trim();
+    if (!title) return;
+
+    badge.textContent = '…';
+    badge.className = 'shrink-0 w-24 rounded-lg py-2 text-center text-xs font-bold uppercase tracking-wide bg-gray-100 text-gray-400';
+    resultPanel.className = 'mt-3 rounded-xl border p-4 border-gray-200 bg-gray-50';
+    resultPanel.classList.remove('hidden');
+    placeholder.classList.add('hidden');
+
+    try {
+      const url = new URL("{% url 'harvest-title-test-api' %}", window.location.origin);
+      url.searchParams.set('title', title);
+      if (dept) url.searchParams.set('department', dept);
+      const data = await fetch(url).then(r => r.json());
+
+      const style = DECISION_STYLES[data.decision] || DECISION_STYLES.COLD;
+      badge.textContent = data.decision;
+      badge.className = 'shrink-0 w-24 rounded-lg py-2 text-center text-xs font-bold uppercase tracking-wide ' + style.badge;
+      resultPanel.className = 'mt-3 rounded-xl border p-4 ' + style.panel;
+
+      // category chip
+      if (data.category) {
+        categoryEl.textContent = data.category;
+        categoryEl.classList.remove('hidden');
+      } else { categoryEl.classList.add('hidden'); }
+
+      // matched phrase
+      if (data.matched_phrase) {
+        phraseEl.textContent = '✓ "' + data.matched_phrase + '"';
+        phraseEl.classList.remove('hidden');
+      } else { phraseEl.classList.add('hidden'); }
+
+      // matched negative
+      if (data.matched_negative) {
+        negativeEl.textContent = '✕ "' + data.matched_negative + '"';
+        negativeEl.classList.remove('hidden');
+      } else { negativeEl.classList.add('hidden'); }
+
+      reasonEl.textContent = data.reason;
+    } catch {
+      badge.textContent = 'ERR';
+      badge.className = 'shrink-0 w-24 rounded-lg py-2 text-center text-xs font-bold uppercase tracking-wide bg-red-100 text-red-600';
+      reasonEl.textContent = 'Could not reach server.';
+    }
+  }
+
+  document.getElementById('title-test-button').addEventListener('click', runTest);
+  document.getElementById('title-test-title').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); runTest(); }
+  });
+})();
 </script>
 {% endblock %}

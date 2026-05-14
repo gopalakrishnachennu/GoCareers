@@ -1,31 +1,268 @@
 {% extends 'base.html' %}
 {% block content %}
 {% include 'jobs/_pipeline_subnav.html' %}
-<div class="container mx-auto px-4 max-w-5xl">
-  <div class="page-header mb-5">
-    <h1 class="text-2xl font-bold text-gray-900">{% if object %}Edit{% else %}Add{% endif %} Role Category</h1>
-    <p class="text-sm text-gray-500 mt-0.5">Specific phrases become STRONG matches. Broad terms belong in code-level generic signals, not here.</p>
+<div class="container mx-auto px-4 max-w-4xl">
+
+  <!-- Header -->
+  <div class="page-header flex items-start justify-between mb-5">
+    <div>
+      <h1 class="text-2xl font-bold text-gray-900">{% if object %}Edit{% else %}Add{% endif %} Role Category</h1>
+      <p class="text-sm text-gray-500 mt-0.5">Phrases here produce <strong>STRONG</strong> matches. Avoid single words — use multi-word tech terms.</p>
+    </div>
+    {% if object %}
+    <span class="rounded-full bg-gray-100 px-3 py-1 text-xs font-mono text-gray-500">{{ object.slug }}</span>
+    {% endif %}
   </div>
+
   {% include 'harvest/_selective_filter_nav.html' %}
 
-  <form method="post" class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+  <form method="post" id="category-form">
     {% csrf_token %}
-    {% if form.non_field_errors %}<div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ form.non_field_errors }}</div>{% endif %}
-    <div class="grid gap-4 md:grid-cols-2">
-      <label class="block text-sm font-semibold text-gray-700">Name {{ form.name }}</label>
-      <label class="block text-sm font-semibold text-gray-700">Slug {{ form.slug }}</label>
-      <label class="block text-sm font-semibold text-gray-700">Priority {{ form.priority }}</label>
-      <label class="flex items-center gap-2 text-sm font-semibold text-gray-700">{{ form.is_active }} Active</label>
+    {% if form.non_field_errors %}
+    <div class="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{{ form.non_field_errors }}</div>
+    {% endif %}
+
+    <!-- Meta row -->
+    <div class="rounded-xl border border-gray-200 bg-white p-5 shadow-sm mb-4">
+      <h2 class="text-xs font-bold uppercase tracking-wide text-gray-500 mb-4">Category Info</h2>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Name</label>
+          {{ form.name }}
+          {% if form.name.errors %}<p class="mt-1 text-xs text-red-600">{{ form.name.errors }}</p>{% endif %}
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Slug <span class="font-normal text-gray-400">(auto)</span></label>
+          {{ form.slug }}
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-gray-600 mb-1">Priority <span class="font-normal text-gray-400">(lower = checked first)</span></label>
+          {{ form.priority }}
+        </div>
+        <div class="flex items-center gap-3 pt-5">
+          <label class="relative inline-flex cursor-pointer items-center gap-3">
+            {{ form.is_active }}
+            <span class="text-sm font-semibold text-gray-700">Active</span>
+          </label>
+        </div>
+      </div>
+      <div class="mt-4">
+        <label class="block text-xs font-semibold text-gray-600 mb-1">Notes <span class="font-normal text-gray-400">(optional)</span></label>
+        {{ form.notes }}
+      </div>
     </div>
-    <div class="mt-4 grid gap-4 md:grid-cols-2">
-      <label class="block text-sm font-semibold text-gray-700">Include phrases {{ form.include_phrases_text }}{% if form.include_phrases_text.errors %}<span class="block text-xs text-red-600">{{ form.include_phrases_text.errors }}</span>{% endif %}</label>
-      <label class="block text-sm font-semibold text-gray-700">Exclude phrases {{ form.exclude_phrases_text }}</label>
+
+    <!-- Include Phrases -->
+    <div class="rounded-xl border border-green-200 bg-white p-5 shadow-sm mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-sm font-bold text-green-700">✓ Include Phrases</h2>
+          <p class="text-xs text-gray-500 mt-0.5">Job title must match one of these → <strong class="text-green-700">STRONG</strong></p>
+        </div>
+        <span id="include-count" class="rounded-full bg-green-100 px-2.5 py-0.5 text-xs font-bold text-green-700">0 phrases</span>
+      </div>
+
+      <!-- Tag input -->
+      <div id="include-tag-box"
+           class="min-h-[80px] flex flex-wrap gap-1.5 rounded-lg border border-green-300 bg-green-50 p-2 cursor-text focus-within:ring-2 focus-within:ring-green-400 focus-within:border-green-400">
+        <!-- chips injected here by JS -->
+        <input id="include-phrase-input"
+               type="text"
+               placeholder="Type a phrase, press Enter or Tab to add…"
+               class="min-w-[200px] flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none border-0 focus:ring-0 px-1 py-0.5">
+      </div>
+      <!-- Quick test strip -->
+      <div class="mt-2 flex items-center gap-2">
+        <input id="include-test-title" type="text" placeholder="Test a job title against these phrases…"
+               class="form-input flex-1 text-xs py-1.5">
+        <button type="button" id="include-test-btn"
+                class="shrink-0 rounded-lg bg-green-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-green-700 transition">Test</button>
+      </div>
+      <div id="include-test-result" class="hidden mt-2 rounded-lg border px-3 py-2 text-xs"></div>
+
+      <!-- hidden textarea backing the form field -->
+      {{ form.include_phrases_text }}
+      {% if form.include_phrases_text.errors %}<p class="mt-1 text-xs text-red-600">{{ form.include_phrases_text.errors }}</p>{% endif %}
     </div>
-    <label class="mt-4 block text-sm font-semibold text-gray-700">Notes {{ form.notes }}</label>
-    <div class="mt-5 flex justify-end gap-2">
-      <a href="{% url 'harvest-role-categories' %}" class="btn-secondary">Cancel</a>
-      <button type="submit" class="btn-primary">Save</button>
+
+    <!-- Exclude Phrases -->
+    <div class="rounded-xl border border-red-200 bg-white p-5 shadow-sm mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-sm font-bold text-red-700">✕ Exclude Phrases</h2>
+          <p class="text-xs text-gray-500 mt-0.5">Matched include AND exclude → downgrades to <strong class="text-yellow-600">POSSIBLE</strong></p>
+        </div>
+        <span id="exclude-count" class="rounded-full bg-red-100 px-2.5 py-0.5 text-xs font-bold text-red-700">0 phrases</span>
+      </div>
+
+      <div id="exclude-tag-box"
+           class="min-h-[60px] flex flex-wrap gap-1.5 rounded-lg border border-red-200 bg-red-50 p-2 cursor-text focus-within:ring-2 focus-within:ring-red-400 focus-within:border-red-400">
+        <input id="exclude-phrase-input"
+               type="text"
+               placeholder="Type a phrase to exclude, press Enter…"
+               class="min-w-[200px] flex-1 bg-transparent text-sm text-gray-800 placeholder-gray-400 outline-none border-0 focus:ring-0 px-1 py-0.5">
+      </div>
+
+      {{ form.exclude_phrases_text }}
+    </div>
+
+    <!-- Actions -->
+    <div class="flex items-center justify-between">
+      <a href="{% url 'harvest-role-categories' %}" class="btn-secondary">← Cancel</a>
+      <button type="submit" class="btn-primary px-8">Save Category</button>
     </div>
   </form>
 </div>
+
+<style>
+  .phrase-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 999px;
+    padding: 2px 10px 2px 10px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.6;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .phrase-chip.include { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+  .phrase-chip.exclude { background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }
+  .phrase-chip button {
+    display: inline-flex;
+    align-items: center;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0 0 0 2px;
+    font-size: 13px;
+    line-height: 1;
+    opacity: 0.6;
+  }
+  .phrase-chip button:hover { opacity: 1; }
+  /* hide the raw textareas */
+  #id_include_phrases_text, #id_exclude_phrases_text { display: none !important; }
+</style>
+
+<script>
+(function () {
+  function makeTagManager({ boxId, inputId, textareaId, chipClass, countId }) {
+    const box = document.getElementById(boxId);
+    const input = document.getElementById(inputId);
+    const textarea = document.getElementById(textareaId);
+    const countEl = document.getElementById(countId);
+    let phrases = [];
+
+    function syncTextarea() {
+      textarea.value = phrases.join('\n');
+      countEl.textContent = phrases.length + (phrases.length === 1 ? ' phrase' : ' phrases');
+    }
+
+    function addChip(text) {
+      const val = text.trim().toLowerCase().replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (!val || phrases.includes(val)) return;
+      phrases.push(val);
+
+      const chip = document.createElement('span');
+      chip.className = 'phrase-chip ' + chipClass;
+      chip.dataset.val = val;
+
+      const label = document.createElement('span');
+      label.textContent = val;
+      chip.appendChild(label);
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.innerHTML = '&times;';
+      btn.title = 'Remove';
+      btn.addEventListener('click', () => {
+        phrases = phrases.filter(p => p !== val);
+        chip.remove();
+        syncTextarea();
+      });
+      chip.appendChild(btn);
+
+      box.insertBefore(chip, input);
+      syncTextarea();
+    }
+
+    // Seed from textarea initial value
+    (textarea.value || '').split('\n').forEach(p => p.trim() && addChip(p.trim()));
+
+    input.addEventListener('keydown', e => {
+      if (['Enter', 'Tab', ','].includes(e.key)) {
+        e.preventDefault();
+        addChip(input.value);
+        input.value = '';
+      } else if (e.key === 'Backspace' && input.value === '' && phrases.length) {
+        const last = phrases[phrases.length - 1];
+        const chip = box.querySelector(`.phrase-chip[data-val="${CSS.escape(last)}"]`);
+        if (chip) { chip.remove(); phrases.pop(); syncTextarea(); }
+      }
+    });
+
+    input.addEventListener('paste', e => {
+      e.preventDefault();
+      const pasted = (e.clipboardData || window.clipboardData).getData('text');
+      pasted.split(/[\n,]+/).forEach(p => { addChip(p); });
+      input.value = '';
+    });
+
+    box.addEventListener('click', () => input.focus());
+    return { addChip, getPhrases: () => phrases };
+  }
+
+  const includeMgr = makeTagManager({
+    boxId: 'include-tag-box',
+    inputId: 'include-phrase-input',
+    textareaId: 'id_include_phrases_text',
+    chipClass: 'include',
+    countId: 'include-count',
+  });
+
+  makeTagManager({
+    boxId: 'exclude-tag-box',
+    inputId: 'exclude-phrase-input',
+    textareaId: 'id_exclude_phrases_text',
+    chipClass: 'exclude',
+    countId: 'exclude-count',
+  });
+
+  // Quick test button
+  const testBtn = document.getElementById('include-test-btn');
+  const testInput = document.getElementById('include-test-title');
+  const testResult = document.getElementById('include-test-result');
+
+  async function runTest() {
+    const title = testInput.value.trim();
+    if (!title) return;
+    testResult.className = 'mt-2 rounded-lg border px-3 py-2 text-xs bg-gray-50 border-gray-200 text-gray-600';
+    testResult.classList.remove('hidden');
+    testResult.textContent = 'Testing…';
+    try {
+      const url = new URL("{% url 'harvest-title-test-api' %}", window.location.origin);
+      url.searchParams.set('title', title);
+      const data = await fetch(url).then(r => r.json());
+      const colors = {
+        STRONG: 'bg-green-50 border-green-200 text-green-800',
+        POSSIBLE: 'bg-yellow-50 border-yellow-200 text-yellow-800',
+        COLD: 'bg-gray-50 border-gray-200 text-gray-600',
+        NO_MATCH: 'bg-red-50 border-red-200 text-red-700',
+        UNKNOWN: 'bg-blue-50 border-blue-200 text-blue-700',
+      };
+      testResult.className = 'mt-2 rounded-lg border px-3 py-2 text-xs ' + (colors[data.decision] || colors.COLD);
+      testResult.innerHTML =
+        `<strong>${data.decision}</strong>${data.category ? ' · <span class="font-mono">' + data.category + '</span>' : ''}` +
+        `<br><span class="opacity-70">${data.reason}</span>`;
+    } catch {
+      testResult.className = 'mt-2 rounded-lg border px-3 py-2 text-xs bg-red-50 border-red-200 text-red-700';
+      testResult.textContent = 'Error contacting server.';
+    }
+  }
+
+  testBtn.addEventListener('click', runTest);
+  testInput.addEventListener('keydown', e => e.key === 'Enter' && (e.preventDefault(), runTest()));
+})();
+</script>
 {% endblock %}
