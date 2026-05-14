@@ -58,29 +58,76 @@ TECH_DEPARTMENT_SIGNALS = [
 ]
 
 NON_TECH_DEPARTMENT_SIGNALS = [
+    # Healthcare / clinical — bedside & hospital operations
     "nursing",
     "patient care",
-    "clinical",
+    "patient services",
+    "clinical operations",
+    "clinical services",
     "pharmacy",
+    "pharmacology",
     "dental",
+    "radiology",
+    "laboratory",
+    "pathology",
+    "oncology",
+    "cardiology",
+    "pediatrics",
+    "orthopedics",
+    "neurology",
+    "rehabilitation",
+    "therapy services",
+    "surgical services",
+    "emergency medicine",
+    "primary care",
+    "behavioral health",
+    "mental health",
+    "hospice",
+    "home health",
+    # Note: "clinical" alone is intentionally excluded here — "clinical informatics"
+    # and "clinical systems" are IT departments.  Use hard_negative_phrases in
+    # HarvestEngineConfig for title-level blocking of pure clinical roles.
+    # Food / hospitality / facilities
     "food service",
     "culinary",
     "housekeeping",
+    "environmental services",
     "facilities management",
+    "laundry",
+    # Retail / warehouse
     "retail operations",
     "warehouse operations",
+    "store operations",
+    "distribution center",
+    # Other non-tech
+    "human resources",
+    "payroll",
+    "legal",
+    "compliance",
+    "audit",
+    "finance",
+    "accounting",
+    "marketing",
+    "sales",
+    "customer service",
 ]
 
 GENERIC_TECH_SIGNALS = [
+    # These are last-resort POSSIBLE signals when no category phrase matched.
+    # Keep these as multi-word phrases — single words like "engineer" or
+    # "developer" are too broad and cause false positives on non-tech roles.
     "software engineer",
     "software developer",
     "data engineer",
     "data analyst",
     "data scientist",
-    "machine learning",
-    "artificial intelligence",
+    "machine learning engineer",
+    "ml engineer",
+    "ai engineer",
+    "artificial intelligence engineer",
     "quality engineer",
     "test engineer",
+    "test automation engineer",
     "technical lead",
     "technical architect",
     "platform engineer",
@@ -93,6 +140,18 @@ GENERIC_TECH_SIGNALS = [
     "research engineer",
     "engineering manager",
     "tech lead",
+    # Enterprise platform roles (catch-all before dedicated categories are set up)
+    "servicenow developer",
+    "salesforce developer",
+    "sap consultant",
+    "workday consultant",
+    "oracle consultant",
+    # Healthcare IT
+    "healthcare it",
+    "ehr analyst",
+    "emr analyst",
+    "epic analyst",
+    "cerner analyst",
 ]
 
 
@@ -107,6 +166,12 @@ class ClassifyResult:
 
 
 def normalize(text: str) -> str:
+    """Normalize a job TITLE for matching.
+
+    Strips seniority prefixes/suffixes (Senior, Staff, Lead, L5, etc.) so that
+    "Senior AI Engineer" and "AI Engineer" both collapse to "ai engineer" and
+    match the same phrase "ai engineer" without needing duplicate entries.
+    """
     if not text:
         return ""
     text = str(text).lower().strip()
@@ -117,8 +182,33 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_phrase(phrase: str) -> str:
+    """Normalize a phrase from the category include/exclude bank.
+
+    Intentionally does NOT strip seniority words — phrases must be written as
+    canonical tech terms without seniority prefixes (e.g. "software engineer",
+    NOT "senior software engineer").  Stripping seniority from phrases causes
+    "staff engineer" → "engineer", which then falsely matches every job title
+    that contains the word "engineer" (AI Engineer, Build Engineer, etc.).
+    """
+    if not phrase:
+        return ""
+    text = str(phrase).lower().strip()
+    text = re.sub(r"[-_/\\|]", " ", text)
+    text = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def phrase_match(normalized_text: str, phrase: str) -> bool:
-    p = normalize(phrase)
+    """Return True if *phrase* appears as a whole word in *normalized_text*.
+
+    *normalized_text* must already be the output of ``normalize()`` (title with
+    seniority stripped).  The phrase is normalized with ``normalize_phrase()``
+    which keeps the phrase words intact so that "staff engineer" only matches
+    titles that literally say "staff engineer" after basic cleanup — not every
+    title containing the single word "engineer".
+    """
+    p = normalize_phrase(phrase)
     if not p:
         return False
     pattern = r"(?<!\w)" + re.escape(p) + r"(?!\w)"
