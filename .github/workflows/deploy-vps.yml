@@ -14,6 +14,9 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read   # allows GITHUB_TOKEN to pull images from GHCR
     steps:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
