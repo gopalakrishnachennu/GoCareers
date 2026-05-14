@@ -1353,7 +1353,7 @@ def fetch_raw_jobs_for_company_task(
         return
 
     # ── Upsert jobs ───────────────────────────────────────────────────────────
-    jobs_new = jobs_updated = jobs_duplicate = jobs_failed = 0
+    jobs_new = jobs_updated = jobs_duplicate = jobs_failed = jobs_pre_filtered = 0
     filter_strong = filter_possible = filter_unknown = filter_cold = filter_no_match = 0
     upsert_errors: list[str] = []
     new_raw_job_pks: list[int] = []  # PKs of freshly-created RawJobs for auto-pipeline
@@ -1511,6 +1511,49 @@ def fetch_raw_jobs_for_company_task(
                 and not effective_filter_audit_mode
                 and filter_result.decision in {COLD, NO_MATCH}
             )
+
+            # ── Pre-storage title gate (selective fetch) ──────────────────────
+            # Drop definitive HARD_NO titles BEFORE any DB write, defaults build,
+            # or location extraction — keeps RawJob table clean from day one.
+            #
+            # Only fires when ALL of:
+            #   • selective_filter_enabled=True (filter is on)
+            #   • filter_audit_mode=False (enforcement mode, not observation)
+            #   • pre_storage_filter_enabled=True (operator opt-in flag)
+            #   • filter_blocks_pool=True (COLD or NO_MATCH in enforcement mode)
+            #
+            # HARD_NO = NO_MATCH  OR  COLD with confidence < 0.2
+            # Borderline COLD (conf ≥ 0.2) → AMBIGUOUS → still stored for JD gate.
+            # Blank titles → unknown intent → stored (fail-safe, treated as AMBIGUOUS).
+            # Any exception in this block → fall through and store (never silently drop).
+            # fetch_all / audit_mode paths never reach here (filter_blocks_pool=False).
+            if filter_blocks_pool and getattr(_cfg, "pre_storage_filter_enabled", False):
+                _pre_title = (job_dict.get("title") or "").strip()
+                _is_hard_no = (
+                    filter_result.decision == NO_MATCH
+                    or (
+                        filter_result.decision == COLD
+                        and getattr(filter_result, "confidence", 1.0) < 0.2
+                    )
+                )
+                if _pre_title and _is_hard_no:
+                    jobs_pre_filtered += 1
+                    # Keep filter counters accurate for run summary + zero-tech logic
+                    if filter_result.decision == NO_MATCH:
+                        filter_no_match += 1
+                    else:
+                        filter_cold += 1
+                    if jobs_pre_filtered <= 5 or jobs_pre_filtered % 100 == 0:
+                        logger.debug(
+                            "pre-storage drop [%d]: %r decision=%s conf=%.2f label=%s",
+                            jobs_pre_filtered,
+                            _pre_title[:80],
+                            filter_result.decision,
+                            getattr(filter_result, "confidence", 0.0),
+                            label_pk,
+                        )
+                    continue  # ← skip upsert, payload archive, new_raw_job_pks entirely
+
             supplied_location_candidates = job_dict.get("location_candidates")
             if not isinstance(supplied_location_candidates, list):
                 supplied_location_candidates = []
@@ -1698,6 +1741,7 @@ def fetch_raw_jobs_for_company_task(
                         "jobs_updated": jobs_updated,
                         "jobs_duplicate": jobs_duplicate,
                         "jobs_failed": jobs_failed,
+                        "jobs_pre_filtered": jobs_pre_filtered,
                     },
                 )
             except Exception:
@@ -1897,8 +1941,10 @@ def fetch_raw_jobs_for_company_task(
                     logger.warning("HARVEST_AUDIT completion persist/log failed: %s", exc)
 
     logger.info(
-        "fetch_raw_jobs: label=%s new=%d updated=%d enriched_inline=pending failed=%d",
-        label_pk, jobs_new, jobs_updated, jobs_failed,
+        "fetch_raw_jobs: label=%s new=%d updated=%d failed=%d pre_filtered=%d "
+        "filter(strong=%d possible=%d cold=%d no_match=%d unknown=%d)",
+        label_pk, jobs_new, jobs_updated, jobs_failed, jobs_pre_filtered,
+        filter_strong, filter_possible, filter_cold, filter_no_match, filter_unknown,
     )
 
     # ── Inline pipeline: enrich only (safe — pure Python, zero HTTP) ────────────

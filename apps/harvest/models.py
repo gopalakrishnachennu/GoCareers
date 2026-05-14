@@ -1734,6 +1734,16 @@ class HarvestEngineConfig(models.Model):
         verbose_name="Selective filter audit mode",
         help_text="When True, classify and audit decisions without skipping JD fetch/backfill.",
     )
+    pre_storage_filter_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Pre-storage filter (selective fetch)",
+        help_text=(
+            "When True, HARD_NO titles (NO_MATCH or COLD with confidence < 0.2) are dropped "
+            "BEFORE writing to DB — only relevant jobs are ever stored. "
+            "Requires selective_filter_enabled=True and filter_audit_mode=False. "
+            "Enable only after verifying false-negative rate in audit mode."
+        ),
+    )
     zero_tech_threshold = models.PositiveSmallIntegerField(default=5)
     zero_tech_skip_ttl_days = models.PositiveSmallIntegerField(default=30)
     cold_no_match_sample_rate_pct = models.PositiveSmallIntegerField(default=5)
