@@ -1744,6 +1744,16 @@ class HarvestEngineConfig(models.Model):
             "Enable only after verifying false-negative rate in audit mode."
         ),
     )
+    filter_full_crawl = models.BooleanField(
+        default=False,
+        verbose_name="Enforce filter during full crawls",
+        help_text=(
+            "By default, full-crawl fetches (fetch_all=True) run in filter audit mode — jobs are "
+            "classified but nothing is suppressed, so admin bulk imports are always complete. "
+            "When this flag is True, the selective filter enforces (drops HARD_NO jobs) even "
+            "during full crawls. Enable for selective harvesting from day one."
+        ),
+    )
     zero_tech_threshold = models.PositiveSmallIntegerField(default=5)
     zero_tech_skip_ttl_days = models.PositiveSmallIntegerField(default=30)
     cold_no_match_sample_rate_pct = models.PositiveSmallIntegerField(default=5)

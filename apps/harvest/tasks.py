@@ -1129,7 +1129,11 @@ def fetch_raw_jobs_for_company_task(
     filter_audit_mode = bool(getattr(_cfg, "filter_audit_mode", True))
     # Full Fetch is the permanent audit/admin path. It may classify for visibility,
     # but it must never suppress detail fetches or pool recovery data.
-    effective_filter_audit_mode = filter_audit_mode or bool(fetch_all)
+    # Exception: when filter_full_crawl=True, the operator explicitly wants the filter
+    # to enforce (drop HARD_NO jobs) even during full crawls. This enables selective
+    # harvesting from day one without a separate incremental run first.
+    _filter_full_crawl = bool(getattr(_cfg, "filter_full_crawl", False))
+    effective_filter_audit_mode = filter_audit_mode or (bool(fetch_all) and not _filter_full_crawl)
     filter_snapshot = None
     filter_categories: list[dict] = []
     filter_hard_negatives: list[str] = []
