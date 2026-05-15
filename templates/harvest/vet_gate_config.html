@@ -1,0 +1,426 @@
+{% extends 'base.html' %}
+{% block content %}
+{% include 'jobs/_pipeline_subnav.html' %}
+
+<!-- Page header -->
+<div class="page-header">
+  <div>
+    <h1 class="page-title">Vet Gate Config</h1>
+    <p class="page-subtitle">Control which RawJobs are promoted to the Vet Queue — no redeploy needed.</p>
+  </div>
+</div>
+
+<!-- Live preview banner -->
+<div class="card-padded mb-5 flex items-center justify-between gap-4 border-l-4 border-emerald-400">
+  <div class="flex items-center gap-3">
+    <div class="shrink-0 w-8 h-8 rounded-lg bg-emerald-50 flex items-center justify-center">
+      <svg class="w-4 h-4 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+      </svg>
+    </div>
+    <div>
+      <p class="text-sm font-semibold text-gray-800">Live Preview</p>
+      <p class="text-xs text-gray-500">Jobs that would qualify for sync with current settings</p>
+    </div>
+  </div>
+  <div id="preview-count" class="text-2xl font-bold text-emerald-700">
+    {{ preview.total|default:"—" }}
+  </div>
+  <div id="preview-spinner" class="hidden">
+    <svg class="animate-spin h-5 w-5 text-emerald-500" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"></path>
+    </svg>
+  </div>
+</div>
+
+<!-- Toast -->
+<div id="save-toast" class="hidden fixed top-5 right-5 z-50 bg-emerald-600 text-white px-5 py-3 rounded-xl shadow-xl text-sm font-semibold transition-all">
+  Vet Gate Config saved.
+</div>
+
+<!-- Settings form -->
+<form id="vet-gate-form" method="post">
+  {% csrf_token %}
+  <div class="space-y-5">
+
+    <!-- ── 1. Scope Rules ────────────────────────────────────────────────── -->
+    <details class="card-padded group" open>
+      <summary class="flex items-center justify-between cursor-pointer list-none">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 21v-4m0 0V5a2 2 0 012-2h6.5l1 1H21l-3 6 3 6h-8.5l-1-1H5a2 2 0 00-2 2zm9-13.5V9"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Scope Rules</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Which scope statuses are allowed into the sync pipeline.</p>
+          </div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="mt-4 space-y-4 border-t border-gray-100 pt-4">
+
+        <!-- allow_unknown_country -->
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1">
+            <label class="text-sm font-semibold text-gray-700">Allow REVIEW_UNKNOWN_COUNTRY</label>
+            <p class="text-xs text-gray-500 mt-0.5">Include jobs whose country could not be determined. Turn off to sync only confirmed target-country jobs.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+            <input type="checkbox" name="allow_unknown_country" id="id_allow_unknown_country" class="sr-only peer sync-field" {% if cfg.allow_unknown_country %}checked{% endif %}>
+            <div class="w-10 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform"></div>
+          </label>
+        </div>
+
+        <!-- allow_possible_filter -->
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1">
+            <label class="text-sm font-semibold text-gray-700">Allow POSSIBLE filter decision</label>
+            <p class="text-xs text-gray-500 mt-0.5">Include jobs where the pre-storage filter scored POSSIBLE (not just STRONG). Turn off for highest-confidence only.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+            <input type="checkbox" name="allow_possible_filter" id="id_allow_possible_filter" class="sr-only peer sync-field" {% if cfg.allow_possible_filter %}checked{% endif %}>
+            <div class="w-10 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform"></div>
+          </label>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── 2. JD Quality Gate ─────────────────────────────────────────────── -->
+    <details class="card-padded group" open>
+      <summary class="flex items-center justify-between cursor-pointer list-none">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-amber-50 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">JD Quality Gate</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Minimum description quality required before a job can proceed.</p>
+          </div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="mt-4 space-y-4 border-t border-gray-100 pt-4">
+
+        <!-- require_description -->
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1">
+            <label class="text-sm font-semibold text-gray-700">Require job description</label>
+            <p class="text-xs text-gray-500 mt-0.5">Block jobs that have no fetched JD. Highly recommended.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+            <input type="checkbox" name="require_description" id="id_require_description" class="sr-only peer sync-field" {% if cfg.require_description %}checked{% endif %}>
+            <div class="w-10 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform"></div>
+          </label>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- min_word_count -->
+          <div>
+            <label for="id_min_word_count" class="block text-sm font-semibold text-gray-700 mb-1">Minimum word count</label>
+            <p class="text-xs text-gray-500 mb-2">Jobs with fewer words are blocked. Default: 80.</p>
+            <input type="number" name="min_word_count" id="id_min_word_count" value="{{ cfg.min_word_count }}"
+                   min="1" max="2000" step="1"
+                   class="form-input w-full sync-field">
+          </div>
+
+          <!-- min_char_count -->
+          <div>
+            <label for="id_min_char_count" class="block text-sm font-semibold text-gray-700 mb-1">Minimum character count</label>
+            <p class="text-xs text-gray-500 mb-2">Jobs shorter than this are blocked. Default: 400.</p>
+            <input type="number" name="min_char_count" id="id_min_char_count" value="{{ cfg.min_char_count }}"
+                   min="1" max="10000" step="1"
+                   class="form-input w-full sync-field">
+          </div>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── 3. Lane Thresholds ─────────────────────────────────────────────── -->
+    <details class="card-padded group" open>
+      <summary class="flex items-center justify-between cursor-pointer list-none">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-violet-50 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Lane Thresholds</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Score minimums for automatic promotion to AUTO lane vs human REVIEW.</p>
+          </div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="mt-4 space-y-5 border-t border-gray-100 pt-4">
+        <p class="text-xs text-gray-500">A job goes to AUTO lane only when <strong>all three</strong> scores meet their thresholds. Otherwise it goes to HUMAN lane for review.</p>
+
+        <!-- auto_lane_min_vet_priority -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="id_vet_priority" class="text-sm font-semibold text-gray-700">Min vet priority score</label>
+            <span id="vet_priority_display" class="text-sm font-bold text-violet-700">{{ cfg.auto_lane_min_vet_priority }}</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">Composite score: 45% data quality + 35% trust + 20% fit. Default: 0.75.</p>
+          <input type="range" name="auto_lane_min_vet_priority" id="id_vet_priority" value="{{ cfg.auto_lane_min_vet_priority }}"
+                 min="0" max="1" step="0.01"
+                 class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-violet-600 sync-field"
+                 oninput="document.getElementById('vet_priority_display').textContent = parseFloat(this.value).toFixed(2)">
+          <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>0.0 (allow all)</span><span>0.75 (default)</span><span>1.0 (strictest)</span>
+          </div>
+        </div>
+
+        <!-- auto_lane_min_data_quality -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="id_data_quality" class="text-sm font-semibold text-gray-700">Min data quality score</label>
+            <span id="data_quality_display" class="text-sm font-bold text-violet-700">{{ cfg.auto_lane_min_data_quality }}</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">50% JD quality + 25% quality score + 25% field completeness. Default: 0.72.</p>
+          <input type="range" name="auto_lane_min_data_quality" id="id_data_quality" value="{{ cfg.auto_lane_min_data_quality }}"
+                 min="0" max="1" step="0.01"
+                 class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-violet-600 sync-field"
+                 oninput="document.getElementById('data_quality_display').textContent = parseFloat(this.value).toFixed(2)">
+          <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>0.0 (allow all)</span><span>0.72 (default)</span><span>1.0 (strictest)</span>
+          </div>
+        </div>
+
+        <!-- auto_lane_min_trust -->
+        <div>
+          <div class="flex items-center justify-between mb-1">
+            <label for="id_trust" class="text-sm font-semibold text-gray-700">Min trust score</label>
+            <span id="trust_display" class="text-sm font-bold text-violet-700">{{ cfg.auto_lane_min_trust }}</span>
+          </div>
+          <p class="text-xs text-gray-500 mb-2">40% source platform + 40% classification confidence + 20% platform label. Default: 0.70.</p>
+          <input type="range" name="auto_lane_min_trust" id="id_trust" value="{{ cfg.auto_lane_min_trust }}"
+                 min="0" max="1" step="0.01"
+                 class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-violet-600 sync-field"
+                 oninput="document.getElementById('trust_display').textContent = parseFloat(this.value).toFixed(2)">
+          <div class="flex justify-between text-[10px] text-gray-400 mt-1">
+            <span>0.0 (allow all)</span><span>0.70 (default)</span><span>1.0 (strictest)</span>
+          </div>
+        </div>
+
+      </div>
+    </details>
+
+    <!-- ── 4. Domain Blocklist ─────────────────────────────────────────────── -->
+    <details class="card-padded group">
+      <summary class="flex items-center justify-between cursor-pointer list-none">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Domain Blocklist</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Job domain slugs that are always excluded from sync, regardless of scores.</p>
+          </div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="mt-4 border-t border-gray-100 pt-4">
+        <p class="text-xs text-gray-500 mb-3">Type a job domain slug and press <kbd class="px-1.5 py-0.5 text-[10px] font-mono bg-gray-100 border border-gray-300 rounded">Enter</kbd> to add. Click × to remove.</p>
+
+        <!-- Chip display area -->
+        <div id="chip-container" class="flex flex-wrap gap-2 min-h-10 p-2 bg-gray-50 border border-gray-200 rounded-lg mb-2">
+          <!-- chips injected by JS -->
+        </div>
+
+        <!-- Type-ahead input -->
+        <input type="text" id="domain-input" placeholder="e.g. hr-recruiter, sales, finance-accounting"
+               class="form-input w-full text-sm"
+               autocomplete="off">
+
+        <!-- Hidden JSON field sent with the form -->
+        <input type="hidden" name="blocked_domains_json" id="blocked_domains_json" value="{{ cfg.blocked_domains|default:'[]' }}">
+
+        <p class="text-xs text-gray-400 mt-2">Common noise domains: <button type="button" class="text-indigo-600 hover:underline text-xs" onclick="addDomain('hr-recruiter')">hr-recruiter</button>, <button type="button" class="text-indigo-600 hover:underline text-xs" onclick="addDomain('sales')">sales</button>, <button type="button" class="text-indigo-600 hover:underline text-xs" onclick="addDomain('finance-accounting')">finance-accounting</button>, <button type="button" class="text-indigo-600 hover:underline text-xs" onclick="addDomain('marketing')">marketing</button>, <button type="button" class="text-indigo-600 hover:underline text-xs" onclick="addDomain('legal')">legal</button></p>
+      </div>
+    </details>
+
+    <!-- ── 5. Sync Behaviour ───────────────────────────────────────────────── -->
+    <details class="card-padded group">
+      <summary class="flex items-center justify-between cursor-pointer list-none">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-lg bg-teal-50 flex items-center justify-center shrink-0">
+            <svg class="w-4 h-4 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-gray-800">Sync Behaviour</h3>
+            <p class="text-xs text-gray-500 mt-0.5">Chunk size and automation settings for the sync pipeline.</p>
+          </div>
+        </div>
+        <svg class="w-4 h-4 text-gray-400 group-open:rotate-180 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+        </svg>
+      </summary>
+      <div class="mt-4 space-y-4 border-t border-gray-100 pt-4">
+
+        <!-- default_chunk_size -->
+        <div>
+          <label for="id_default_chunk_size" class="block text-sm font-semibold text-gray-700 mb-1">Default chunk size</label>
+          <p class="text-xs text-gray-500 mb-2">How many RawJobs to process per database page during sync. Range 50–2000. Default: 500.</p>
+          <input type="number" name="default_chunk_size" id="id_default_chunk_size" value="{{ cfg.default_chunk_size }}"
+                 min="50" max="2000" step="50"
+                 class="form-input w-48">
+        </div>
+
+        <!-- auto_sync_after_harvest -->
+        <div class="flex items-start justify-between gap-4">
+          <div class="flex-1">
+            <label class="text-sm font-semibold text-gray-700">Auto-sync after full harvest</label>
+            <p class="text-xs text-gray-500 mt-0.5">Automatically trigger a qualified sync when a full-crawl batch completes.</p>
+          </div>
+          <label class="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+            <input type="checkbox" name="auto_sync_after_harvest" id="id_auto_sync_after_harvest" class="sr-only peer" {% if cfg.auto_sync_after_harvest %}checked{% endif %}>
+            <div class="w-10 h-6 bg-gray-200 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-transform"></div>
+          </label>
+        </div>
+
+      </div>
+    </details>
+
+  </div><!-- end space-y-5 -->
+
+  <!-- Save button -->
+  <div class="mt-6 flex items-center gap-4">
+    <button type="submit"
+            class="btn-primary px-6 py-2.5 text-sm font-semibold rounded-xl">
+      Save &amp; Apply
+    </button>
+    <span class="text-xs text-gray-400">Changes take effect on the next sync run.</span>
+  </div>
+</form>
+
+<script>
+// ── Slider live display ───────────────────────────────────────────────────────
+document.querySelectorAll('input[type="range"]').forEach(function(slider) {
+  // Initialise display on page load
+  var display = document.getElementById(slider.id.replace('id_', '') + '_display');
+  if (display) display.textContent = parseFloat(slider.value).toFixed(2);
+});
+
+// ── Chip input for domain blocklist ──────────────────────────────────────────
+var domains = [];
+try {
+  domains = JSON.parse(document.getElementById('blocked_domains_json').value || '[]');
+  if (!Array.isArray(domains)) domains = [];
+} catch(e) { domains = []; }
+
+function renderChips() {
+  var container = document.getElementById('chip-container');
+  container.innerHTML = '';
+  if (domains.length === 0) {
+    container.innerHTML = '<span class="text-xs text-gray-400 italic self-center">No domains blocked</span>';
+    return;
+  }
+  domains.forEach(function(d, i) {
+    var chip = document.createElement('span');
+    chip.className = 'inline-flex items-center gap-1 px-2.5 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full';
+    chip.innerHTML = d + ' <button type="button" onclick="removeDomain(' + i + ')" class="text-red-500 hover:text-red-700 font-bold leading-none">&times;</button>';
+    container.appendChild(chip);
+  });
+  document.getElementById('blocked_domains_json').value = JSON.stringify(domains);
+  triggerPreview();
+}
+
+function addDomain(slug) {
+  slug = (slug || '').trim().toLowerCase();
+  if (!slug) return;
+  if (!domains.includes(slug)) {
+    domains.push(slug);
+    renderChips();
+  }
+}
+
+function removeDomain(index) {
+  domains.splice(index, 1);
+  renderChips();
+}
+
+document.getElementById('domain-input').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    addDomain(this.value);
+    this.value = '';
+  }
+});
+
+renderChips();
+
+// ── Live preview — debounced AJAX ─────────────────────────────────────────────
+var previewTimer = null;
+var previewUrl = "{% url 'harvest-vet-gate-preview' %}";
+var csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+
+function triggerPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(fetchPreview, 600);
+}
+
+function fetchPreview() {
+  document.getElementById('preview-spinner').classList.remove('hidden');
+  document.getElementById('preview-count').classList.add('opacity-40');
+
+  var formData = new FormData(document.getElementById('vet-gate-form'));
+  // Ensure the current domains JSON is included
+  formData.set('blocked_domains_json', JSON.stringify(domains));
+
+  fetch(previewUrl, {
+    method: 'POST',
+    headers: {'X-CSRFToken': csrfToken},
+    body: formData,
+  })
+  .then(function(r) { return r.json(); })
+  .then(function(data) {
+    document.getElementById('preview-count').textContent = (data.total || 0).toLocaleString();
+    document.getElementById('preview-count').classList.remove('opacity-40');
+    document.getElementById('preview-spinner').classList.add('hidden');
+  })
+  .catch(function() {
+    document.getElementById('preview-count').textContent = '—';
+    document.getElementById('preview-count').classList.remove('opacity-40');
+    document.getElementById('preview-spinner').classList.add('hidden');
+  });
+}
+
+// Attach preview triggers to all sync fields
+document.querySelectorAll('.sync-field').forEach(function(el) {
+  el.addEventListener('change', triggerPreview);
+  el.addEventListener('input', triggerPreview);
+});
+
+// ── Save toast ────────────────────────────────────────────────────────────────
+{% if messages %}
+{% for msg in messages %}
+{% if 'Vet Gate Config saved' in msg.message %}
+(function() {
+  var toast = document.getElementById('save-toast');
+  toast.classList.remove('hidden');
+  setTimeout(function() { toast.classList.add('hidden'); }, 3000);
+})();
+{% endif %}
+{% endfor %}
+{% endif %}
+</script>
+{% endblock %}

@@ -6,6 +6,8 @@ from .views import (
     CompanyFetchStatusView,
     CompanyLabelListView,
     EngineConfigView,
+    VetGateConfigView,
+    VetGatePreviewView,
     FetchBatchListView,
     FetchCooldownStatusView,
     FetchBatchDetailView,
@@ -140,6 +142,9 @@ urlpatterns = [
     path("duplicates/bulk-resolve/", DuplicateBulkResolveView.as_view(), name="harvest-duplicate-bulk-resolve"),
     # Engine Config — runtime tuning knobs (concurrency, rate limit, stagger)
     path("engine/", EngineConfigView.as_view(), name="harvest-engine-config"),
+    # Vet Gate Config — sync gate thresholds and domain blocklist
+    path("vet-gate/", VetGateConfigView.as_view(), name="harvest-vet-gate-config"),
+    path("vet-gate/preview/", VetGatePreviewView.as_view(), name="harvest-vet-gate-preview"),
     path("role-categories/", SelectiveRoleCategoryListView.as_view(), name="harvest-role-categories"),
     path("role-categories/new/", SelectiveRoleCategoryCreateView.as_view(), name="harvest-role-category-create"),
     path("role-categories/<int:pk>/edit/", SelectiveRoleCategoryUpdateView.as_view(), name="harvest-role-category-edit"),

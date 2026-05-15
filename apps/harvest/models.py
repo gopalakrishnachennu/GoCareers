@@ -1997,6 +1997,109 @@ class HarvestEngineConfig(models.Model):
             pass  # Non-fatal — workers will apply the rate limit on next restart
 
 
+class VetGateConfig(models.Model):
+    """
+    Singleton — GUI-configurable rules for the RawJob → Vet Queue sync gate.
+    Edit at /harvest/vet-gate/ instead of hardcoding thresholds in gating.py.
+    """
+
+    # ── Scope section ─────────────────────────────────────────────────────────
+    allow_unknown_country = models.BooleanField(
+        default=True,
+        verbose_name="Allow REVIEW_UNKNOWN_COUNTRY",
+        help_text="Include jobs whose country could not be determined. Turn off to sync only confirmed target-country jobs.",
+    )
+    allow_possible_filter = models.BooleanField(
+        default=True,
+        verbose_name="Allow POSSIBLE filter decision",
+        help_text="Include jobs where the pre-storage filter scored POSSIBLE (not just STRONG). Turn off for highest-confidence only.",
+    )
+
+    # ── JD quality thresholds ─────────────────────────────────────────────────
+    require_description = models.BooleanField(
+        default=True,
+        verbose_name="Require job description",
+        help_text="Block jobs that have no fetched JD. Highly recommended.",
+    )
+    min_word_count = models.PositiveSmallIntegerField(
+        default=80,
+        verbose_name="Minimum word count",
+        help_text="Jobs with fewer words in the description are blocked. Default: 80.",
+    )
+    min_char_count = models.PositiveSmallIntegerField(
+        default=400,
+        verbose_name="Minimum character count",
+        help_text="Jobs whose description text is shorter than this are blocked. Default: 400.",
+    )
+
+    # ── Lane thresholds (AUTO vs HUMAN) ───────────────────────────────────────
+    auto_lane_min_vet_priority = models.FloatField(
+        default=0.75,
+        verbose_name="AUTO lane: min vet priority score",
+        help_text="Jobs scoring at or above this go straight to AUTO lane (no human review needed). 0.0–1.0.",
+    )
+    auto_lane_min_data_quality = models.FloatField(
+        default=0.72,
+        verbose_name="AUTO lane: min data quality score",
+        help_text="Data-quality score threshold for AUTO lane. 0.0–1.0.",
+    )
+    auto_lane_min_trust = models.FloatField(
+        default=0.70,
+        verbose_name="AUTO lane: min trust score",
+        help_text="Trust score threshold for AUTO lane. 0.0–1.0.",
+    )
+
+    # ── Domain blocklist ───────────────────────────────────────────────────────
+    blocked_domains = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Blocked job domains",
+        help_text=(
+            "JSON list of job_domain slugs to exclude from sync. "
+            "Example: [\"hr-recruiter\", \"sales\", \"finance-accounting\"]. "
+            "Jobs whose job_domain matches any entry are blocked regardless of other scores."
+        ),
+    )
+
+    # ── Sync behaviour ─────────────────────────────────────────────────────────
+    default_chunk_size = models.PositiveSmallIntegerField(
+        default=500,
+        verbose_name="Default chunk size",
+        help_text="How many RawJobs to process per database page during sync. 50–2000.",
+    )
+    auto_sync_after_harvest = models.BooleanField(
+        default=False,
+        verbose_name="Auto-sync after full harvest",
+        help_text="Automatically trigger a qualified sync when a full-crawl batch completes.",
+    )
+
+    class Meta:
+        verbose_name = "Vet Gate Config"
+        verbose_name_plural = "Vet Gate Config"
+
+    def __str__(self):
+        return "Vet Gate Config (singleton)"
+
+    @classmethod
+    def get(cls):
+        """Return the singleton, creating it with defaults if it doesn't exist."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    def save(self, *args, **kwargs):
+        # Clamp numeric fields to safe ranges
+        self.min_word_count = max(1, min(int(self.min_word_count or 80), 2000))
+        self.min_char_count = max(1, min(int(self.min_char_count or 400), 10000))
+        self.auto_lane_min_vet_priority = max(0.0, min(float(self.auto_lane_min_vet_priority or 0.75), 1.0))
+        self.auto_lane_min_data_quality = max(0.0, min(float(self.auto_lane_min_data_quality or 0.72), 1.0))
+        self.auto_lane_min_trust = max(0.0, min(float(self.auto_lane_min_trust or 0.70), 1.0))
+        self.default_chunk_size = max(50, min(int(self.default_chunk_size or 500), 2000))
+        if not isinstance(self.blocked_domains, list):
+            self.blocked_domains = []
+        self.pk = 1  # enforce singleton
+        super().save(*args, **kwargs)
+
+
 class HarvestPriorityRole(models.Model):
     """
     Roles we're actively trying to fill for clients right now.

@@ -4171,4 +4171,130 @@ class UnknownCountryReviewView(SuperuserRequiredMixin, View):
         else:
             messages.error(request, f"Unknown action: {action}")
 
+
+# ── Vet Gate Config ──────────────────────────────────────────────────────────
+
+def _vet_gate_preview_count(cfg) -> dict:
+    """Compute how many RawJobs would qualify for sync with these settings."""
+    from .models import RawJob
+    from django.db.models import Q, Value, F
+    from django.db.models.functions import Length, Coalesce
+
+    scope_statuses = [RawJob.ScopeStatus.PRIORITY_TARGET]
+    if cfg.allow_unknown_country:
+        scope_statuses.append(RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY)
+
+    qs = (
+        RawJob.objects.filter(
+            sync_status="PENDING",
+            is_active=True,
+            company__isnull=False,
+            is_priority=True,
+            scope_status__in=scope_statuses,
+        )
+        .exclude(original_url="")
+        .exclude(Q(is_cold=True) | Q(filter_decision="NO_MATCH") | Q(jd_fetch_skipped=True))
+    )
+
+    if not cfg.allow_possible_filter:
+        qs = qs.filter(filter_decision="STRONG")
+
+    if cfg.blocked_domains and isinstance(cfg.blocked_domains, list):
+        qs = qs.exclude(job_domain__in=cfg.blocked_domains)
+
+    if cfg.require_description:
+        qs = qs.filter(has_description=True, word_count__gte=cfg.min_word_count)
+        qs = qs.annotate(
+            _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
+        ).filter(_jd_len__gte=cfg.min_char_count)
+
+    total = qs.count()
+    return {"total": total}
+
+
+class VetGateConfigView(SuperuserRequiredMixin, View):
+    """GET = show vet gate config GUI. POST = save."""
+    template_name = "harvest/vet_gate_config.html"
+
+    def get(self, request, *args, **kwargs):
+        from .models import VetGateConfig
+        cfg = VetGateConfig.get()
+        preview = _vet_gate_preview_count(cfg)
+        return render(request, self.template_name, {
+            "cfg": cfg,
+            "preview": preview,
+            "active_tab": "engine",
+        })
+
+    def post(self, request, *args, **kwargs):
+        from .models import VetGateConfig
+        cfg = VetGateConfig.get()
+        cfg.allow_unknown_country = request.POST.get("allow_unknown_country") == "on"
+        cfg.allow_possible_filter = request.POST.get("allow_possible_filter") == "on"
+        cfg.require_description = request.POST.get("require_description") == "on"
+        try:
+            cfg.min_word_count = int(request.POST.get("min_word_count") or 80)
+        except (ValueError, TypeError):
+            cfg.min_word_count = 80
+        try:
+            cfg.min_char_count = int(request.POST.get("min_char_count") or 400)
+        except (ValueError, TypeError):
+            cfg.min_char_count = 400
+        try:
+            cfg.auto_lane_min_vet_priority = float(request.POST.get("auto_lane_min_vet_priority") or 0.75)
+        except (ValueError, TypeError):
+            cfg.auto_lane_min_vet_priority = 0.75
+        try:
+            cfg.auto_lane_min_data_quality = float(request.POST.get("auto_lane_min_data_quality") or 0.72)
+        except (ValueError, TypeError):
+            cfg.auto_lane_min_data_quality = 0.72
+        try:
+            cfg.auto_lane_min_trust = float(request.POST.get("auto_lane_min_trust") or 0.70)
+        except (ValueError, TypeError):
+            cfg.auto_lane_min_trust = 0.70
+        raw_domains = request.POST.get("blocked_domains_json") or "[]"
+        try:
+            parsed = json.loads(raw_domains)
+            cfg.blocked_domains = parsed if isinstance(parsed, list) else []
+        except Exception:
+            cfg.blocked_domains = []
+        try:
+            cfg.default_chunk_size = int(request.POST.get("default_chunk_size") or 500)
+        except (ValueError, TypeError):
+            cfg.default_chunk_size = 500
+        cfg.auto_sync_after_harvest = request.POST.get("auto_sync_after_harvest") == "on"
+        cfg.save()
+        messages.success(request, "Vet Gate Config saved.")
+        return redirect("harvest-vet-gate-config")
+
+
+class VetGatePreviewView(SuperuserRequiredMixin, View):
+    """AJAX endpoint — returns live preview count as JSON."""
+
+    def post(self, request, *args, **kwargs):
+        from .models import VetGateConfig
+
+        cfg = VetGateConfig.get()
+        # Temporarily apply posted values without saving
+        cfg.allow_unknown_country = request.POST.get("allow_unknown_country") == "on"
+        cfg.allow_possible_filter = request.POST.get("allow_possible_filter") == "on"
+        cfg.require_description = request.POST.get("require_description") == "on"
+        try:
+            cfg.min_word_count = max(1, int(request.POST.get("min_word_count") or 80))
+        except (ValueError, TypeError):
+            pass
+        try:
+            cfg.min_char_count = max(1, int(request.POST.get("min_char_count") or 400))
+        except (ValueError, TypeError):
+            pass
+        raw_domains = request.POST.get("blocked_domains_json") or "[]"
+        try:
+            parsed = json.loads(raw_domains)
+            cfg.blocked_domains = parsed if isinstance(parsed, list) else []
+        except Exception:
+            cfg.blocked_domains = []
+
+        preview = _vet_gate_preview_count(cfg)
+        return JsonResponse(preview)
+
         return redirect(redirect_url)

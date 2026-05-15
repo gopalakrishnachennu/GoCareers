@@ -21,10 +21,14 @@ REASON_JD_TOO_WEAK = "JD_TOO_WEAK"
 REASON_BLACKLISTED_COMPANY = "BLACKLISTED_COMPANY"
 REASON_COLD_SCOPE = "COLD_SCOPE"        # non-target country or no location
 REASON_UNSCOPED = "UNSCOPED"            # location never evaluated
+REASON_DOMAIN_BLOCKED = "DOMAIN_BLOCKED"  # job_domain is in the blocklist
 REASON_OK = "ELIGIBLE"
 
-# Scope statuses that are allowed to proceed to the vet queue
-_PASSABLE_SCOPE = frozenset({"PRIORITY_TARGET", "REVIEW_UNKNOWN_COUNTRY"})
+# Default scope statuses that are allowed to proceed to the vet queue.
+# The actual set used at runtime is computed from VetGateConfig.allow_unknown_country.
+_PASSABLE_SCOPE_DEFAULT = frozenset({"PRIORITY_TARGET", "REVIEW_UNKNOWN_COUNTRY"})
+# Kept for backwards-compat with any code that imported this name directly.
+_PASSABLE_SCOPE = _PASSABLE_SCOPE_DEFAULT
 
 
 @dataclass
@@ -153,13 +157,48 @@ def _scope_blocked_result(reason_code: str, scope_status: str) -> GateResult:
     )
 
 
-def evaluate_raw_job_gate(raw_job) -> GateResult:
+def evaluate_raw_job_gate(raw_job, cfg=None) -> GateResult:
+    if cfg is None:
+        from harvest.models import VetGateConfig
+        cfg = VetGateConfig.get()
+
+    # Build the set of passable scope statuses from config
+    passable_scope = {"PRIORITY_TARGET"}
+    if cfg.allow_unknown_country:
+        passable_scope.add("REVIEW_UNKNOWN_COUNTRY")
+
+    # ── Domain blocklist pre-check (fast-path, before any expensive work) ─────
+    blocked_domains = cfg.blocked_domains if isinstance(cfg.blocked_domains, list) else []
+    if blocked_domains:
+        job_domain = (getattr(raw_job, "job_domain", None) or "").strip().lower()
+        if job_domain and job_domain in [d.strip().lower() for d in blocked_domains]:
+            return GateResult(
+                passed=False,
+                reason_code=REASON_DOMAIN_BLOCKED,
+                reasons=[REASON_DOMAIN_BLOCKED],
+                checks={
+                    "scope_ok": True,
+                    "active_posting": False,
+                    "valid_source_url": False,
+                    "tenant_platform_match": False,
+                    "dedupe_passed": False,
+                    "clean_jd_present": False,
+                    "company_resolved": False,
+                },
+                data_quality_score=0.0,
+                trust_score=0.0,
+                candidate_fit_score=0.0,
+                vet_priority_score=0.0,
+                lane="BLOCKED",
+                status="BLOCKED",
+            )
+
     # ── Scope pre-check (fast-path) ───────────────────────────────────────────
     # COLD and UNSCOPED jobs are blocked before any expensive checks.
     # This mirrors the `is_priority=True` filter in sync_harvested_to_pool_task
     # and makes the reason explicit in the gate audit trail.
     scope_status = (getattr(raw_job, "scope_status", "") or "").upper()
-    if scope_status and scope_status not in _PASSABLE_SCOPE:
+    if scope_status and scope_status not in passable_scope:
         reason = REASON_UNSCOPED if scope_status == "UNSCOPED" else REASON_COLD_SCOPE
         return _scope_blocked_result(reason, scope_status)
 
@@ -240,7 +279,11 @@ def evaluate_raw_job_gate(raw_job) -> GateResult:
     if not hard_passed:
         lane = "BLOCKED"
         status = "BLOCKED"
-    elif vet_priority >= 0.75 and data_quality >= 0.72 and trust >= 0.70:
+    elif (
+        vet_priority >= cfg.auto_lane_min_vet_priority
+        and data_quality >= cfg.auto_lane_min_data_quality
+        and trust >= cfg.auto_lane_min_trust
+    ):
         lane = "AUTO"
         status = "ELIGIBLE"
     else:

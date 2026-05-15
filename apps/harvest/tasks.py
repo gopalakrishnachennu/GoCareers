@@ -2861,44 +2861,60 @@ def sync_harvested_to_pool_task(
     max_jobs = int(max_jobs or 0)
     if max_jobs < 0:
         max_jobs = 0
-    chunk_size = max(50, min(int(chunk_size or 500), 2000))
+
+    # Load VetGateConfig singleton — all sync gate settings come from here.
+    from .models import VetGateConfig as _VetGateCfg
+    gate_cfg = _VetGateCfg.get()
+
+    chunk_size = max(50, min(int(chunk_size or gate_cfg.default_chunk_size), 2000))
 
     # Scoped harvest gate: only PRIORITY (target-country) or REVIEW_UNKNOWN_COUNTRY
     # jobs sync to the Vet Queue. Belt-and-suspenders: both is_priority and
     # scope_status are checked so a stale flag on either field can't open the gate.
     # Cold + UNSCOPED jobs stay in RawJob until the country resolver upgrades them
     # (or until target_countries config expands).
+    scope_statuses = [RawJob.ScopeStatus.PRIORITY_TARGET]
+    if gate_cfg.allow_unknown_country:
+        scope_statuses.append(RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY)
+
     base_qs = (
         RawJob.objects.filter(
             sync_status="PENDING",
             is_active=True,
             company__isnull=False,
             is_priority=True,
-            scope_status__in=[
-                RawJob.ScopeStatus.PRIORITY_TARGET,
-                RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY,
-            ],
+            scope_status__in=scope_statuses,
         )
         .exclude(original_url="")
         .exclude(Q(is_cold=True) | Q(filter_decision="NO_MATCH") | Q(jd_fetch_skipped=True))
     )
 
-    if qualified_only:
-        from .models import HarvestEngineConfig
+    if not gate_cfg.allow_possible_filter:
+        base_qs = base_qs.filter(filter_decision="STRONG")
 
-        cfg = HarvestEngineConfig.get()
-        min_words = max(1, int(getattr(cfg, "resume_jd_min_words", 80)))
-        min_chars = max(1, int(getattr(cfg, "resume_jd_min_chars", 400)))
+    if gate_cfg.blocked_domains and isinstance(gate_cfg.blocked_domains, list):
+        base_qs = base_qs.exclude(job_domain__in=gate_cfg.blocked_domains)
+
+    if qualified_only:
+        min_words = max(1, int(gate_cfg.min_word_count or 80))
+        min_chars = max(1, int(gate_cfg.min_char_count or 400))
         # Only pre-filter by substantive JD text. Do NOT pre-filter by classification
         # confidence here; the real gate (evaluate_raw_job_gate) decides pass/fail/lane.
         # Pre-filtering by confidence was silently excluding large volumes and made
         # "Sync Qualified to Vet Queue" look capped even when max_jobs=0 (all).
-        base_qs = base_qs.filter(
-            has_description=True,
-            word_count__gte=min_words,
-        ).annotate(
-            _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
-        ).filter(_jd_len__gte=min_chars)
+        if gate_cfg.require_description:
+            base_qs = base_qs.filter(
+                has_description=True,
+                word_count__gte=min_words,
+            ).annotate(
+                _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
+            ).filter(_jd_len__gte=min_chars)
+        else:
+            base_qs = base_qs.filter(
+                word_count__gte=min_words,
+            ).annotate(
+                _jd_len=Length(Coalesce(F("description_clean"), F("description"), Value("")))
+            ).filter(_jd_len__gte=min_chars)
 
     total_candidates = base_qs.count()
     total_target = min(total_candidates, max_jobs) if max_jobs else total_candidates
@@ -2958,7 +2974,7 @@ def sync_harvested_to_pool_task(
             last_pk = batch[-1].pk
             for rj in batch:
                 processed += 1
-                gate = evaluate_raw_job_gate(rj)
+                gate = evaluate_raw_job_gate(rj, cfg=gate_cfg)
     
                 existing = (
                     (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
