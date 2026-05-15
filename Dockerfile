@@ -1,11 +1,11 @@
 FROM python:3.12-slim
 
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies + Node.js (for Tailwind CSS build)
+# ── Layer 1: system deps (cached until apt packages change) ──────────────────
 RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
@@ -23,15 +23,19 @@ RUN apt-get update && apt-get install -y \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
+# ── Layer 2: Python deps (cached until requirements.txt changes) ──────────────
 COPY requirements.txt /app/
 RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Copy project
-COPY . /app/
+# ── Layer 3: Node deps (cached until package-lock.json changes) ───────────────
+# Copy ONLY the package files so this layer is not invalidated by code changes.
+COPY theme/static_src/package.json theme/static_src/package-lock.json /app/theme/static_src/
+RUN cd /app/theme/static_src && npm ci
 
-# Build Tailwind CSS from source so compiled CSS is always in sync with templates
-RUN cd /app/theme/static_src && npm ci && npm run build
+# ── Layer 4: app code + Tailwind build (invalidated on any code change) ───────
+# npm run build must come after COPY so Tailwind scans the actual templates.
+COPY . /app/
+RUN cd /app/theme/static_src && npm run build
 
 ENV DJANGO_SETTINGS_MODULE=config.settings
 
