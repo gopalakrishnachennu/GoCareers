@@ -20,4 +20,10 @@ class Migration(migrations.Migration):
                 ),
             ),
         ),
+        # Ensure the DB column has a SQL-level default so rows inserted by old
+        # worker code (before a rolling restart) don't violate the NOT NULL constraint.
+        migrations.RunSQL(
+            "ALTER TABLE harvest_fetchbatch ALTER COLUMN is_full_crawl SET DEFAULT false;",
+            reverse_sql="ALTER TABLE harvest_fetchbatch ALTER COLUMN is_full_crawl DROP DEFAULT;",
+        ),
     ]

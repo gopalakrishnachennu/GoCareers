@@ -2201,6 +2201,7 @@ def fetch_raw_jobs_batch_task(
         platform_filter=platform_slug or "",
         task_id=self.request.id or "",
         started_at=timezone.now(),
+        is_full_crawl=bool(fetch_all) and not test_mode,
     )
     filter_snapshot_id = None
     if _ecfg.selective_filter_enabled:
