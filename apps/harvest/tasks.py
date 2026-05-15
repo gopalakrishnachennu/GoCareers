@@ -1503,6 +1503,7 @@ def fetch_raw_jobs_for_company_task(
                         matched_negative=post_fetch_result.matched_negative,
                         reason=f"post-fetch classification: {post_fetch_result.reason}",
                         snapshot_id=post_fetch_result.snapshot_id,
+                        confidence=post_fetch_result.confidence,  # MUST forward: pre-storage gate uses this to distinguish HARD_NO (conf<0.2) from AMBIGUOUS (conf≥0.2)
                     )
                     should_skip_jd = False
 
