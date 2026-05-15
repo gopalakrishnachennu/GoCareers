@@ -2318,8 +2318,9 @@ def fetch_raw_jobs_batch_task(
         "logged_at": timezone.now().isoformat(),
     }
     batch.total_companies = total
+    batch.is_full_crawl = bool(fetch_all) and not test_mode
     batch.audit_payload = {"queue": queue_audit}
-    batch.save(update_fields=["total_companies", "audit_payload"])
+    batch.save(update_fields=["total_companies", "is_full_crawl", "audit_payload"])
 
     logger.info(
         "[HARVEST_AUDIT queue] run_kind=%s batch_id=%s fetch_all=%s eligible=%s skipped_fresh=%s queued=%s orch_task=%s",

@@ -6,7 +6,14 @@
   <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
     <div>
       <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Harvest batch</p>
-      <h1 class="mt-1 text-2xl font-black text-slate-900">#{{ batch.pk }} — {{ batch.name|default:"(unnamed)" }}</h1>
+      <h1 class="mt-1 text-2xl font-black text-slate-900">
+        #{{ batch.pk }} — {{ batch.name|default:"(unnamed)" }}
+        {% if batch.is_full_crawl %}
+          <span class="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-3 py-0.5 text-sm font-semibold text-emerald-800" title="fetch_all=True — every company board was crawled in full, no 25 h window">FULL CRAWL</span>
+        {% else %}
+          <span class="ml-2 inline-flex items-center rounded-full border border-slate-300 bg-slate-100 px-3 py-0.5 text-sm font-semibold text-slate-600" title="fetch_all=False — only jobs updated in the last 25 h were fetched per company">INCREMENTAL</span>
+        {% endif %}
+      </h1>
       <p class="mt-2 max-w-3xl text-sm text-slate-600">
         Every row below is one <strong>company + ATS board</strong> that was <em>queued</em> for this batch.
         Companies that were skipped as “too fresh” or excluded (dead portal, missing tenant) never appear here — see the yellow note.
@@ -214,11 +221,12 @@
             <th class="tbl-th">Company</th>
             <th class="tbl-th">Platform</th>
             <th class="tbl-th">Status</th>
-            <th class="tbl-th">Found</th>
-            <th class="tbl-th">New</th>
-            <th class="tbl-th">Upd</th>
-            <th class="tbl-th">Dup</th>
-            <th class="tbl-th">Fail rows</th>
+            <th class="tbl-th text-right" title="Total jobs the platform reports on its board (before any time filter)">Board</th>
+            <th class="tbl-th text-right" title="Jobs actually fetched & processed by our scraper">Scraped</th>
+            <th class="tbl-th text-right">New</th>
+            <th class="tbl-th text-right">Upd</th>
+            <th class="tbl-th text-right">Dup</th>
+            <th class="tbl-th text-right">Fail</th>
             <th class="tbl-th">Error</th>
           </tr>
         </thead>
@@ -239,22 +247,33 @@
               {% endif %}
               {% if run.is_test_run %}<span class="ml-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">TEST</span>{% endif %}
             </td>
-            <td class="tbl-td">
-              {{ run.jobs_found }}
-              {% if run.jobs_cap_applied %}
-                <span class="block text-[10px] font-semibold text-amber-700">capped from {{ run.jobs_total_available }}</span>
-              {% elif run.is_test_run %}
-                <span class="block text-[10px] text-blue-600">test run</span>
+            {# Board column — total on the platform's job board (set by harvester before any time filter) #}
+            <td class="tbl-td text-right font-mono">
+              {% if run.jobs_total_available %}
+                {{ run.jobs_total_available }}
+              {% else %}
+                <span class="text-slate-400">—</span>
               {% endif %}
             </td>
-            <td class="tbl-td">{{ run.jobs_new }}</td>
-            <td class="tbl-td">{{ run.jobs_updated }}</td>
-            <td class="tbl-td">{{ run.jobs_duplicate }}</td>
-            <td class="tbl-td">{{ run.jobs_failed }}</td>
+            {# Scraped column — what our scraper actually fetched (after time filter / pre-storage gate) #}
+            <td class="tbl-td text-right font-mono">
+              {% if run.jobs_total_available and run.jobs_found < run.jobs_total_available %}
+                <span class="font-semibold text-amber-700">{{ run.jobs_found }}</span>
+                {% if run.jobs_cap_applied %}
+                  <span class="block text-[10px] font-semibold text-amber-700">capped</span>
+                {% endif %}
+              {% else %}
+                {{ run.jobs_found }}
+              {% endif %}
+            </td>
+            <td class="tbl-td text-right">{{ run.jobs_new }}</td>
+            <td class="tbl-td text-right">{{ run.jobs_updated }}</td>
+            <td class="tbl-td text-right">{{ run.jobs_duplicate }}</td>
+            <td class="tbl-td text-right">{{ run.jobs_failed }}</td>
             <td class="tbl-td max-w-md text-xs text-slate-600 break-words">{{ run.error_message|default:"—"|truncatechars:160 }}</td>
           </tr>
           {% empty %}
-          <tr><td colspan="9" class="tbl-empty">No runs match this filter.</td></tr>
+          <tr><td colspan="10" class="tbl-empty">No runs match this filter.</td></tr>
           {% endfor %}
         </tbody>
       </table>

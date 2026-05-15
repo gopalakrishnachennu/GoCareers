@@ -319,6 +319,14 @@ class FetchBatch(models.Model):
         default=False,
         help_text="If True, queued tasks for this batch will exit immediately on pickup.",
     )
+    is_full_crawl = models.BooleanField(
+        default=False,
+        help_text=(
+            "True when the batch was launched with fetch_all=True — "
+            "every company fetches its entire board, ignoring the since_hours window. "
+            "False = incremental (last 25 h only)."
+        ),
+    )
     total_companies = models.PositiveIntegerField(default=0)
     completed_companies = models.PositiveIntegerField(default=0)
     failed_companies = models.PositiveIntegerField(default=0)
