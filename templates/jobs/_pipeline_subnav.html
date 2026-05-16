@@ -2,7 +2,7 @@
 {# Include on every page in the pipeline section so nav is always visible.    #}
 {# Active state driven by request.resolver_match.url_name                     #}
 {% with url_name=request.resolver_match.url_name %}
-<div class="bg-white border-b border-gray-200 shadow-sm mb-4 sticky top-0 z-30">
+<div id="sticky-subnav" class="bg-white border-b border-gray-200 shadow-sm mb-4 sticky top-0 z-30">
   <div class="flex items-center gap-0 overflow-x-auto px-4">
 
     <a href="{% url 'jobs-pipeline' %}"
