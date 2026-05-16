@@ -88,7 +88,7 @@
 {% include 'jobs/_pipeline_subnav.html' %}
 
 <!-- ── Search bar ─────────────────────────────────────────────────────────── -->
-<div class="mb-4">
+<div class="sticky z-20 bg-white/95 backdrop-blur-sm border-b border-slate-100 shadow-sm -mx-4 sm:-mx-6 px-4 sm:px-6 pt-2 pb-2 mb-3" style="top:49px">
   <form method="get" id="pipeline-search-form">
     <input type="hidden" name="tab" value="{{ tab }}">
     <input type="hidden" name="search_by" id="search_by_input" value="{{ search_by|default:'title' }}">
@@ -1091,7 +1091,7 @@
 
 {% if tab_raw %}
 <div id="raw-jobs-table"></div>
-<div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+<div class="rounded-2xl border border-slate-200 bg-white shadow-sm" style="overflow:clip">
   <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
     <div>
       <div class="flex items-center gap-2">
@@ -1135,7 +1135,7 @@
   </div>
   <div class="overflow-x-auto overflow-y-visible">
   <table class="w-full min-w-[1920px] text-sm">
-    <thead class="tbl-head">
+    <thead class="tbl-head sticky z-10" style="top:105px">
       <tr>
         <th class="tbl-th sticky left-0 z-20 min-w-[280px] bg-slate-50 shadow-[1px_0_0_#e2e8f0]">Job</th>
         <th class="tbl-th min-w-[190px]">Company</th>
@@ -1606,7 +1606,34 @@
 {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
 {% include 'jobs/_classify_ui.html' %}
 {% endif %}
+
+{# ── Back to top button ───────────────────────────────────────────────────── #}
+<button id="back-to-top"
+        onclick="window.scrollTo({top:0,behavior:'smooth'})"
+        title="Back to top"
+        class="fixed bottom-6 right-6 z-50 hidden items-center justify-center w-10 h-10 rounded-full bg-indigo-600 text-white shadow-lg hover:bg-indigo-700 transition-all hover:scale-110">
+  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 15l7-7 7 7"/>
+  </svg>
+</button>
+
 <script>
+// Back to top — show after 300px scroll
+(function(){
+  const btn = document.getElementById('back-to-top');
+  if (!btn) return;
+  const onScroll = () => {
+    if (window.scrollY > 300) {
+      btn.classList.remove('hidden');
+      btn.classList.add('flex');
+    } else {
+      btn.classList.add('hidden');
+      btn.classList.remove('flex');
+    }
+  };
+  window.addEventListener('scroll', onScroll, {passive: true});
+})();
+
 // Search-by toggle buttons
 function setSearchBy(val) {
   document.getElementById('search_by_input').value = val;
