@@ -1493,6 +1493,108 @@ class HarvestBatchActivityView(LoginRequiredMixin, UserPassesTestMixin, ListView
         return ctx
 
 
+class DismissOpsRunView(SuperuserRequiredMixin, View):
+    """
+    POST /harvest/raw-jobs/ops-runs/<pk>/dismiss/
+    Marks a PARTIAL or FAILED HarvestOpsRun as SKIPPED so it disappears
+    from the "Needs action" section of the Live Ops Monitor.
+    Safe — does NOT touch any RawJob data, only flips the audit status.
+    """
+
+    def post(self, request, pk):
+        from django.utils import timezone as _tz
+
+        run = get_object_or_404(HarvestOpsRun, pk=pk)
+        if run.status not in (HarvestOpsRun.Status.PARTIAL, HarvestOpsRun.Status.FAILED):
+            return JsonResponse({"ok": False, "error": "Run is not PARTIAL or FAILED."}, status=400)
+
+        payload = dict(run.audit_payload or {})
+        payload["dismissed_at"] = _tz.now().isoformat()
+        payload["dismissed_by"] = request.user.email or str(request.user)
+
+        HarvestOpsRun.objects.filter(pk=pk).update(
+            status=HarvestOpsRun.Status.SKIPPED,
+            audit_payload=payload,
+            finished_at=_tz.now(),
+        )
+        messages.success(
+            request,
+            f"Ops run #{pk} ({run.get_operation_display()}) dismissed — removed from Needs Action.",
+        )
+        return_to = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/"
+        return redirect(return_to)
+
+
+class RerunOpsRunView(SuperuserRequiredMixin, View):
+    """
+    POST /harvest/raw-jobs/ops-runs/<pk>/rerun/
+    Dismisses a PARTIAL/FAILED HarvestOpsRun and re-queues the same
+    operation with sensible defaults.  Supported operations:
+      EVALUATE_SCOPE  → reevaluate_cold_scope_jobs_task
+      BACKFILL_JD     → backfill_descriptions_task (via RunBackfillDescriptionsView logic)
+      CLASSIFY_DOMAINS → classify_job_domains_task
+      BACKFILL_ROLES  → backfill_job_marketing_roles_task
+      SYNC_POOL       → sync_harvested_to_pool_task
+      VALIDATE_URLS   → validate_raw_job_urls_task
+      CLEANUP         → cleanup_harvested_jobs_task
+    Other operations redirect back with an error message.
+    """
+
+    # Maps HarvestOpsRun.Operation → tasks.py function name.
+    # Only include operations that are driven by a Celery task (not management commands).
+    # CLASSIFY_DOMAINS and BACKFILL_ROLES are management-command-only; those show an error.
+    RERUN_MAP: dict[str, str] = {
+        HarvestOpsRun.Operation.EVALUATE_SCOPE: "reevaluate_cold_scope_jobs_task",
+        HarvestOpsRun.Operation.BACKFILL_JD: "backfill_descriptions_task",
+        HarvestOpsRun.Operation.SYNC_POOL: "sync_harvested_to_pool_task",
+        HarvestOpsRun.Operation.VALIDATE_URLS: "validate_raw_job_urls_task",
+        HarvestOpsRun.Operation.CLEANUP: "cleanup_harvested_jobs_task",
+    }
+
+    def post(self, request, pk):
+        from django.utils import timezone as _tz
+
+        run = get_object_or_404(HarvestOpsRun, pk=pk)
+        if run.status not in (HarvestOpsRun.Status.PARTIAL, HarvestOpsRun.Status.FAILED):
+            messages.error(request, f"Run #{pk} is {run.status}, not PARTIAL/FAILED — nothing to re-run.")
+            return_to = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/"
+            return redirect(return_to)
+
+        task_func_name = self.RERUN_MAP.get(run.operation)
+        return_to = request.POST.get("next") or request.META.get("HTTP_REFERER") or "/"
+
+        if not task_func_name:
+            messages.error(
+                request,
+                f"Re-run is not supported for operation '{run.get_operation_display()}'. "
+                "Dismiss it and trigger manually from the Raw Controls panel.",
+            )
+            return redirect(return_to)
+
+        # Dismiss the old PARTIAL run first
+        payload = dict(run.audit_payload or {})
+        payload["dismissed_at"] = _tz.now().isoformat()
+        payload["dismissed_by"] = request.user.email or str(request.user)
+        payload["rerun_triggered"] = True
+        HarvestOpsRun.objects.filter(pk=pk).update(
+            status=HarvestOpsRun.Status.SKIPPED,
+            audit_payload=payload,
+            finished_at=_tz.now(),
+        )
+
+        # Queue the new task
+        from . import tasks as harvest_tasks
+        task_func = getattr(harvest_tasks, task_func_name)
+        task = task_func.delay()
+
+        messages.success(
+            request,
+            f"✓ Re-running {run.get_operation_display()} — old run #{pk} dismissed. "
+            f"New task: {task.id[:8]}… — watch the Live Ops Monitor.",
+        )
+        return redirect(return_to)
+
+
 class HarvestOpsRunDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
     """JSON-shaped audit for a single non-batch pipeline op."""
 
