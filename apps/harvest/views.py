@@ -18,7 +18,7 @@ from datetime import timedelta
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import never_cache
-from django.views.generic import CreateView, DetailView, ListView, TemplateView, UpdateView, View
+from django.views.generic import CreateView, DeleteView, DetailView, ListView, TemplateView, UpdateView, View
 
 from core.http import redirect_with_task_progress
 from users.models import User
