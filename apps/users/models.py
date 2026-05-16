@@ -122,6 +122,22 @@ class MarketingRole(models.Model):
         if not self.slug:
             self.slug = slugify(self.name)
         super().save(*args, **kwargs)
+        # Bust the 5-min role-map cache so Celery workers pick up the change
+        # on their next classification call without needing a restart.
+        try:
+            from jobs.marketing_role_routing import clear_marketing_role_cache
+            clear_marketing_role_cache()
+        except Exception:
+            pass
+
+    def delete(self, *args, **kwargs):
+        result = super().delete(*args, **kwargs)
+        try:
+            from jobs.marketing_role_routing import clear_marketing_role_cache
+            clear_marketing_role_cache()
+        except Exception:
+            pass
+        return result
 
     def __str__(self):
         return self.name

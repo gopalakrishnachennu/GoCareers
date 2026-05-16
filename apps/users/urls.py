@@ -8,6 +8,7 @@ from .views import (
     EmailNotificationPreferencesView,
     SaveJobView, SavedJobListView, ConsultantCreateView,
     MarketingRoleListView, MarketingRoleCreateView, MarketingRoleUpdateView, MarketingRoleDeleteView,
+    ReassignAllMarketingRolesView,
     SettingsView,
     ExperienceCreateView, ExperienceUpdateView, ExperienceDeleteView,
     EducationCreateView, EducationUpdateView, EducationDeleteView,
@@ -67,6 +68,7 @@ urlpatterns = [
 
     # Marketing Roles CRUD (Admin)
     path('marketing-roles/', MarketingRoleListView.as_view(), name='marketing-role-list'),
+    path('marketing-roles/reassign-all/', ReassignAllMarketingRolesView.as_view(), name='marketing-role-reassign-all'),
     path('marketing-roles/add/', MarketingRoleCreateView.as_view(), name='marketing-role-add'),
     path('marketing-roles/<int:pk>/edit/', MarketingRoleUpdateView.as_view(), name='marketing-role-edit'),
     path('marketing-roles/<int:pk>/delete/', MarketingRoleDeleteView.as_view(), name='marketing-role-delete'),

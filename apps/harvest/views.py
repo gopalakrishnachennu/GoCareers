@@ -1549,6 +1549,7 @@ class RerunOpsRunView(SuperuserRequiredMixin, View):
         HarvestOpsRun.Operation.SYNC_POOL: "sync_harvested_to_pool_task",
         HarvestOpsRun.Operation.VALIDATE_URLS: "validate_raw_job_urls_task",
         HarvestOpsRun.Operation.CLEANUP: "cleanup_harvested_jobs_task",
+        HarvestOpsRun.Operation.BACKFILL_ROLES: "backfill_job_marketing_roles_task",
     }
 
     def post(self, request, pk):

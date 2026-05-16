@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from typing import Iterable
 
 from users.models import MarketingRole
@@ -9,6 +8,8 @@ from users.models import MarketingRole
 logger = logging.getLogger(__name__)
 
 _MAX_AUTO_ROLE_SLUGS = 3
+_ROLE_MAP_CACHE_KEY = "marketing_role_map_v1"
+_ROLE_MAP_CACHE_TTL = 300  # 5 minutes — new roles picked up automatically
 
 _DEPARTMENT_FALLBACK_SLUGS: dict[str, list[str]] = {
     "software_dev": ["software-developer", "general-it"],
@@ -125,16 +126,29 @@ def _text_for_keyword_match(*parts: str) -> str:
     return " ".join(combined.split())
 
 
-@lru_cache(maxsize=1)
 def _active_role_map() -> dict[str, MarketingRole]:
-    return {
+    """
+    Load all active MarketingRoles keyed by slug.
+    Cached for 5 minutes so new roles added via GUI are picked up automatically
+    within one cache window — no worker restart needed.
+    """
+    from django.core.cache import cache
+    cached = cache.get(_ROLE_MAP_CACHE_KEY)
+    if cached is not None:
+        return cached
+    role_map = {
         role.slug: role
         for role in MarketingRole.objects.filter(is_active=True)
     }
+    cache.set(_ROLE_MAP_CACHE_KEY, role_map, _ROLE_MAP_CACHE_TTL)
+    return role_map
 
 
 def clear_marketing_role_cache() -> None:
-    _active_role_map.cache_clear()
+    """Call this after creating/updating/deleting a MarketingRole so the cache
+    refreshes on the next call rather than waiting the full 5 minutes."""
+    from django.core.cache import cache
+    cache.delete(_ROLE_MAP_CACHE_KEY)
 
 
 def _role_keyword_matches(text: str, role_map: dict[str, MarketingRole]) -> list[str]:

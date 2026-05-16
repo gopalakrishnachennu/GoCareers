@@ -5706,3 +5706,89 @@ def run_duplicate_detection_task(self, limit: int = 5000, company_slug: str = ""
     )
     logger.info("Duplicate detection task finished: %s", result)
     return result
+
+
+@shared_task(bind=True, name="harvest.backfill_job_marketing_roles", max_retries=0)
+def backfill_job_marketing_roles_task(
+    self,
+    batch_size: int = 500,
+    overwrite: bool = True,
+):
+    """
+    Celery task: re-assign marketing roles for every SYNCED RawJob's Job.
+
+    Called from the "Re-assign All Jobs" button on the Marketing Roles page.
+    Safe to run repeatedly — preserves manually-assigned roles, only replaces
+    auto-detected ones. With overwrite=True (default) it refreshes all jobs
+    even if they already have roles (so a newly-added MarketingRole is applied).
+
+    Progress is visible in the Live Ops Monitor.
+    """
+    from .models import HarvestOpsRun, RawJob
+    from .ops_audit import begin_ops_run, finish_ops_run
+    from jobs.models import Job
+    from jobs.marketing_role_routing import (
+        assign_marketing_roles_to_job,
+        clear_marketing_role_cache,
+    )
+
+    # Bust cache first so the freshest roles are used throughout this run
+    clear_marketing_role_cache()
+
+    qs = (
+        RawJob.objects
+        .filter(sync_status=RawJob.SyncStatus.SYNCED)
+        .order_by("pk")
+    )
+    total = qs.count()
+
+    ops_run = begin_ops_run(
+        HarvestOpsRun.Operation.BACKFILL_ROLES,
+        getattr(self.request, "id", "") or "",
+        queue={"batch_size": batch_size, "overwrite": overwrite, "total": total},
+    )
+
+    assigned = skipped = missing_job = 0
+    processed = 0
+    last_pk = None
+
+    while True:
+        page_qs = qs if last_pk is None else qs.filter(pk__gt=last_pk)
+        batch = list(page_qs[:batch_size])
+        if not batch:
+            break
+        last_pk = batch[-1].pk
+
+        for rj in batch:
+            processed += 1
+            job: Job | None = (
+                Job.objects.filter(source_raw_job=rj).first()
+                or (Job.objects.filter(url_hash=rj.url_hash).first() if rj.url_hash else None)
+            )
+            if not job:
+                missing_job += 1
+                continue
+
+            if not overwrite and job.marketing_roles.exists():
+                skipped += 1
+                continue
+
+            if assign_marketing_roles_to_job(job, raw_job=rj):
+                assigned += 1
+
+        # Report progress to Live Ops Monitor
+        msg = f"Processed {processed:,}/{total:,} — assigned: {assigned:,}"
+        HarvestOpsRun.objects.filter(pk=ops_run.pk).update(
+            progress_current=processed,
+            progress_total=total,
+            progress_message=msg[:256],
+        )
+        try:
+            self.update_state(state="PROGRESS", meta={"current": processed, "total": total, "message": msg})
+        except Exception:
+            pass
+
+    completion = {"assigned": assigned, "skipped": skipped, "missing_job": missing_job, "processed": processed}
+    finish_ops_run(ops_run, completion=completion)
+    logger.info("backfill_job_marketing_roles_task done: %s", completion)
+    return completion

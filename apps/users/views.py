@@ -949,6 +949,26 @@ class MarketingRoleDeleteView(AdminRequiredMixin, DeleteView):
         return super().form_valid(form)
 
 
+class ReassignAllMarketingRolesView(AdminRequiredMixin, View):
+    """
+    POST /consultants/marketing-roles/reassign-all/
+    Fires the backfill_job_marketing_roles Celery task in the background.
+    Re-scans every synced job and assigns marketing roles using the current
+    DB keywords — so newly-added roles are applied to existing jobs immediately.
+    Progress visible in Live Ops Monitor.
+    """
+
+    def post(self, request):
+        from harvest.tasks import backfill_job_marketing_roles_task
+        task = backfill_job_marketing_roles_task.delay(batch_size=500, overwrite=True)
+        messages.success(
+            request,
+            f"✓ Re-assigning marketing roles for all synced jobs — running in background "
+            f"(Task: {task.id[:8]}…). Watch progress in the Live Ops Monitor.",
+        )
+        return redirect(reverse_lazy('marketing-role-list'))
+
+
 class EmailNotificationPreferencesView(LoginRequiredMixin, UpdateView):
     """Per-user email and in-app (bell) notification toggles."""
 
