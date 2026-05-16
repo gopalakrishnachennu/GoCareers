@@ -1,6 +1,8 @@
+import re
+
 from django import forms
 
-from .models import HarvestRoleCategory, JobBoardPlatform
+from .models import HarvestRoleCategory, JobBoardPlatform, JobDomain
 
 
 class JobBoardPlatformForm(forms.ModelForm):
@@ -99,3 +101,39 @@ class HarvestRoleCategoryForm(forms.ModelForm):
             obj.save()
             self.save_m2m()
         return obj
+
+
+class JobDomainForm(forms.ModelForm):
+    """
+    Form for creating/editing a JobDomain.
+    Validates the regex pattern before save so a bad pattern
+    can never reach the harvest engine.
+    """
+
+    class Meta:
+        model = JobDomain
+        fields = ["name", "slug", "regex_pattern", "top_category", "priority", "is_active", "notes"]
+        widgets = {
+            "regex_pattern": forms.Textarea(attrs={
+                "rows": 3,
+                "class": "font-mono text-sm w-full",
+                "placeholder": r"\bsalesforce\b|\bsfdc\b",
+            }),
+            "notes": forms.Textarea(attrs={"rows": 2}),
+            "slug": forms.TextInput(attrs={"placeholder": "salesforce-developer"}),
+            "name": forms.TextInput(attrs={"placeholder": "Salesforce Developer"}),
+            "priority": forms.NumberInput(attrs={"min": 1, "max": 9999, "step": 10}),
+        }
+
+    def clean_regex_pattern(self):
+        pattern = self.cleaned_data.get("regex_pattern", "").strip()
+        if not pattern:
+            raise forms.ValidationError("Regex pattern is required.")
+        try:
+            re.compile(pattern, re.IGNORECASE)
+        except re.error as exc:
+            raise forms.ValidationError(
+                f"Invalid regex — Python says: {exc}. "
+                "Fix the pattern and try again."
+            )
+        return pattern

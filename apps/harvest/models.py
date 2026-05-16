@@ -383,6 +383,105 @@ class HarvestRoleCategory(models.Model):
         return self.name
 
 
+class JobDomain(models.Model):
+    """
+    GUI-editable replacement for the hardcoded _DOMAIN_PATTERNS list in enrichments.py.
+
+    Each row is one domain slug + its regex pattern.  The regex is validated
+    before save so a bad pattern can never reach the harvest engine.
+    Patterns are loaded from DB at runtime (5-min cache) so changes take
+    effect within one cache window — no code change, no deploy needed.
+
+    Priority controls match order: lower number wins (same as _DOMAIN_PATTERNS order).
+    """
+
+    class TopCategory(models.TextChoices):
+        IT          = "IT",          "Information Technology"
+        NON_IT      = "NON_IT",      "Non-IT / Business"
+        ENGINEERING = "ENGINEERING", "Engineering (Non-IT)"
+        HEALTHCARE  = "HEALTHCARE",  "Healthcare & Clinical"
+        OTHER       = "OTHER",       "Other"
+
+    slug            = models.SlugField(max_length=80, unique=True)
+    name            = models.CharField(max_length=100)
+    regex_pattern   = models.TextField(
+        help_text="Python regex matched against job title and description (case-insensitive). "
+                  "Validated before save — bad regex is rejected."
+    )
+    top_category    = models.CharField(
+        max_length=20, choices=TopCategory.choices, default=TopCategory.IT, db_index=True
+    )
+    priority        = models.PositiveSmallIntegerField(
+        default=500,
+        help_text="Lower = matched first. Keep gaps (10, 20, 30…) so you can insert between.",
+    )
+    is_active       = models.BooleanField(default=True, db_index=True)
+    notes           = models.TextField(blank=True)
+    created_at      = models.DateTimeField(auto_now_add=True)
+    updated_at      = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["priority", "slug"]
+        verbose_name = "Job Domain"
+        verbose_name_plural = "Job Domains"
+
+    def __str__(self):
+        return f"{self.name} ({self.slug})"
+
+    def save(self, *args, **kwargs):
+        import re as _re
+        # Validate regex — reject bad patterns before they ever reach the engine
+        try:
+            _re.compile(self.regex_pattern, _re.IGNORECASE)
+        except _re.error as exc:
+            raise ValueError(f"Invalid regex pattern: {exc}") from exc
+        super().save(*args, **kwargs)
+        self._bust_cache()
+
+    def delete(self, *args, **kwargs):
+        result = super().delete(*args, **kwargs)
+        self._bust_cache()
+        return result
+
+    @staticmethod
+    def _bust_cache():
+        try:
+            from django.core.cache import cache
+            cache.delete("job_domain_patterns_v1")
+        except Exception:
+            pass
+
+    @classmethod
+    def compiled_patterns(cls) -> list:
+        """
+        Return ordered list of (slug, compiled_regex) tuples.
+        Cached for 5 minutes.  Falls back to hardcoded patterns if DB is empty
+        (e.g. before the seed migration runs on a fresh deploy).
+        """
+        import re as _re
+        from django.core.cache import cache
+
+        cached = cache.get("job_domain_patterns_v1")
+        if cached is not None:
+            return cached
+
+        rows = list(cls.objects.filter(is_active=True).order_by("priority").values("slug", "regex_pattern"))
+        if rows:
+            patterns = []
+            for row in rows:
+                try:
+                    patterns.append((row["slug"], _re.compile(row["regex_pattern"], _re.IGNORECASE)))
+                except _re.error:
+                    pass  # skip broken patterns — don't crash the harvest engine
+        else:
+            # Fallback: DB empty or not yet seeded — use hardcoded list
+            from .enrichments import _COMPILED_DOMAIN_PATTERNS
+            patterns = list(_COMPILED_DOMAIN_PATTERNS)
+
+        cache.set("job_domain_patterns_v1", patterns, 300)
+        return patterns
+
+
 class HarvestFilterSnapshot(models.Model):
     snapshot_id = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True)
     taken_at = models.DateTimeField(auto_now_add=True)

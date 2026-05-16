@@ -1106,10 +1106,18 @@ def detect_job_domains(
     desc_src = (description or "")[:2000].lower()
     matches: list[str] = []
 
-    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+    # Load patterns from DB (5-min cache) so GUI edits take effect automatically.
+    # Falls back to hardcoded _COMPILED_DOMAIN_PATTERNS if DB is unavailable.
+    try:
+        from .models import JobDomain
+        patterns = JobDomain.compiled_patterns()
+    except Exception:
+        patterns = _COMPILED_DOMAIN_PATTERNS
+
+    for slug, compiled in patterns:
         if compiled.search(title_src):
             matches.append(slug)
-    for slug, compiled in _COMPILED_DOMAIN_PATTERNS:
+    for slug, compiled in patterns:
         if compiled.search(desc_src):
             matches.append(slug)
 

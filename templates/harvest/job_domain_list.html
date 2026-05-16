@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "jobs/_pipeline_subnav.html" %}
+
+<div class="max-w-6xl mx-auto px-4 py-6">
+
+  <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+    <div>
+      <h1 class="text-xl font-bold text-slate-900">Job Domains
+        <span class="ml-2 text-sm font-normal text-slate-500">{{ active_count }} active</span>
+      </h1>
+      <p class="text-sm text-slate-500 mt-0.5">
+        GUI-editable domain pattern registry. Each row is a regex that stamps
+        <code class="bg-slate-100 px-1 rounded text-xs">job_domain</code> on every harvested job.
+        Changes take effect within 5 minutes — no deploy needed.
+      </p>
+    </div>
+    <a href="{% url 'harvest-job-domain-create' %}" class="btn-primary">+ Add Domain</a>
+  </div>
+
+  {# ── Live Title Tester ─────────────────────────────────────────────────── #}
+  <div class="mb-5 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="inline-flex items-center justify-center w-6 h-6 rounded-full bg-indigo-600 text-white text-xs font-bold">⚡</span>
+      <span class="font-semibold text-indigo-900">Live Title Tester</span>
+      <span class="text-xs text-indigo-600">— test any job title against all active domain patterns</span>
+    </div>
+    <div class="flex gap-2">
+      <input id="domain-test-input" type="text" placeholder="e.g. Senior Salesforce Developer"
+             class="flex-1 rounded-lg border border-indigo-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400">
+      <button onclick="testDomain()" class="btn-primary px-5">Test</button>
+    </div>
+    <div id="domain-test-result" class="mt-2 text-sm text-indigo-800 hidden"></div>
+  </div>
+
+  {# ── Info banner ───────────────────────────────────────────────────────── #}
+  <div class="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+    <strong>⚠ Safety:</strong> The regex is validated before saving — a broken pattern is rejected and never reaches the harvest engine.
+    Priority controls match order (lower = first). Leave gaps (10, 20, 30…) so you can insert between existing rows.
+  </div>
+
+  {# ── Table ─────────────────────────────────────────────────────────────── #}
+  <div class="card-table table-scroll">
+    <table class="w-full text-sm">
+      <thead class="tbl-head">
+        <tr>
+          <th class="tbl-th w-8">P</th>
+          <th class="tbl-th">Slug / Name</th>
+          <th class="tbl-th">Category</th>
+          <th class="tbl-th">Regex Pattern</th>
+          <th class="tbl-th">Status</th>
+          <th class="tbl-th-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-100">
+        {% for d in domains %}
+        <tr class="tbl-row {% if not d.is_active %}opacity-50{% endif %}">
+          <td class="tbl-td text-slate-400 font-mono text-xs">{{ d.priority }}</td>
+          <td class="tbl-td">
+            <div class="font-medium text-slate-800">{{ d.name }}</div>
+            <div class="font-mono text-xs text-slate-400">{{ d.slug }}</div>
+          </td>
+          <td class="tbl-td whitespace-nowrap">
+            <span class="inline-block text-xs px-2 py-0.5 rounded-full font-semibold
+              {% if d.top_category == 'IT' %}bg-indigo-100 text-indigo-700
+              {% elif d.top_category == 'NON_IT' %}bg-rose-100 text-rose-700
+              {% elif d.top_category == 'ENGINEERING' %}bg-amber-100 text-amber-700
+              {% elif d.top_category == 'HEALTHCARE' %}bg-green-100 text-green-700
+              {% else %}bg-slate-100 text-slate-600{% endif %}">
+              {{ d.get_top_category_display }}
+            </span>
+          </td>
+          <td class="tbl-td max-w-sm">
+            <code class="text-xs text-slate-600 bg-slate-50 px-1.5 py-0.5 rounded break-all">{{ d.regex_pattern|truncatechars:80 }}</code>
+          </td>
+          <td class="tbl-td whitespace-nowrap">
+            {% if d.is_active %}
+            <span class="badge-green text-xs">Active</span>
+            {% else %}
+            <span class="bg-slate-100 text-slate-500 text-xs px-2 py-0.5 rounded-full font-medium">Inactive</span>
+            {% endif %}
+          </td>
+          <td class="tbl-td-right whitespace-nowrap space-x-2">
+            <a href="{% url 'harvest-job-domain-edit' pk=d.pk %}" class="link-action">Edit</a>
+            <a href="{% url 'harvest-job-domain-delete' pk=d.pk %}"
+               class="text-red-600 hover:underline text-sm font-medium">Delete</a>
+          </td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="6" class="px-4 py-8 text-center text-slate-400">No domains yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+function testDomain() {
+  const title = document.getElementById('domain-test-input').value.trim();
+  const result = document.getElementById('domain-test-result');
+  if (!title) return;
+  result.textContent = 'Testing…';
+  result.classList.remove('hidden');
+  fetch(`{% url 'harvest-job-domain-test' %}?title=${encodeURIComponent(title)}`, {credentials:'same-origin'})
+    .then(r => r.json())
+    .then(data => {
+      if (data.details && data.details.length) {
+        result.innerHTML = '<strong>Matched:</strong> ' +
+          data.details.map(d => `<span class="inline-block bg-indigo-100 text-indigo-800 text-xs px-2 py-0.5 rounded font-mono mr-1">${d.name} (${d.slug})</span>`).join('');
+      } else {
+        result.innerHTML = '<span class="text-amber-700">⚠ No domain matched — job would get fallback classification.</span>';
+      }
+    })
+    .catch(() => { result.textContent = 'Error — try again.'; });
+}
+document.getElementById('domain-test-input').addEventListener('keydown', e => { if (e.key === 'Enter') testDomain(); });
+</script>
+{% endblock %}

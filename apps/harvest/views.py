@@ -23,7 +23,7 @@ from django.views.generic import CreateView, DetailView, ListView, TemplateView,
 from core.http import redirect_with_task_progress
 from users.models import User
 
-from .forms import HarvestRoleCategoryForm, JobBoardPlatformForm
+from .forms import HarvestRoleCategoryForm, JobBoardPlatformForm, JobDomainForm
 from .models import (
     CompanyFetchRun,
     CompanyPlatformLabel,
@@ -34,6 +34,7 @@ from .models import (
     HarvestFilterSnapshot,
     HarvestOpsRun,
     HarvestRoleCategory,
+    JobDomain,
     HarvestSkippedTitle,
     JobBoardPlatform,
     RawJob,
@@ -3776,6 +3777,92 @@ class SelectiveRoleCategoryUpdateView(SuperuserRequiredMixin, UpdateView):
     def form_valid(self, form):
         messages.success(self.request, "Role category saved.")
         return super().form_valid(form)
+
+
+class JobDomainListView(SuperuserRequiredMixin, ListView):
+    """List all job domain patterns — the GUI-editable version of _DOMAIN_PATTERNS."""
+    model = JobDomain
+    template_name = "harvest/job_domain_list.html"
+    context_object_name = "domains"
+
+    def get_queryset(self):
+        return JobDomain.objects.all().order_by("priority", "slug")
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["top_category_choices"] = JobDomain.TopCategory.choices
+        ctx["active_count"] = JobDomain.objects.filter(is_active=True).count()
+        return ctx
+
+
+class JobDomainCreateView(SuperuserRequiredMixin, CreateView):
+    model = JobDomain
+    form_class = JobDomainForm
+    template_name = "harvest/job_domain_form.html"
+    success_url = reverse_lazy("harvest-job-domains")
+
+    def form_valid(self, form):
+        messages.success(self.request, f'Domain "{form.cleaned_data["name"]}" created. Cache cleared — takes effect within 5 minutes.')
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, "Fix the errors below before saving.")
+        return super().form_invalid(form)
+
+
+class JobDomainUpdateView(SuperuserRequiredMixin, UpdateView):
+    model = JobDomain
+    form_class = JobDomainForm
+    template_name = "harvest/job_domain_form.html"
+    success_url = reverse_lazy("harvest-job-domains")
+
+    def form_valid(self, form):
+        messages.success(self.request, f'Domain "{form.cleaned_data["name"]}" saved. Cache cleared — takes effect within 5 minutes.')
+        return super().form_valid(form)
+
+    def form_invalid(self, form):
+        messages.error(self.request, "Fix the errors below — invalid regex will not be saved.")
+        return super().form_invalid(form)
+
+
+class JobDomainDeleteView(SuperuserRequiredMixin, DeleteView):
+    model = JobDomain
+    template_name = "harvest/job_domain_confirm_delete.html"
+    success_url = reverse_lazy("harvest-job-domains")
+
+    def form_valid(self, form):
+        messages.success(self.request, f'Domain "{self.object.name}" deleted.')
+        return super().form_valid(form)
+
+
+class JobDomainTestApiView(SuperuserRequiredMixin, View):
+    """
+    GET /harvest/job-domains/test/?title=...
+    Tests a job title against all active domain patterns and returns matches.
+    Used by the Live Title Tester on the Job Domains page.
+    """
+    def get(self, request):
+        from .enrichments import detect_job_domains
+        title = request.GET.get("title", "").strip()
+        if not title:
+            return JsonResponse({"matches": [], "error": "No title provided."})
+        matches = detect_job_domains(title, "", "", "", max_matches=10)
+        # Also show which pattern matched
+        details = []
+        try:
+            patterns = JobDomain.compiled_patterns()
+            title_lower = title.lower()
+            for slug, compiled in patterns:
+                if compiled.search(title_lower):
+                    domain = JobDomain.objects.filter(slug=slug).first()
+                    details.append({
+                        "slug": slug,
+                        "name": domain.name if domain else slug,
+                        "matched_on": "title",
+                    })
+        except Exception:
+            pass
+        return JsonResponse({"matches": matches, "details": details, "title": title})
 
 
 class SelectiveTitleTestApiView(SuperuserRequiredMixin, View):
