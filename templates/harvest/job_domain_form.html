@@ -10,15 +10,7 @@
     </h1>
   </div>
 
-  {# ── Safety notice ─────────────────────────────────────────────────────── #}
-  <div class="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-    <strong>⚠ Regex validation is enforced.</strong>
-    A bad pattern is rejected before saving — it will never reach the harvest engine.
-    Test your regex at <a href="https://regex101.com" target="_blank" class="underline">regex101.com</a> first.
-    Use <code class="bg-amber-100 px-1 rounded">\b</code> word boundaries to avoid false matches.
-  </div>
-
-  <form method="post" class="space-y-5 bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+  <form method="post" class="space-y-5 bg-white rounded-xl border border-slate-200 shadow-sm p-6" id="domain-form">
     {% csrf_token %}
 
     {% if form.non_field_errors %}
@@ -27,6 +19,7 @@
     </div>
     {% endif %}
 
+    {# ── Name + Slug ────────────────────────────────────────────────────────── #}
     <div class="grid grid-cols-2 gap-4">
       <div>
         <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Name</label>
@@ -36,26 +29,90 @@
       <div>
         <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Slug</label>
         {{ form.slug }}
-        <p class="text-xs text-slate-400 mt-1">Auto-generated from name if left blank. Must be unique.</p>
+        <p class="text-xs text-slate-400 mt-1">Auto-generated from name if left blank.</p>
         {% if form.slug.errors %}<p class="text-red-600 text-xs mt-1">{{ form.slug.errors|join:", " }}</p>{% endif %}
       </div>
     </div>
 
+    {# ── Keyword Tag Editor ─────────────────────────────────────────────────── #}
     <div>
-      <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">
-        Regex Pattern <span class="text-red-500">*</span>
-      </label>
-      {{ form.regex_pattern }}
-      <p class="text-xs text-slate-400 mt-1">
-        Case-insensitive. Matched against job title first, then description.
-        Use <code class="bg-slate-100 px-1 rounded">\b</code> for word boundaries.
-        Example: <code class="bg-slate-100 px-1 rounded">\bsalesforce\b|\bsfdc\b</code>
-      </p>
-      {% if form.regex_pattern.errors %}
-      <p class="text-red-600 text-xs mt-1 font-medium">{{ form.regex_pattern.errors|join:", " }}</p>
-      {% endif %}
+      <div class="flex items-center justify-between mb-1">
+        <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Keywords / Patterns <span class="text-red-500">*</span>
+        </label>
+        <button type="button" id="toggle-advanced-btn"
+                onclick="toggleAdvanced()"
+                class="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2">
+          Switch to raw regex ↗
+        </button>
+      </div>
+
+      {# Tag mode (default) #}
+      <div id="tag-mode">
+        {# Chip container #}
+        <div id="keyword-chips"
+             class="min-h-[56px] flex flex-wrap gap-2 p-3 rounded-lg border border-slate-300 bg-slate-50 cursor-text"
+             onclick="document.getElementById('kw-input').focus()">
+          {# chips injected by JS #}
+        </div>
+
+        {# Add input row #}
+        <div class="flex gap-2 mt-2">
+          <input id="kw-input" type="text"
+                 placeholder="Type keyword or phrase, press Enter to add…"
+                 class="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                 autocomplete="off">
+          <button type="button" onclick="addKeywordFromInput()"
+                  class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition">
+            Add
+          </button>
+        </div>
+
+        {# Options row #}
+        <div class="flex items-center gap-4 mt-2">
+          <label class="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer select-none">
+            <input type="checkbox" id="use-word-boundary" checked
+                   onchange="rebuildRegex()"
+                   class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-400">
+            Wrap with <code class="bg-slate-100 px-1 rounded">\b</code> word boundaries <span class="text-slate-400">(recommended)</span>
+          </label>
+        </div>
+
+        {# Generated regex preview #}
+        <div class="mt-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
+          <div class="flex items-center justify-between mb-1">
+            <span class="text-[10px] font-bold uppercase tracking-widest text-slate-400">Generated Regex</span>
+            <span id="kw-count" class="text-[10px] text-slate-400">0 keywords</span>
+          </div>
+          <code id="regex-preview-text" class="text-xs text-slate-600 break-all whitespace-pre-wrap">—</code>
+        </div>
+
+        <p class="text-xs text-slate-400 mt-1">
+          Each keyword is matched case-insensitively against job title then description.
+          Use <code class="bg-slate-100 px-1 rounded">\s*</code> between words for flexible spacing,
+          e.g. <em>soc\s*analyst</em>.
+        </p>
+      </div>
+
+      {# Advanced / raw regex mode (hidden by default) #}
+      <div id="advanced-mode" class="hidden">
+        <div class="mb-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <strong>⚠ Advanced mode.</strong> Edit raw regex directly.
+          Bad patterns are rejected before saving.
+          Test at <a href="https://regex101.com" target="_blank" class="underline">regex101.com</a>.
+        </div>
+        {# We render the real form field here; JS keeps it in sync #}
+        {{ form.regex_pattern }}
+        {% if form.regex_pattern.errors %}
+        <p class="text-red-600 text-xs mt-1 font-medium">{{ form.regex_pattern.errors|join:", " }}</p>
+        {% endif %}
+      </div>
+
+      {# Hidden field used when in tag mode to submit the generated regex #}
+      <input type="hidden" id="regex-hidden" name="_regex_tag_mode">
     </div>
 
+    {# ── Category / Priority / Active ──────────────────────────────────────── #}
     <div class="grid grid-cols-3 gap-4">
       <div>
         <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Category</label>
@@ -89,4 +146,148 @@
     </div>
   </form>
 </div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+let keywords = [];
+let advancedMode = false;
+
+// ── Bootstrap: parse existing regex into tags ──────────────────────────────────
+(function init() {
+  const rawTextarea = document.getElementById('id_regex_pattern');
+  const raw = (rawTextarea ? rawTextarea.value : '').trim();
+  if (raw) {
+    keywords = parseRegexToKeywords(raw);
+  }
+  renderChips();
+  rebuildRegex();
+
+  // Enter key in input → add keyword
+  document.getElementById('kw-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addKeywordFromInput(); }
+    if (e.key === 'Backspace' && this.value === '' && keywords.length) {
+      keywords.pop();
+      renderChips();
+      rebuildRegex();
+    }
+  });
+
+  // Keep hidden field in sync before submit
+  document.getElementById('domain-form').addEventListener('submit', function() {
+    if (!advancedMode) {
+      const generated = buildRegex(keywords, document.getElementById('use-word-boundary').checked);
+      // Write into the REAL regex_pattern field so the view sees it
+      if (rawTextarea) rawTextarea.value = generated;
+    }
+  });
+})();
+
+// ── Parse regex → keyword list ─────────────────────────────────────────────────
+function parseRegexToKeywords(pattern) {
+  let s = pattern.trim();
+  // Strip outer \b(...)\b  or  \b...\b
+  s = s.replace(/^\\b\(/, '').replace(/\)\\b$/, '');
+  s = s.replace(/^\\b/, '').replace(/\\b$/, '');
+  // Split on top-level | (not inside nested groups)
+  const parts = [];
+  let depth = 0, buf = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (c === '(' ) depth++;
+    else if (c === ')') depth--;
+    else if (c === '|' && depth === 0) { parts.push(buf.trim()); buf = ''; continue; }
+    buf += c;
+  }
+  if (buf.trim()) parts.push(buf.trim());
+  return parts.filter(Boolean);
+}
+
+// ── Build regex from keyword list ──────────────────────────────────────────────
+function buildRegex(kws, wordBoundary) {
+  if (!kws.length) return '';
+  const joined = kws.join('|');
+  if (wordBoundary) {
+    return kws.length === 1 ? `\\b${joined}\\b` : `\\b(${joined})\\b`;
+  }
+  return kws.length === 1 ? joined : `(${joined})`;
+}
+
+// ── Render chips ───────────────────────────────────────────────────────────────
+function renderChips() {
+  const container = document.getElementById('keyword-chips');
+  container.innerHTML = '';
+  keywords.forEach((kw, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-indigo-100 text-indigo-800 text-xs font-medium';
+    chip.innerHTML = `<span class="font-mono">${escapeHtml(kw)}</span>
+      <button type="button" onclick="removeKeyword(${i})"
+              class="ml-0.5 text-indigo-400 hover:text-red-500 font-bold leading-none transition">×</button>`;
+    container.appendChild(chip);
+  });
+}
+
+function escapeHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Add / remove ───────────────────────────────────────────────────────────────
+function addKeywordFromInput() {
+  const inp = document.getElementById('kw-input');
+  const val = inp.value.trim();
+  if (!val) return;
+  if (!keywords.includes(val)) {
+    keywords.push(val);
+    renderChips();
+    rebuildRegex();
+  }
+  inp.value = '';
+  inp.focus();
+}
+
+function removeKeyword(idx) {
+  keywords.splice(idx, 1);
+  renderChips();
+  rebuildRegex();
+}
+
+// ── Rebuild regex preview ──────────────────────────────────────────────────────
+function rebuildRegex() {
+  const wb = document.getElementById('use-word-boundary').checked;
+  const regex = buildRegex(keywords, wb);
+  document.getElementById('regex-preview-text').textContent = regex || '—';
+  document.getElementById('kw-count').textContent = `${keywords.length} keyword${keywords.length !== 1 ? 's' : ''}`;
+}
+
+// ── Toggle advanced/raw mode ───────────────────────────────────────────────────
+function toggleAdvanced() {
+  advancedMode = !advancedMode;
+  const tagMode = document.getElementById('tag-mode');
+  const advMode = document.getElementById('advanced-mode');
+  const btn = document.getElementById('toggle-advanced-btn');
+  const rawTextarea = document.getElementById('id_regex_pattern');
+
+  if (advancedMode) {
+    // Switching TO raw mode: push generated regex into textarea
+    if (rawTextarea && keywords.length) {
+      const wb = document.getElementById('use-word-boundary').checked;
+      rawTextarea.value = buildRegex(keywords, wb);
+    }
+    tagMode.classList.add('hidden');
+    advMode.classList.remove('hidden');
+    // Make textarea submit under its real name
+    if (rawTextarea) rawTextarea.removeAttribute('disabled');
+    btn.textContent = '← Back to keyword editor';
+  } else {
+    // Switching BACK to tag mode: parse whatever is in textarea
+    if (rawTextarea) {
+      keywords = parseRegexToKeywords(rawTextarea.value.trim());
+    }
+    renderChips();
+    rebuildRegex();
+    tagMode.classList.remove('hidden');
+    advMode.classList.add('hidden');
+    btn.textContent = 'Switch to raw regex ↗';
+  }
+}
+</script>
 {% endblock %}
