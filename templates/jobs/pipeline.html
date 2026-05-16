@@ -135,11 +135,11 @@
   </a>
 
   <!-- Search — right-aligned in the same row -->
-  <form method="get" class="flex items-center gap-2 ml-auto shrink-0">
+  <form method="get" class="flex items-center gap-0 ml-auto shrink-0">
     <input type="hidden" name="tab" value="{{ tab }}">
     {% if tab == 'raw' %}
       {% for k, v in raw_filter_passthrough %}
-        {% if k != 'q' %}
+        {% if k != 'q' and k != 'search_by' %}
         <input type="hidden" name="{{ k }}" value="{{ v }}">
         {% endif %}
       {% endfor %}
@@ -148,15 +148,25 @@
       {% if score_tab %}<input type="hidden" name="score" value="{{ score_tab }}">{% endif %}
       {% if gate_tab %}<input type="hidden" name="gate" value="{{ gate_tab }}">{% endif %}
     {% endif %}
-    <div class="relative">
-      <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-      </svg>
-      <input type="search" name="q" value="{{ q }}" placeholder="Search…"
-             class="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-400 focus:outline-none bg-white w-52">
+
+    {# Search type selector + input as a unified pill #}
+    <div class="flex items-center border border-gray-200 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-indigo-400">
+      <select name="search_by"
+              class="text-xs font-semibold text-slate-600 bg-slate-50 border-r border-gray-200 px-2 py-2 focus:outline-none cursor-pointer h-full">
+        <option value="title"   {% if search_by == 'title'   %}selected{% endif %}>Title</option>
+        <option value="company" {% if search_by == 'company' %}selected{% endif %}>Company</option>
+      </select>
+      <div class="relative">
+        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <input type="search" name="q" value="{{ q }}"
+               placeholder="{% if search_by == 'company' %}Company name…{% else %}Job title…{% endif %}"
+               class="pl-8 pr-3 py-2 text-sm focus:outline-none bg-transparent w-44">
+      </div>
     </div>
-    <button type="submit" class="btn-primary btn-sm">Search</button>
-    {% if q %}<a href="?tab={{ tab }}" class="btn-ghost btn-sm">✕</a>{% endif %}
+    <button type="submit" class="btn-primary btn-sm ml-2">Search</button>
+    {% if q %}<a href="?tab={{ tab }}" class="btn-ghost btn-sm ml-1">✕ Clear</a>{% endif %}
   </form>
 </div>
 
@@ -1577,4 +1587,16 @@
 {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
 {% include 'jobs/_classify_ui.html' %}
 {% endif %}
+<script>
+// Update search placeholder when dropdown changes
+(function(){
+  const sel = document.querySelector('select[name="search_by"]');
+  const inp = document.querySelector('input[name="q"]');
+  if (!sel || !inp) return;
+  sel.addEventListener('change', function(){
+    inp.placeholder = this.value === 'company' ? 'Company name…' : 'Job title…';
+    inp.focus();
+  });
+})();
+</script>
 {% endblock %}

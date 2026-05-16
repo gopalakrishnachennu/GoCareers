@@ -1329,6 +1329,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         if tab not in {"pool", "raw", "live", "archived"}:
             tab = "pool"
         q = (request.GET.get('q') or '').strip()
+        search_by = (request.GET.get('search_by') or 'title').strip()
         raw_selected_stage = (request.GET.get("stage") or "").strip().upper()
 
         # ── Summary stats (always computed) ─────────────────────────────────
@@ -1559,7 +1560,10 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
             gate_tab = request.GET.get('gate', 'all').upper()
             qs = Job.objects.filter(status=Job.Status.POOL, is_archived=False)
             if q:
-                qs = qs.filter(Q(title__icontains=q) | Q(company__icontains=q))
+                if search_by == "company":
+                    qs = qs.filter(Q(company__icontains=q))
+                else:
+                    qs = qs.filter(Q(title__icontains=q))
             now = timezone.now()
             age_24h = now - timezone.timedelta(hours=24)
             age_6h = now - timezone.timedelta(hours=6)
@@ -1677,6 +1681,7 @@ class JobsPipelineView(LoginRequiredMixin, EmployeeRequiredMixin, View):
         ctx = {
             'tab': tab,
             'q': q,
+            'search_by': search_by,
             'raw_selected_stage': raw_selected_stage,
             'raw_filter_passthrough': raw_filter_passthrough,
             'raw_stage_links': raw_stage_links,

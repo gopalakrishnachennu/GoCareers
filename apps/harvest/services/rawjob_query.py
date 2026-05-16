@@ -80,6 +80,7 @@ FILTER_STATE_KEYS = (
     "marketing_role",
     "filter_decision",
     "include_test",
+    "search_by",
 )
 
 
@@ -193,15 +194,12 @@ def apply_rawjob_filters(qs: QuerySet[RawJob], params: Mapping[str, str]) -> Que
         qs = qs.filter(is_test_run=False)
 
     q = _get(params, "q")
+    search_by = _get(params, "search_by") or "title"
     if q:
-        qs = qs.filter(
-            Q(title__icontains=q)
-            | Q(company_name__icontains=q)
-            | Q(skills__icontains=q)
-            | Q(job_keywords__icontains=q)
-            | Q(title_keywords__icontains=q)
-            | Q(description_clean__icontains=q)
-        )
+        if search_by == "company":
+            qs = qs.filter(Q(company_name__icontains=q))
+        else:
+            qs = qs.filter(Q(title__icontains=q))
 
     company_id_f = _get(params, "company_id")
     if company_id_f.isdigit():
