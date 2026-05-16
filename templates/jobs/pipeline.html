@@ -87,56 +87,11 @@
 <!-- ── Sub-navigation ────────────────────────────────────────────────────────── -->
 {% include 'jobs/_pipeline_subnav.html' %}
 
-<!-- ── Tab pills + search ────────────────────────────────────────────────────── -->
-<div class="flex items-center gap-2 mb-4 overflow-x-auto pb-1">
-
-  <!-- Vet Queue -->
-  {% if tab == 'pool' %}
-  <a href="?tab=pool{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-active" style="--tab-color:#d97706;">
-  {% else %}
-  <a href="?tab=pool{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-inactive">
-  {% endif %}
-    <span class="w-2 h-2 rounded-full {% if tab == 'pool' %}bg-amber-200{% else %}bg-amber-400{% endif %}"></span>
-    Vet Queue
-    <span class="{% if tab == 'pool' %}bg-amber-900/30{% else %}bg-gray-100 text-gray-600{% endif %} text-xs font-bold px-1.5 py-0.5 rounded-full">{{ pool_total }}</span>
-  </a>
-
-  <!-- Harvest -->
-  {% if tab == 'raw' %}
-  <a href="?tab=raw{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-active" style="--tab-color:#2563eb;">
-  {% else %}
-  <a href="?tab=raw{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-inactive">
-  {% endif %}
-    <span class="w-2 h-2 rounded-full {% if tab == 'raw' %}bg-blue-200{% else %}bg-blue-400{% endif %} animate-pulse"></span>
-    Harvest
-    <span class="{% if tab == 'raw' %}bg-blue-900/30{% else %}bg-gray-100 text-gray-600{% endif %} text-xs font-bold px-1.5 py-0.5 rounded-full">{{ raw_total }}</span>
-  </a>
-
-  <!-- Live -->
-  {% if tab == 'live' %}
-  <a href="?tab=live{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-active" style="--tab-color:#16a34a;">
-  {% else %}
-  <a href="?tab=live{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-inactive">
-  {% endif %}
-    <span class="w-2 h-2 rounded-full {% if tab == 'live' %}bg-green-200{% else %}bg-green-500{% endif %}"></span>
-    Live
-    <span class="{% if tab == 'live' %}bg-green-900/30{% else %}bg-gray-100 text-gray-600{% endif %} text-xs font-bold px-1.5 py-0.5 rounded-full">{{ live_total }}</span>
-  </a>
-
-  <!-- Archived -->
-  {% if tab == 'archived' %}
-  <a href="?tab=archived{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-active" style="--tab-color:#4b5563;">
-  {% else %}
-  <a href="?tab=archived{% if q %}&q={{ q }}{% endif %}" class="tab-pill tab-pill-inactive">
-  {% endif %}
-    <span class="w-2 h-2 rounded-full {% if tab == 'archived' %}bg-gray-300{% else %}bg-gray-400{% endif %}"></span>
-    Archived
-    <span class="{% if tab == 'archived' %}bg-gray-700/30{% else %}bg-gray-100 text-gray-600{% endif %} text-xs font-bold px-1.5 py-0.5 rounded-full">{{ archived_total }}</span>
-  </a>
-
-  <!-- Search — right-aligned in the same row -->
-  <form method="get" class="flex items-center gap-0 ml-auto shrink-0">
+<!-- ── Search bar ─────────────────────────────────────────────────────────── -->
+<div class="mb-4">
+  <form method="get" id="pipeline-search-form">
     <input type="hidden" name="tab" value="{{ tab }}">
+    <input type="hidden" name="search_by" id="search_by_input" value="{{ search_by|default:'title' }}">
     {% if tab == 'raw' %}
       {% for k, v in raw_filter_passthrough %}
         {% if k != 'q' and k != 'search_by' %}
@@ -149,24 +104,67 @@
       {% if gate_tab %}<input type="hidden" name="gate" value="{{ gate_tab }}">{% endif %}
     {% endif %}
 
-    {# Search type selector + input as a unified pill #}
-    <div class="flex items-center border border-gray-200 rounded-lg bg-white overflow-hidden focus-within:ring-2 focus-within:ring-indigo-400">
-      <select name="search_by"
-              class="text-xs font-semibold text-slate-600 bg-slate-50 border-r border-gray-200 px-2 py-2 focus:outline-none cursor-pointer h-full">
-        <option value="title"   {% if search_by == 'title'   %}selected{% endif %}>Title</option>
-        <option value="company" {% if search_by == 'company' %}selected{% endif %}>Company</option>
-      </select>
-      <div class="relative">
-        <svg class="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <div class="flex items-center gap-2">
+
+      {# ── Type toggle: Title / Company ── #}
+      <div class="flex shrink-0 bg-slate-100 rounded-lg p-0.5 gap-0.5">
+        <button type="button" id="sb-title" onclick="setSearchBy('title')"
+                class="px-3 py-1.5 text-xs font-semibold rounded-md transition-all
+                       {% if search_by != 'company' %}bg-white text-indigo-700 shadow-sm{% else %}text-slate-500 hover:text-slate-700{% endif %}">
+          Title
+        </button>
+        <button type="button" id="sb-company" onclick="setSearchBy('company')"
+                class="px-3 py-1.5 text-xs font-semibold rounded-md transition-all
+                       {% if search_by == 'company' %}bg-white text-indigo-700 shadow-sm{% else %}text-slate-500 hover:text-slate-700{% endif %}">
+          Company
+        </button>
+      </div>
+
+      {# ── Search input ── #}
+      <div class="flex-1 relative flex items-center bg-white border border-gray-200 rounded-xl shadow-sm
+                  focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-indigo-400 transition-all">
+        <svg class="absolute left-3.5 w-4 h-4 text-gray-400 pointer-events-none shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
-        <input type="search" name="q" value="{{ q }}"
-               placeholder="{% if search_by == 'company' %}Company name…{% else %}Job title…{% endif %}"
-               class="pl-8 pr-3 py-2 text-sm focus:outline-none bg-transparent w-44">
+        <input type="text" name="q" id="search-q" value="{{ q }}"
+               placeholder="{% if search_by == 'company' %}Search by company name…{% else %}Search by job title…{% endif %}"
+               autocomplete="off"
+               class="w-full pl-10 pr-10 py-2.5 text-sm bg-transparent focus:outline-none text-slate-800 placeholder-slate-400">
+        {% if q %}
+        <a href="?tab={{ tab }}" title="Clear search"
+           class="absolute right-3 text-slate-400 hover:text-slate-600 transition">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </a>
+        {% endif %}
       </div>
+
+      {# ── Submit ── #}
+      <button type="submit"
+              class="shrink-0 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold shadow-sm transition-all">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        Search
+      </button>
+
     </div>
-    <button type="submit" class="btn-primary btn-sm ml-2">Search</button>
-    {% if q %}<a href="?tab={{ tab }}" class="btn-ghost btn-sm ml-1">✕ Clear</a>{% endif %}
+
+    {# ── Active search indicator ── #}
+    {% if q %}
+    <div class="mt-2 flex items-center gap-1.5 text-xs text-slate-500">
+      <svg class="w-3.5 h-3.5 text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/>
+      </svg>
+      Filtered by <strong class="text-slate-700">{{ search_by|default:"title" }}</strong>:
+      <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
+        "{{ q }}"
+        <a href="?tab={{ tab }}" class="hover:text-red-500 transition font-bold leading-none ml-0.5">×</a>
+      </span>
+    </div>
+    {% endif %}
+
   </form>
 </div>
 
@@ -1588,14 +1586,39 @@
 {% include 'jobs/_classify_ui.html' %}
 {% endif %}
 <script>
-// Update search placeholder when dropdown changes
-(function(){
-  const sel = document.querySelector('select[name="search_by"]');
-  const inp = document.querySelector('input[name="q"]');
-  if (!sel || !inp) return;
-  sel.addEventListener('change', function(){
-    inp.placeholder = this.value === 'company' ? 'Company name…' : 'Job title…';
+// Search-by toggle buttons
+function setSearchBy(val) {
+  document.getElementById('search_by_input').value = val;
+  const inp = document.getElementById('search-q');
+  if (inp) {
+    inp.placeholder = val === 'company' ? 'Search by company name…' : 'Search by job title…';
     inp.focus();
+  }
+  // Swap active style
+  ['title','company'].forEach(function(v) {
+    const btn = document.getElementById('sb-' + v);
+    if (!btn) return;
+    if (v === val) {
+      btn.classList.add('bg-white','text-indigo-700','shadow-sm');
+      btn.classList.remove('text-slate-500','hover:text-slate-700');
+    } else {
+      btn.classList.remove('bg-white','text-indigo-700','shadow-sm');
+      btn.classList.add('text-slate-500','hover:text-slate-700');
+    }
+  });
+}
+// Submit on Enter
+(function(){
+  const inp = document.getElementById('search-q');
+  if (inp) inp.addEventListener('keydown', function(e){
+    if (e.key === 'Enter') document.getElementById('pipeline-search-form').submit();
+  });
+  // Keyboard shortcut: press / to focus search
+  document.addEventListener('keydown', function(e){
+    if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+      e.preventDefault();
+      if (inp) inp.focus();
+    }
   });
 })();
 </script>
