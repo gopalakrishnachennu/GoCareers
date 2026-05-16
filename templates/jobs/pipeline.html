@@ -1094,8 +1094,19 @@
 <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
   <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
     <div>
-      <div class="text-sm font-bold text-slate-900">Raw jobs grid</div>
-      <div class="text-xs text-slate-500">Sticky job and actions columns. Scroll horizontally for extra operational fields.</div>
+      <div class="flex items-center gap-2">
+        <div class="text-sm font-bold text-slate-900">Raw jobs grid</div>
+        <span id="raw-count-badge"
+              class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold
+                     {% if q %}bg-indigo-100 text-indigo-700{% else %}bg-slate-200 text-slate-600{% endif %}">
+          {% if q %}
+            {{ raw_total_filtered }} result{{ raw_total_filtered|pluralize }} for "{{ q }}"
+          {% else %}
+            {{ raw_total_filtered }} jobs
+          {% endif %}
+        </span>
+      </div>
+      <div class="text-xs text-slate-500 mt-0.5">Sticky job and actions columns. Scroll horizontally for extra operational fields.</div>
     </div>
     <div class="relative" id="raw-columns-menu">
       <button type="button" id="raw-columns-btn" class="btn-secondary btn-sm">
@@ -1231,11 +1242,7 @@
   </div>
 </div>
 <div id="raw-jobs-load-status" class="mt-3 text-center text-sm text-slate-500">
-  {% if raw_has_next %}
-    Loading more jobs as you scroll…
-  {% else %}
-    Showing {{ tab_raw|length }} of {{ raw_total_filtered }} filtered jobs.
-  {% endif %}
+  {% if raw_has_next %}Loading more jobs as you scroll…{% endif %}
 </div>
 {% if raw_has_next %}
 <div class="mt-2 flex items-center justify-center">
@@ -1518,7 +1525,19 @@
     `;
   };
 
-  const updateStatus = (text) => { statusEl.textContent = text; };
+  const countBadge = document.getElementById('raw-count-badge');
+  const updateStatus = (text) => {
+    statusEl.textContent = text;
+  };
+  const updateTopBadge = (loaded, total) => {
+    if (!countBadge) return;
+    const q = qs.get('q') || '';
+    if (q) {
+      countBadge.textContent = `${total.toLocaleString()} result${total !== 1 ? 's' : ''} for "${q}" — ${loaded.toLocaleString()} loaded`;
+    } else {
+      countBadge.textContent = `${loaded.toLocaleString()} / ${total.toLocaleString()} jobs`;
+    }
+  };
   const updateButton = () => {
     if (!loadMoreBtn) return;
     if (done) {
@@ -1553,10 +1572,12 @@
       loadedCount += jobs.length;
       nextPage = payload.has_next ? payload.next_page : null;
       done = !payload.has_next;
+      const total = Number(payload.total || totalCount);
+      updateTopBadge(loadedCount, total);
       if (done) {
-        updateStatus(`Loaded all ${loadedCount.toLocaleString()} of ${Number(payload.total || totalCount).toLocaleString()} filtered jobs.`);
+        updateStatus('');
       } else {
-        updateStatus(`Loaded ${loadedCount.toLocaleString()} / ${Number(payload.total || totalCount).toLocaleString()}… Scroll to load more.`);
+        updateStatus(`Scroll to load more…`);
       }
     } catch (err) {
       updateStatus("Auto-load paused (network error). Scroll again to retry.");
