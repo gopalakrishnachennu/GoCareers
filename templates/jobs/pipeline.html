@@ -1091,7 +1091,7 @@
 
 {% if tab_raw %}
 <div id="raw-jobs-table"></div>
-<div class="rounded-2xl border border-slate-200 bg-white shadow-sm" style="overflow:clip">
+<div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
   <div class="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
     <div>
       <div class="flex items-center gap-2">
@@ -1135,7 +1135,7 @@
   </div>
   <div class="overflow-x-auto overflow-y-visible">
   <table class="w-full min-w-[1920px] text-sm">
-    <thead id="raw-thead" class="tbl-head sticky z-10">
+    <thead id="raw-thead" class="tbl-head">
       <tr>
         <th class="tbl-th sticky left-0 z-20 min-w-[280px] bg-slate-50 shadow-[1px_0_0_#e2e8f0]">Job</th>
         <th class="tbl-th min-w-[190px]">Company</th>
@@ -1634,29 +1634,18 @@
   window.addEventListener('scroll', onScroll, {passive: true});
 })();
 
-// Sticky table header — dynamically measure subnav + search heights
+// Dynamically set search bar top based on subnav height
 (function(){
-  const thead = document.getElementById('raw-thead');
-  if (!thead) return;
-  function setStickyTop() {
+  function setSearchTop() {
     const subnav = document.getElementById('sticky-subnav');
     const search = document.getElementById('sticky-search');
-    let top = 0;
-    if (subnav) top += subnav.getBoundingClientRect().height;
-    if (search) top += search.getBoundingClientRect().height;
-    thead.style.top = Math.round(top) + 'px';
+    if (subnav && search) {
+      search.style.top = Math.round(subnav.getBoundingClientRect().height) + 'px';
+    }
   }
-  function setAll() {
-    const subnav = document.getElementById('sticky-subnav');
-    const search = document.getElementById('sticky-search');
-    const subnavH = subnav ? Math.round(subnav.getBoundingClientRect().height) : 49;
-    if (search) search.style.top = subnavH + 'px';
-    const searchH = search ? Math.round(search.getBoundingClientRect().height) : 56;
-    thead.style.top = (subnavH + searchH) + 'px';
-  }
-  setAll();
-  window.addEventListener('resize', setAll, {passive: true});
-  setTimeout(setAll, 200);
+  setSearchTop();
+  window.addEventListener('resize', setSearchTop, {passive: true});
+  setTimeout(setSearchTop, 200);
 })();
 
 // Search-by toggle buttons
