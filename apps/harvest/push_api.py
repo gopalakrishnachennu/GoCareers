@@ -167,6 +167,54 @@ def _invalidate_rawjobs_dashboard_cache() -> None:
         pass
 
 
+# ATS platforms that can be used as harvest sources (excludes job-board scrapers)
+_HARVESTABLE_ATS = frozenset([
+    "greenhouse", "lever", "ashby", "workday", "smartrecruiters",
+    "workable", "bamboohr", "recruitee", "icims", "jobvite", "taleo",
+    "oracle", "ultipro", "dayforce", "breezy", "teamtailor", "zoho",
+    "applytojob", "adp", "applicantpro", "theapplicantmanager",
+])
+
+
+def _auto_label_company(company, platform, original_url: str, platform_slug: str) -> bool:
+    """
+    Create a CompanyPlatformLabel for this company+ATS if one doesn't exist yet.
+    Uses is_verified=False and confidence=MEDIUM so admins can review.
+    Returns True if a new label was created.
+    """
+    if platform is None or platform_slug not in _HARVESTABLE_ATS:
+        return False
+    try:
+        from django.utils import timezone as tz
+        from harvest.models import CompanyPlatformLabel
+
+        if CompanyPlatformLabel.objects.filter(company=company).exists():
+            return False
+
+        from harvest.detectors import extract_tenant
+        tenant_id = extract_tenant(platform_slug, original_url)
+        CompanyPlatformLabel.objects.create(
+            company=company,
+            platform=platform,
+            tenant_id=tenant_id,
+            confidence=CompanyPlatformLabel.Confidence.MEDIUM,
+            detection_method=CompanyPlatformLabel.DetectionMethod.URL_PATTERN,
+            detected_at=tz.now(),
+            is_verified=False,
+        )
+        logger.info(
+            "push_api: auto-labeled %r → %s (tenant=%r)",
+            company.name, platform_slug, tenant_id,
+        )
+        return True
+    except Exception:
+        logger.warning(
+            "push_api: failed to auto-label company %r → %s",
+            getattr(company, "name", "?"), platform_slug, exc_info=True,
+        )
+        return False
+
+
 # ── View 1: Export labels ─────────────────────────────────────────────────────
 
 @method_decorator(csrf_exempt, name="dispatch")
@@ -467,6 +515,7 @@ class PushJobsView(View):
                     capture_incoming_payload(upsert.raw_job, job_data)
                     if upsert.created:
                         created += 1
+                        _auto_label_company(company, platform, original_url, platform_slug)
                     else:
                         skipped += 1
                     continue

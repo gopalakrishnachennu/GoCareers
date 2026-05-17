@@ -131,6 +131,11 @@ def _get_company_list_queryset(request):
         qs = qs.filter(platform_label__platform__isnull=False, platform_label__tenant_id="")
     elif smart_filter == "no_ats":
         qs = qs.filter(platform_label__detection_method="UNDETECTED")
+    elif smart_filter == "scraper_inbox":
+        qs = qs.filter(
+            platform_label__detection_method="URL_PATTERN",
+            platform_label__is_verified=False,
+        )
     elif smart_filter == "raw_pending":
         qs = qs.filter(raw_jobs__sync_status="PENDING").distinct()
     qs = qs.prefetch_related("platform_label__platform")
@@ -189,6 +194,10 @@ def _company_ats_context(request):
         tenant_id="",
     ).count()
     stat_no_ats = CompanyPlatformLabel.objects.filter(detection_method="UNDETECTED").count()
+    stat_scraper_inbox = CompanyPlatformLabel.objects.filter(
+        detection_method="URL_PATTERN",
+        is_verified=False,
+    ).count()
     stat_ready_to_fetch = (
         CompanyPlatformLabel.objects.filter(
             platform__isnull=False,
@@ -342,6 +351,7 @@ def _company_ats_context(request):
         "stat_unchecked": stat_unchecked,
         "stat_no_tenant": stat_no_tenant,
         "stat_no_ats": stat_no_ats,
+        "stat_scraper_inbox": stat_scraper_inbox,
         "stat_ready_to_fetch": stat_ready_to_fetch,
         "stat_attention": stat_attention,
         "stat_high_value": stat_high_value,
