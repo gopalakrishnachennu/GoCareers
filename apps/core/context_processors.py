@@ -107,6 +107,20 @@ def dup_pending_count(request):
     return {'dup_pending_count': count}
 
 
+def unknown_country_count(request):
+    """Inject REVIEW_UNKNOWN_COUNTRY raw job count for the subnav badge."""
+    if not request.user.is_authenticated:
+        return {'unknown_country_count': 0}
+    if not (request.user.is_superuser or getattr(request.user, 'role', None) in ('ADMIN', 'EMPLOYEE')):
+        return {'unknown_country_count': 0}
+    try:
+        from harvest.models import RawJob
+        count = RawJob.objects.filter(scope_status=RawJob.ScopeStatus.REVIEW_UNKNOWN_COUNTRY).count()
+    except Exception:
+        count = 0
+    return {'unknown_country_count': count}
+
+
 def user_feature_flags(request):
     """
     Inject USER_FEATURE_FLAGS: dict key -> bool for the current user (for nav / dashboards).
