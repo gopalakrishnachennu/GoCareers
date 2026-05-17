@@ -660,8 +660,12 @@ class CompanyDetailView(AdminOrEmployeeRequiredMixin, DetailView):
                 ).order_by("-fetched_at")
             context["harvest_raw_jobs"] = raw_qs.only(
                 "id", "title", "company_name", "platform_slug",
-                "sync_status", "stage", "fetched_at", "original_url",
+                "sync_status", "fetched_at", "original_url",
                 "filter_decision", "classification_confidence",
+                # pipeline_stage_label is a property — not a DB column, omit from only()
+                "is_test_run", "has_description", "is_active", "is_cold",
+                "jd_fetch_skipped", "job_domain", "quality_score",
+                "jd_quality_score", "category_confidence",
             )[:20]
             context["harvest_raw_jobs_total"] = raw_qs.count()
             context["harvest_raw_jobs_url"] = (
