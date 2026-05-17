@@ -649,6 +649,28 @@ class CompanyDetailView(AdminOrEmployeeRequiredMixin, DetailView):
         context["company_top_consultants"] = consultant_rows  # resolved lazily in template if needed
         context["company_timeline"] = timeline[:100]
         context["company_jobs"] = company.jobs.all().select_related("posted_by").order_by("-created_at")
+
+        # Raw jobs from harvest engine — check FK first, fall back to name match
+        try:
+            from harvest.models import RawJob
+            raw_qs = RawJob.objects.filter(company=company).order_by("-fetched_at")
+            if not raw_qs.exists():
+                raw_qs = RawJob.objects.filter(
+                    company_name__iexact=company.name
+                ).order_by("-fetched_at")
+            context["harvest_raw_jobs"] = raw_qs.only(
+                "id", "title", "company_name", "platform_slug",
+                "sync_status", "stage", "fetched_at", "original_url",
+                "filter_decision", "classification_confidence",
+            )[:20]
+            context["harvest_raw_jobs_total"] = raw_qs.count()
+            context["harvest_raw_jobs_url"] = (
+                f"/jobs/pipeline/?tab=raw&search_by=company&q={company.name}"
+            )
+        except Exception:
+            context["harvest_raw_jobs"] = []
+            context["harvest_raw_jobs_total"] = 0
+            context["harvest_raw_jobs_url"] = ""
         if company.logo_url:
             context["company_logo_src"] = company.logo_url
         elif company.domain:

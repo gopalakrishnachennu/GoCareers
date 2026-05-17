@@ -446,6 +446,78 @@
         <p class="text-sm text-gray-500">No jobs have been posted for this company yet.</p>
         {% endif %}
     </div>
+
+    {# ── Harvested Raw Jobs ──────────────────────────────────────────────────── #}
+    {% if harvest_raw_jobs_total %}
+    <div class="mt-6 bg-white rounded-xl border border-slate-200 p-5">
+      <div class="flex items-center justify-between mb-3">
+        <div>
+          <h2 class="text-sm font-semibold text-slate-800">
+            Harvested Jobs
+            <span class="ml-1.5 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700">{{ harvest_raw_jobs_total }}</span>
+          </h2>
+          <p class="text-xs text-slate-400 mt-0.5">Raw jobs from the harvest engine — not yet in the live pool</p>
+        </div>
+        {% if harvest_raw_jobs_url %}
+        <a href="{{ harvest_raw_jobs_url }}" class="text-xs text-indigo-600 hover:underline font-medium">
+          View all in pipeline →
+        </a>
+        {% endif %}
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+            <tr>
+              <th class="px-3 py-2 text-left font-semibold">Title</th>
+              <th class="px-3 py-2 text-left font-semibold">Platform</th>
+              <th class="px-3 py-2 text-left font-semibold">Stage</th>
+              <th class="px-3 py-2 text-left font-semibold">Sync</th>
+              <th class="px-3 py-2 text-left font-semibold">Fetched</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for rj in harvest_raw_jobs %}
+            <tr class="hover:bg-slate-50 transition">
+              <td class="px-3 py-2 font-medium text-slate-800">
+                <a href="/harvest/raw-jobs/{{ rj.id }}/" class="hover:text-indigo-600 hover:underline">
+                  {{ rj.title|default:"—" }}
+                </a>
+              </td>
+              <td class="px-3 py-2">
+                {% if rj.platform_slug %}
+                <span class="inline-block text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-mono">{{ rj.platform_slug }}</span>
+                {% else %}—{% endif %}
+              </td>
+              <td class="px-3 py-2">
+                <span class="inline-block text-xs px-2 py-0.5 rounded-full font-semibold
+                  {% if rj.stage == 'READY' %}bg-emerald-100 text-emerald-700
+                  {% elif rj.stage == 'SYNCED' %}bg-teal-100 text-teal-700
+                  {% elif rj.stage == 'FETCHED' %}bg-sky-100 text-sky-700
+                  {% else %}bg-slate-100 text-slate-600{% endif %}">
+                  {{ rj.stage|default:"—" }}
+                </span>
+              </td>
+              <td class="px-3 py-2">
+                <span class="inline-block text-xs px-2 py-0.5 rounded-full font-semibold
+                  {% if rj.sync_status == 'SYNCED' %}bg-green-100 text-green-700
+                  {% elif rj.sync_status == 'PENDING' %}bg-amber-100 text-amber-700
+                  {% elif rj.sync_status == 'FAILED' %}bg-red-100 text-red-700
+                  {% else %}bg-slate-100 text-slate-600{% endif %}">
+                  {{ rj.sync_status|default:"—" }}
+                </span>
+              </td>
+              <td class="px-3 py-2 text-slate-500 text-xs">{{ rj.fetched_at|date:"Y-m-d" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% if harvest_raw_jobs_total > 20 %}
+      <p class="mt-2 text-xs text-slate-400">Showing 20 of {{ harvest_raw_jobs_total }} — <a href="{{ harvest_raw_jobs_url }}" class="text-indigo-600 hover:underline">see all in pipeline</a></p>
+      {% endif %}
+    </div>
+    {% endif %}
+
 </div>
 {% endblock %}
 
