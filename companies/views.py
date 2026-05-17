@@ -658,15 +658,9 @@ class CompanyDetailView(AdminOrEmployeeRequiredMixin, DetailView):
                 raw_qs = RawJob.objects.filter(
                     company_name__iexact=company.name
                 ).order_by("-fetched_at")
-            context["harvest_raw_jobs"] = raw_qs.only(
-                "id", "title", "company_name", "platform_slug",
-                "sync_status", "fetched_at", "original_url",
-                "filter_decision", "classification_confidence",
-                # pipeline_stage_label is a property — not a DB column, omit from only()
-                "is_test_run", "has_description", "is_active", "is_cold",
-                "jd_fetch_skipped", "job_domain", "quality_score",
-                "jd_quality_score", "category_confidence",
-            )[:20]
+            # No .only() here — pipeline_stage_label is a deep property that
+            # chains through jd_gate.py and needs many fields. 20 rows is fine.
+            context["harvest_raw_jobs"] = list(raw_qs[:20])
             context["harvest_raw_jobs_total"] = raw_qs.count()
             context["harvest_raw_jobs_url"] = (
                 f"/jobs/pipeline/?tab=raw&search_by=company&q={company.name}"
