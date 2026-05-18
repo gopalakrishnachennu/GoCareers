@@ -2974,12 +2974,20 @@ def sync_harvested_to_pool_task(
             last_pk = batch[-1].pk
             for rj in batch:
                 processed += 1
-                gate = evaluate_raw_job_gate(rj, cfg=gate_cfg)
-    
+                try:
+                    gate = evaluate_raw_job_gate(rj, cfg=gate_cfg)
+                except Exception as _gate_exc:
+                    logger.error("evaluate_raw_job_gate crashed for RawJob %s: %s", rj.pk, _gate_exc)
+                    failed += 1
+                    continue
+
                 existing = (
                     (Job.objects.filter(url_hash=rj.url_hash, is_archived=False).first() if rj.url_hash else None)
                     or find_existing_job_by_url(rj.original_url)
-                    or Job.objects.filter(original_link=rj.original_url).first()
+                    # Guard: original_link is URLField(max_length=500); a query with a longer
+                    # value raises DataError in PostgreSQL and crashes the whole task since this
+                    # line is outside the per-job try/except.
+                    or (Job.objects.filter(original_link=rj.original_url).first() if rj.original_url and len(rj.original_url) <= 500 else None)
                 )
                 if existing:
                     payload = dict(rj.raw_payload or {})
@@ -3070,12 +3078,12 @@ def sync_harvested_to_pool_task(
                     job_country = rj.country or ((rj.country_codes or [""])[0] if rj.country_codes else "")
                     with transaction.atomic():
                         job = Job.objects.create(
-                            title=rj.title,
-                            company=rj.company_name or (rj.company.name if rj.company else ""),
+                            title=(rj.title or "")[:200],  # Job.title max_length=200; RawJob.title up to 512
+                            company=(rj.company_name or (rj.company.name if rj.company else ""))[:200],
                             company_obj=rj.company,
                             location=job_location,
                             description=rj.description or rj.title,
-                            original_link=rj.original_url,
+                            original_link=(rj.original_url or "")[:500],  # Job.original_link max_length=500; RawJob up to 1024
                             salary_range=rj.salary_raw or "",
                             job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
                             status="POOL",
