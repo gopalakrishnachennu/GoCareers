@@ -236,6 +236,155 @@ async def list_tools() -> list[types.Tool]:
                 ),
                 inputSchema={"type": "object", "properties": {}},
             ),
+            # ── ORCHESTRATION: Classification & Enrichment ──────────────────
+            types.Tool(
+                name="trigger_classify",
+                description=(
+                    "Fires the classify_jobs_task via Celery (async). Classifies unclassified "
+                    "RawJobs with taxonomy, domain, and marketing roles. Returns the Celery "
+                    "task ID — use get_task_progress to monitor. Safe for 10k+ jobs."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "force_reclassify": {
+                            "type": "boolean",
+                            "description": "Re-classify already classified jobs (default false)",
+                            "default": False,
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="trigger_scope_evaluation",
+                description=(
+                    "Fires evaluate_rawjob_scope management command via Celery to scope "
+                    "UNSCOPED RawJobs (classify them as PRIORITY_TARGET, COLD_NON_TARGET_COUNTRY, etc). "
+                    "Returns task ID for monitoring."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "batch_size": {
+                            "type": "integer",
+                            "description": "Jobs per batch (default 1000)",
+                            "default": 1000,
+                        },
+                        "only_unscoped": {
+                            "type": "boolean",
+                            "description": "Only process UNSCOPED jobs (default true)",
+                            "default": True,
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="trigger_domain_classification",
+                description=(
+                    "Fires classify_job_domains management command via Celery. "
+                    "Assigns job domains (Engineering, Marketing, etc.) to RawJobs. "
+                    "Returns task ID for monitoring."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "batch_size": {
+                            "type": "integer",
+                            "description": "Jobs per batch (default 1000)",
+                            "default": 1000,
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="trigger_enrichment",
+                description=(
+                    "Fires enrich_existing_jobs_task via Celery. Backfills category_confidence "
+                    "and other enrichment fields on existing jobs. Returns task ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "batch_size": {
+                            "type": "integer",
+                            "description": "Jobs per batch (default 500)",
+                            "default": 500,
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="get_task_progress",
+                description=(
+                    "Check the progress of a running Celery task by task ID. "
+                    "Returns state (PENDING/STARTED/PROGRESS/SUCCESS/FAILURE) and "
+                    "progress info (current/total/message) when available."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "Celery task ID returned by a trigger_* tool"},
+                    },
+                    "required": ["task_id"],
+                },
+            ),
+            types.Tool(
+                name="cancel_task",
+                description="Revoke (cancel) a running Celery task by ID.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_id": {"type": "string", "description": "Celery task ID to cancel"},
+                    },
+                    "required": ["task_id"],
+                },
+            ),
+            # ── ORCHESTRATION: Resume Generation ────────────────────────────
+            types.Tool(
+                name="generate_resume",
+                description=(
+                    "Generate a tailored resume for a consultant against a specific job. "
+                    "Fires the LLM resume generation pipeline. Returns draft ID and content "
+                    "when complete. Works for single jobs — not bulk."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "consultant_id": {"type": "integer", "description": "ConsultantProfile primary key"},
+                        "job_id": {"type": "integer", "description": "Job primary key"},
+                        "version": {
+                            "type": "integer",
+                            "description": "Version number for this draft (default 1)",
+                            "default": 1,
+                        },
+                    },
+                    "required": ["consultant_id", "job_id"],
+                },
+            ),
+            types.Tool(
+                name="get_resume_draft",
+                description="Retrieve an existing ResumeDraft by ID, including generated content and ATS score.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "draft_id": {"type": "integer", "description": "ResumeDraft primary key"},
+                    },
+                    "required": ["draft_id"],
+                },
+            ),
+            types.Tool(
+                name="list_resume_drafts",
+                description="List resume drafts for a consultant, optionally filtered by job.",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "consultant_id": {"type": "integer", "description": "ConsultantProfile primary key"},
+                        "job_id": {"type": "integer", "description": "Filter by job (optional)"},
+                        "limit": {"type": "integer", "description": "Max results (default 20)", "default": 20},
+                    },
+                    "required": ["consultant_id"],
+                },
+            ),
         ]
 
     return tools
@@ -499,6 +648,230 @@ async def _dispatch(name: str, args: dict) -> list[types.TextContent]:  # noqa: 
         with connection.cursor() as cursor:
             cursor.execute("REINDEX TABLE CONCURRENTLY harvest_rawjob;")
         return _ok({"ok": True, "message": "REINDEX TABLE CONCURRENTLY harvest_rawjob completed"})
+
+    # ── trigger_classify (WRITE — async via Celery) ───────────────────────────
+    elif name == "trigger_classify":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from jobs.tasks import classify_jobs_task
+
+        force = bool(args.get("force_reclassify", False))
+        result = classify_jobs_task.apply_async(kwargs={"force_reclassify": force})
+        return _ok({
+            "ok": True,
+            "task_id": result.id,
+            "message": f"classify_jobs_task queued (force_reclassify={force}). Use get_task_progress('{result.id}') to monitor.",
+        })
+
+    # ── trigger_scope_evaluation (WRITE — async via Celery) ───────────────────
+    elif name == "trigger_scope_evaluation":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from celery import current_app
+
+        batch_size = int(args.get("batch_size", 1000))
+        only_unscoped = bool(args.get("only_unscoped", True))
+        # Run the management command via Celery by calling it in a helper task
+        cmd_args = ["evaluate_rawjob_scope", "--batch-size", str(batch_size)]
+        if only_unscoped:
+            cmd_args.append("--only-unscoped")
+        result = current_app.send_task(
+            "celery.execute_management_command",
+            args=cmd_args,
+        )
+        # Fallback: run via subprocess if no dedicated task exists
+        import subprocess
+        proc = subprocess.Popen(
+            ["python", "manage.py"] + cmd_args[0:],
+            cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        # Don't block — return immediately
+        return _ok({
+            "ok": True,
+            "pid": proc.pid,
+            "command": " ".join(["python", "manage.py"] + cmd_args),
+            "message": f"evaluate_rawjob_scope started (PID {proc.pid}). batch_size={batch_size}, only_unscoped={only_unscoped}",
+        })
+
+    # ── trigger_domain_classification (WRITE — async subprocess) ──────────────
+    elif name == "trigger_domain_classification":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        import subprocess
+
+        batch_size = int(args.get("batch_size", 1000))
+        cmd = ["python", "manage.py", "classify_job_domains", "--batch-size", str(batch_size)]
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        return _ok({
+            "ok": True,
+            "pid": proc.pid,
+            "command": " ".join(cmd),
+            "message": f"classify_job_domains started (PID {proc.pid}). batch_size={batch_size}",
+        })
+
+    # ── trigger_enrichment (WRITE — async via Celery) ─────────────────────────
+    elif name == "trigger_enrichment":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from harvest.tasks import enrich_existing_jobs_task
+
+        batch_size = int(args.get("batch_size", 500))
+        result = enrich_existing_jobs_task.apply_async(kwargs={"batch_size": batch_size})
+        return _ok({
+            "ok": True,
+            "task_id": result.id,
+            "message": f"enrich_existing_jobs_task queued (batch_size={batch_size}). Use get_task_progress('{result.id}') to monitor.",
+        })
+
+    # ── get_task_progress ─────────────────────────────────────────────────────
+    elif name == "get_task_progress":
+        from celery.result import AsyncResult
+
+        task_id = args.get("task_id", "").strip()
+        if not task_id:
+            return _err("'task_id' is required")
+
+        result = AsyncResult(task_id)
+        info = {
+            "task_id": task_id,
+            "state": result.state,
+        }
+        if result.state == "PROGRESS":
+            info["progress"] = result.info  # {"current": N, "total": M, "message": "..."}
+        elif result.state == "SUCCESS":
+            info["result"] = result.result
+        elif result.state == "FAILURE":
+            info["error"] = str(result.result)
+            info["traceback"] = result.traceback
+        return _ok(info)
+
+    # ── cancel_task ───────────────────────────────────────────────────────────
+    elif name == "cancel_task":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from celery import current_app
+
+        task_id = args.get("task_id", "").strip()
+        if not task_id:
+            return _err("'task_id' is required")
+        current_app.control.revoke(task_id, terminate=True)
+        return _ok({"ok": True, "task_id": task_id, "message": "Task revoked"})
+
+    # ── generate_resume (WRITE — runs LLM inline, ~10-30s per resume) ─────────
+    elif name == "generate_resume":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from resumes.services import generate_resume_content
+        from resumes.models import ResumeDraft
+        from jobs.models import Job
+        from users.models import ConsultantProfile
+
+        consultant_id = args.get("consultant_id")
+        job_id = args.get("job_id")
+        version = int(args.get("version", 1))
+
+        try:
+            consultant = ConsultantProfile.objects.get(pk=consultant_id)
+        except ConsultantProfile.DoesNotExist:
+            return _err(f"ConsultantProfile {consultant_id} not found")
+        try:
+            job = Job.objects.get(pk=job_id)
+        except Job.DoesNotExist:
+            return _err(f"Job {job_id} not found")
+
+        # Check if draft already exists
+        existing = ResumeDraft.objects.filter(
+            consultant=consultant, job=job, version=version
+        ).first()
+        if existing and existing.status == ResumeDraft.Status.DRAFT:
+            return _ok({
+                "draft_id": existing.pk,
+                "status": existing.status,
+                "ats_score": existing.ats_score,
+                "content_preview": (existing.content or "")[:500],
+                "message": "Draft already exists. Use get_resume_draft for full content.",
+            })
+
+        # Create a new draft
+        draft = ResumeDraft.objects.create(
+            consultant=consultant,
+            job=job,
+            version=version,
+            status=ResumeDraft.Status.PROCESSING,
+        )
+        try:
+            content = generate_resume_content(draft)
+            draft.content = content
+            draft.status = ResumeDraft.Status.DRAFT
+            draft.save(update_fields=["content", "status"])
+        except Exception as e:
+            draft.status = ResumeDraft.Status.ERROR
+            draft.error_message = str(e)[:500]
+            draft.save(update_fields=["status", "error_message"])
+            return _err(f"Resume generation failed: {e}")
+
+        return _ok({
+            "draft_id": draft.pk,
+            "status": draft.status,
+            "ats_score": draft.ats_score,
+            "tokens_used": draft.tokens_used,
+            "content_preview": (draft.content or "")[:500],
+            "message": "Resume generated. Use get_resume_draft for full content.",
+        })
+
+    # ── get_resume_draft ──────────────────────────────────────────────────────
+    elif name == "get_resume_draft":
+        from resumes.models import ResumeDraft
+
+        draft_id = args.get("draft_id")
+        try:
+            draft = ResumeDraft.objects.select_related("consultant", "job").get(pk=draft_id)
+        except ResumeDraft.DoesNotExist:
+            return _err(f"ResumeDraft {draft_id} not found")
+
+        return _ok({
+            "id": draft.pk,
+            "consultant": str(draft.consultant),
+            "job_title": draft.job.title if draft.job else None,
+            "job_company": draft.job.company if draft.job else None,
+            "version": draft.version,
+            "status": draft.status,
+            "ats_score": draft.ats_score,
+            "tokens_used": draft.tokens_used,
+            "validation_errors": draft.validation_errors,
+            "validation_warnings": draft.validation_warnings,
+            "content": draft.content,
+            "created_at": draft.created_at,
+        })
+
+    # ── list_resume_drafts ────────────────────────────────────────────────────
+    elif name == "list_resume_drafts":
+        from resumes.models import ResumeDraft
+
+        consultant_id = args.get("consultant_id")
+        limit = min(int(args.get("limit", 20)), MAX_ROWS)
+        qs = ResumeDraft.objects.filter(consultant_id=consultant_id).select_related("job").order_by("-created_at")
+        if job_id := args.get("job_id"):
+            qs = qs.filter(job_id=job_id)
+        rows = [{
+            "id": d.pk,
+            "job_title": d.job.title if d.job else None,
+            "job_company": d.job.company if d.job else None,
+            "version": d.version,
+            "status": d.status,
+            "ats_score": d.ats_score,
+            "created_at": d.created_at,
+        } for d in qs[:limit]]
+        return _ok({"count": len(rows), "results": rows})
 
     else:
         return _err(f"Unknown tool: {name}")

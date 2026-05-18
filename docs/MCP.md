@@ -33,6 +33,9 @@ Instead of SSH-ing into production and running shell commands, you just **talk t
 | "Why did sync run #1087 fail?" | Calls `get_ops_run_detail(1087)` → reads audit payload → explains it |
 | "Show me unknown country jobs" | Calls `get_unknown_country_jobs` → returns the review queue |
 | "Approve RawJob 31500 as US" | Calls `approve_unknown_country(31500, 'US')` → updates DB |
+| "Classify all unscoped jobs" | Calls `trigger_classify` → Celery task starts → monitors via `get_task_progress` |
+| "How far along is the classification?" | Calls `get_task_progress(task_id)` → shows progress bar |
+| "Generate a resume for Gopala against Job #234" | Calls `generate_resume(consultant_id=1, job_id=234)` → returns ATS score + content |
 | "Trigger a full sync now" | Calls `trigger_sync(qualified_only=True)` → runs and reports back |
 | "Find senior engineer jobs in Germany" | Calls `search_jobs(query='senior engineer', country='DE')` |
 | "Fix the index corruption" | Calls `reindex_rawjob_table` → runs REINDEX CONCURRENTLY |
@@ -53,6 +56,9 @@ Instead of SSH-ing into production and running shell commands, you just **talk t
 | `get_unknown_country_jobs` | REVIEW_UNKNOWN_COUNTRY queue with location hints |
 | `get_ops_run_detail` | Full audit_payload for any ops run by ID |
 | `explain_rawjob` | Deep breakdown of one RawJob: status, gate result, why it passed/failed |
+| `get_task_progress` | Check Celery task state/progress by task ID |
+| `get_resume_draft` | Retrieve generated resume content + ATS score |
+| `list_resume_drafts` | List all resume drafts for a consultant |
 
 ### Write Tools (enabled when `MCP_ALLOWED_ACTIONS=read,write`)
 
@@ -61,6 +67,12 @@ Instead of SSH-ing into production and running shell commands, you just **talk t
 | `trigger_sync` | Fire `sync_harvested_to_pool_task` with configurable params |
 | `approve_unknown_country` | Set country + re-scope to PRIORITY_TARGET |
 | `reindex_rawjob_table` | Run `REINDEX TABLE CONCURRENTLY harvest_rawjob` |
+| `trigger_classify` | Queue taxonomy + domain classification via Celery (safe for 10k+) |
+| `trigger_scope_evaluation` | Scope UNSCOPED RawJobs (country targeting, etc.) |
+| `trigger_domain_classification` | Assign job domains (Engineering, Marketing, etc.) |
+| `trigger_enrichment` | Backfill enrichment fields on existing jobs |
+| `cancel_task` | Revoke a running Celery task |
+| `generate_resume` | Generate a tailored resume (LLM, single job, ~10-30s) |
 
 ---
 
@@ -533,6 +545,7 @@ MCP_MAX_ROWS=50
 
 Once connected to Claude Desktop or Claude Code, you can say:
 
+### Pipeline Monitoring
 ```
 "What's the current state of the pipeline?"
 → get_pipeline_stats → shows live counts
@@ -542,7 +555,10 @@ Once connected to Claude Desktop or Claude Code, you can say:
 
 "Why did ops run 1087 fail?"
 → get_ops_run_detail(1087) → reads audit_payload → explains the error
+```
 
+### Job Search & Analysis
+```
 "Find all senior backend jobs in Europe"
 → search_jobs(query="senior backend", country="EU")
 
@@ -551,7 +567,46 @@ Once connected to Claude Desktop or Claude Code, you can say:
 
 "Show me jobs with unknown country that have 'Germany' in their location"
 → get_unknown_country_jobs(limit=50) → Claude filters by location
+```
 
+### Classification & Enrichment (10k+ safe)
+```
+"Classify all unclassified jobs"
+→ trigger_classify() → Celery task starts in background
+→ "Started. Task ID abc123. Use 'how's the classify going?' to check."
+
+"How far along is the classification?"
+→ get_task_progress("abc123") → {state: "PROGRESS", progress: {current: 4200, total: 10400}}
+→ "40% done — 4,200 of 10,400 classified."
+
+"Scope all unscoped raw jobs"
+→ trigger_scope_evaluation(batch_size=1000) → runs as management command
+
+"Classify job domains for the backlog"
+→ trigger_domain_classification(batch_size=1000) → assigns Engineering/Marketing/etc.
+
+"Run enrichment on existing jobs"
+→ trigger_enrichment(batch_size=500) → backfills category_confidence etc.
+
+"Cancel that classification — it's taking too long"
+→ cancel_task("abc123") → revokes the Celery task
+```
+
+### Resume Generation
+```
+"Generate a resume for Gopala against the Stripe Senior Backend Engineer job"
+→ generate_resume(consultant_id=1, job_id=234) → LLM generates tailored resume
+→ "Draft created. ATS score: 87. Here's a preview..."
+
+"Show me the full resume"
+→ get_resume_draft(draft_id=42) → returns full markdown content
+
+"List all my resume drafts"
+→ list_resume_drafts(consultant_id=1) → shows all drafts with ATS scores
+```
+
+### Ops & Maintenance
+```
 "Set RawJob 23500 country to DE"
 → approve_unknown_country(rawjob_id=23500, country="DE")
 
@@ -561,6 +616,21 @@ Once connected to Claude Desktop or Claude Code, you can say:
 "The indexes seem corrupt, fix it"
 → reindex_rawjob_table() → REINDEX TABLE CONCURRENTLY
 ```
+
+---
+
+## Why MCP + Celery, Not MCP Alone
+
+> **MCP for command & visibility. Celery for heavy lifting.**
+
+| Concern | MCP alone | MCP + Celery (what we do) |
+|---|---|---|
+| 10k job classification | Timeout at ~60s | Celery runs for 30 min; MCP monitors |
+| Progress visibility | Nothing until done | `get_task_progress` returns % complete |
+| Retry on failure | Restart from zero | Celery retries from checkpoint |
+| Rate limits (OpenAI) | Crashes mid-run | Celery has backoff + per-host throttle |
+| Memory | OOM on large batches | Celery chunks (500/batch) |
+| Cancel mid-run | Kill MCP server | `cancel_task` sends SIGTERM to worker |
 
 ---
 
