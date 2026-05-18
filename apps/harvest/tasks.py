@@ -3081,22 +3081,22 @@ def sync_harvested_to_pool_task(
                             title=(rj.title or "")[:200],  # Job.title max_length=200; RawJob.title up to 512
                             company=(rj.company_name or (rj.company.name if rj.company else ""))[:200],
                             company_obj=rj.company,
-                            location=job_location,
+                            location=job_location[:200],   # Job.location max_length=200
                             description=rj.description or rj.title,
                             original_link=(rj.original_url or "")[:500],  # Job.original_link max_length=500; RawJob up to 1024
-                            salary_range=rj.salary_raw or "",
-                            job_type=rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME",
+                            salary_range=(rj.salary_raw or "")[:100],     # Job.salary_range max_length=100
+                            job_type=(rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME")[:20],  # max_length=20
                             status="POOL",
                             stage=Job.Stage.VETTED,
                             stage_changed_at=_tz.now(),
                             url_hash=rj.url_hash or "",
-                            job_source=f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED",
+                            job_source=(f"HARVESTED_{platform_slug.upper()}" if platform_slug else "HARVESTED")[:100],  # max_length=100
                             posted_by=system_user,
                             source_raw_job=rj,
                             queue_entered_at=_tz.now(),
                             # Propagate classification from RawJob if available
-                            country=job_country,
-                            department=rj.department_normalized or "",
+                            country=job_country[:100],                    # Job.country max_length=100
+                            department=(rj.department_normalized or "")[:20],  # Job.department max_length=20
                         )
                         apply_gate_result_to_job(job, gate)
                         job.quality_score = compute_quality_score(job)
