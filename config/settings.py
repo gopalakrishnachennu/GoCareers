@@ -255,6 +255,23 @@ HARVEST_JD_STALE_DAYS = config('HARVEST_JD_STALE_DAYS', default=120, cast=int)
 # REQUIRED: Set this in production .env before enabling the push API.
 HARVEST_PUSH_SECRET = config('HARVEST_PUSH_SECRET', default='').strip()
 
+# ── MCP (Model Context Protocol) Server ───────────────────────────────────────
+# Exposes GoCareers pipeline tools to Claude, Cursor, Cline, and other MCP clients.
+# See docs/MCP.md for full setup guide.
+
+# Secret token clients must send in the X-MCP-Token header (HTTP/SSE mode only).
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+# Leave empty to disable token auth (fine for local stdio mode).
+MCP_AUTH_TOKEN = config('MCP_AUTH_TOKEN', default='').strip()
+
+# Controls which tool categories are enabled.
+# 'read'       — query-only tools (safe for any client)
+# 'read,write' — also enables trigger_sync, approve_unknown_country, etc.
+MCP_ALLOWED_ACTIONS = config('MCP_ALLOWED_ACTIONS', default='read,write').strip()
+
+# Max rows any single MCP tool call may return (prevents accidental full-table dumps).
+MCP_MAX_ROWS = config('MCP_MAX_ROWS', default=100, cast=int)
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 

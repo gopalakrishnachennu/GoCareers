@@ -28,3 +28,6 @@ country-converter>=0.7          # ISO country name/code normalisation
 pyyaml>=6.0                     # dept_rules.yaml / dept_anchors.yaml loading
 # sentence-transformers is optional — install from requirements-ml.txt on GPU/dev boxes
 # The classifier falls back to LLM (Tier 4) automatically if not installed
+
+# ── MCP (Model Context Protocol) server ───────────────────────────────────────
+mcp>=1.0                        # Anthropic MCP SDK — exposes GoCareers tools to Claude / AI clients
