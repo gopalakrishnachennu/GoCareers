@@ -3000,7 +3000,10 @@ def sync_harvested_to_pool_task(
                     rj.sync_status = "SKIPPED"
                     rj.sync_skip_reason = "DUPLICATE_EXISTING"
                     rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
+                    try:
+                        rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
+                    except Exception as _save_exc:
+                        logger.warning("Could not save duplicate-skip status for RawJob %s: %s", rj.pk, _save_exc)
                     PipelineEvent.record(
                         job=existing,
                         url_hash=rj.url_hash or "",
@@ -3061,7 +3064,10 @@ def sync_harvested_to_pool_task(
                     rj.sync_status = "FAILED"
                     rj.sync_skip_reason = (gate.reason_code or "")[:32]
                     rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
+                    try:
+                        rj.save(update_fields=["sync_status", "sync_skip_reason", "raw_payload", "updated_at"])
+                    except Exception as _save_exc:
+                        logger.warning("Could not save gate-fail status for RawJob %s: %s", rj.pk, _save_exc)
                     failed += 1
                     if total_target:
                         update_task_progress(
@@ -3082,10 +3088,10 @@ def sync_harvested_to_pool_task(
                             company=(rj.company_name or (rj.company.name if rj.company else ""))[:200],
                             company_obj=rj.company,
                             location=job_location[:200],   # Job.location max_length=200
-                            description=rj.description or rj.title,
+                            description=rj.description or rj.title or "",  # Job.description is NOT NULL
                             original_link=(rj.original_url or "")[:500],  # Job.original_link max_length=500; RawJob up to 1024
                             salary_range=(rj.salary_raw or "")[:100],     # Job.salary_range max_length=100
-                            job_type=(rj.employment_type if rj.employment_type != "UNKNOWN" else "FULL_TIME")[:20],  # max_length=20
+                            job_type=(rj.employment_type if rj.employment_type and rj.employment_type != "UNKNOWN" else "FULL_TIME")[:20],  # max_length=20; guard None
                             status="POOL",
                             stage=Job.Stage.VETTED,
                             stage_changed_at=_tz.now(),
@@ -3186,7 +3192,12 @@ def sync_harvested_to_pool_task(
                     }
                     rj.sync_status = "FAILED"
                     rj.raw_payload = payload
-                    rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    try:
+                        rj.save(update_fields=["sync_status", "raw_payload", "updated_at"])
+                    except Exception as _save_exc:
+                        # If we can't persist the failure status, just log and continue —
+                        # don't let the error-handler crash the whole task run.
+                        logger.warning("Could not save error status for RawJob %s: %s", rj.pk, _save_exc)
                     PipelineEvent.record(
                         url_hash=rj.url_hash or "",
                         from_stage="ENRICHED",
