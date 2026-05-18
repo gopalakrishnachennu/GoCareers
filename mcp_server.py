@@ -341,22 +341,69 @@ async def list_tools() -> list[types.Tool]:
             ),
             # ── ORCHESTRATION: Resume Generation ────────────────────────────
             types.Tool(
+                name="auto_generate_resumes",
+                description=(
+                    "Auto-generate resumes for ALL consultants × matched jobs. "
+                    "Matches jobs to consultants by marketing role overlap, then generates "
+                    "a tailored resume for each pair. Runs via Celery (safe for 100+ pairs). "
+                    "Returns task ID — use get_task_progress to monitor."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "job_ids": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "description": "Specific Job PKs to process. Omit for all unprocessed POOL jobs.",
+                        },
+                        "max_jobs": {
+                            "type": "integer",
+                            "description": "Cap on jobs to process (0 = no limit, default 0)",
+                            "default": 0,
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Find matches but don't actually generate (default false)",
+                            "default": False,
+                        },
+                    },
+                },
+            ),
+            types.Tool(
+                name="generate_for_consultant",
+                description=(
+                    "Generate resumes for a single consultant against all their matched "
+                    "POOL jobs (by marketing role overlap). Runs via Celery. Returns task ID."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "consultant_id": {"type": "integer", "description": "ConsultantProfile primary key"},
+                        "max_jobs": {
+                            "type": "integer",
+                            "description": "Cap on jobs (0 = no limit)",
+                            "default": 0,
+                        },
+                        "dry_run": {
+                            "type": "boolean",
+                            "description": "Preview matches without generating",
+                            "default": False,
+                        },
+                    },
+                    "required": ["consultant_id"],
+                },
+            ),
+            types.Tool(
                 name="generate_resume",
                 description=(
-                    "Generate a tailored resume for a consultant against a specific job. "
-                    "Fires the LLM resume generation pipeline. Returns draft ID and content "
-                    "when complete. Works for single jobs — not bulk."
+                    "Generate a single tailored resume for one consultant × one job. "
+                    "Runs the LLM inline (~10-30s). Returns draft ID and ATS score."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "consultant_id": {"type": "integer", "description": "ConsultantProfile primary key"},
                         "job_id": {"type": "integer", "description": "Job primary key"},
-                        "version": {
-                            "type": "integer",
-                            "description": "Version number for this draft (default 1)",
-                            "default": 1,
-                        },
                     },
                     "required": ["consultant_id", "job_id"],
                 },
@@ -766,18 +813,63 @@ async def _dispatch(name: str, args: dict) -> list[types.TextContent]:  # noqa: 
         current_app.control.revoke(task_id, terminate=True)
         return _ok({"ok": True, "task_id": task_id, "message": "Task revoked"})
 
+    # ── auto_generate_resumes (WRITE — Celery async) ────────────────────────────
+    elif name == "auto_generate_resumes":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from resumes.tasks import auto_generate_for_new_jobs_task
+
+        kwargs = {
+            "max_jobs": int(args.get("max_jobs", 0)),
+            "dry_run": bool(args.get("dry_run", False)),
+        }
+        if job_ids := args.get("job_ids"):
+            kwargs["job_ids"] = job_ids
+
+        result = auto_generate_for_new_jobs_task.apply_async(kwargs=kwargs)
+        return _ok({
+            "ok": True,
+            "task_id": result.id,
+            "message": (
+                f"auto_generate_for_new_jobs queued"
+                f" (max_jobs={kwargs['max_jobs']}, dry_run={kwargs['dry_run']}). "
+                f"Use get_task_progress('{result.id}') to monitor."
+            ),
+        })
+
+    # ── generate_for_consultant (WRITE — Celery async) ────────────────────────
+    elif name == "generate_for_consultant":
+        if not WRITE_ENABLED:
+            return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
+        from resumes.tasks import generate_for_consultant_task
+
+        consultant_id = args.get("consultant_id")
+        if not consultant_id:
+            return _err("'consultant_id' is required")
+
+        result = generate_for_consultant_task.apply_async(kwargs={
+            "consultant_id": int(consultant_id),
+            "max_jobs": int(args.get("max_jobs", 0)),
+            "dry_run": bool(args.get("dry_run", False)),
+        })
+        return _ok({
+            "ok": True,
+            "task_id": result.id,
+            "message": f"generate_for_consultant queued (consultant_id={consultant_id}). Use get_task_progress('{result.id}') to monitor.",
+        })
+
     # ── generate_resume (WRITE — runs LLM inline, ~10-30s per resume) ─────────
     elif name == "generate_resume":
         if not WRITE_ENABLED:
             return _err("Write actions are disabled (MCP_ALLOWED_ACTIONS=read)")
-        from resumes.services import generate_resume_content
+        from resumes.engine import generate_resume as _gen_resume
+        from resumes.services import validate_resume, score_ats
         from resumes.models import ResumeDraft
         from jobs.models import Job
         from users.models import ConsultantProfile
 
         consultant_id = args.get("consultant_id")
         job_id = args.get("job_id")
-        version = int(args.get("version", 1))
 
         try:
             consultant = ConsultantProfile.objects.get(pk=consultant_id)
@@ -789,10 +881,8 @@ async def _dispatch(name: str, args: dict) -> list[types.TextContent]:  # noqa: 
             return _err(f"Job {job_id} not found")
 
         # Check if draft already exists
-        existing = ResumeDraft.objects.filter(
-            consultant=consultant, job=job, version=version
-        ).first()
-        if existing and existing.status == ResumeDraft.Status.DRAFT:
+        existing = ResumeDraft.objects.filter(consultant=consultant, job=job).order_by("-version").first()
+        if existing and existing.status in (ResumeDraft.Status.DRAFT, ResumeDraft.Status.FINAL):
             return _ok({
                 "draft_id": existing.pk,
                 "status": existing.status,
@@ -801,29 +891,35 @@ async def _dispatch(name: str, args: dict) -> list[types.TextContent]:  # noqa: 
                 "message": "Draft already exists. Use get_resume_draft for full content.",
             })
 
-        # Create a new draft
-        draft = ResumeDraft.objects.create(
-            consultant=consultant,
-            job=job,
-            version=version,
-            status=ResumeDraft.Status.PROCESSING,
-        )
-        try:
-            content = generate_resume_content(draft)
-            draft.content = content
-            draft.status = ResumeDraft.Status.DRAFT
-            draft.save(update_fields=["content", "status"])
-        except Exception as e:
-            draft.status = ResumeDraft.Status.ERROR
-            draft.error_message = str(e)[:500]
-            draft.save(update_fields=["status", "error_message"])
-            return _err(f"Resume generation failed: {e}")
+        # Generate
+        content, tokens, error, metadata = _gen_resume(job=job, consultant=consultant)
+        if error:
+            draft = ResumeDraft.objects.create(
+                consultant=consultant, job=job, version=1,
+                status=ResumeDraft.Status.ERROR,
+                error_message=(error or "")[:500],
+            )
+            return _err(f"Resume generation failed: {error}")
 
+        errors_list, warnings_list = validate_resume(content or "")
+        ats = score_ats(job.description or "", content or "")
+        draft = ResumeDraft.objects.create(
+            consultant=consultant, job=job, version=1,
+            status=ResumeDraft.Status.REVIEW if errors_list else ResumeDraft.Status.DRAFT,
+            content=content or "",
+            tokens_used=tokens,
+            ats_score=ats,
+            validation_errors=errors_list,
+            validation_warnings=warnings_list,
+            llm_system_prompt=metadata.get("system_prompt", ""),
+            llm_user_prompt=metadata.get("user_prompt", ""),
+            llm_input_summary=metadata.get("input_sections", {}),
+        )
         return _ok({
             "draft_id": draft.pk,
             "status": draft.status,
-            "ats_score": draft.ats_score,
-            "tokens_used": draft.tokens_used,
+            "ats_score": ats,
+            "tokens_used": tokens,
             "content_preview": (draft.content or "")[:500],
             "message": "Resume generated. Use get_resume_draft for full content.",
         })

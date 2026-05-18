@@ -90,6 +90,11 @@ class ResumeDraft(models.Model):
     validation_errors = models.JSONField(default=list, blank=True)
     validation_warnings = models.JSONField(default=list, blank=True)
     tokens_used = models.PositiveIntegerField(default=0, help_text="Total tokens consumed")
+    auto_generated = models.BooleanField(
+        default=False,
+        db_index=True,
+        help_text="True when created by the auto_generate_for_new_jobs pipeline (not manual).",
+    )
     generation_id = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
