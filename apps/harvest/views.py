@@ -3787,6 +3787,7 @@ class JobDomainListView(SuperuserRequiredMixin, ListView):
     model = JobDomain
     template_name = "harvest/job_domain_list.html"
     context_object_name = "domains"
+    paginate_by = 50
 
     def get_queryset(self):
         return JobDomain.objects.all().order_by("priority", "slug")

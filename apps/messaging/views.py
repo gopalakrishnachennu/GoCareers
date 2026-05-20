@@ -166,6 +166,7 @@ class InboxView(MessagingFeatureGateMixin, LoginRequiredMixin, ListView):
     model = Thread
     template_name = "messaging/inbox.html"
     context_object_name = "threads"
+    paginate_by = 50
 
     def get_queryset(self):
         qs = inbox_threads_base_queryset(self.request.user)

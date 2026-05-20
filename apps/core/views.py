@@ -556,6 +556,7 @@ class MasterPromptListView(AdminRequiredMixin, ListView):
     """List all master prompt versions."""
     template_name = 'settings/master_prompt_list.html'
     context_object_name = 'prompts'
+    paginate_by = 50
 
     def get_queryset(self):
         from resumes.models import MasterPrompt

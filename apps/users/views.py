@@ -423,7 +423,9 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'consultant'
 
     def get_queryset(self):
-        return User.objects.filter(role=User.Role.CONSULTANT, consultant_profile__isnull=False)
+        return User.objects.filter(
+            role=User.Role.CONSULTANT, consultant_profile__isnull=False
+        ).select_related('consultant_profile')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -915,6 +917,7 @@ class MarketingRoleListView(AdminRequiredMixin, ListView):
     model = MarketingRole
     template_name = 'users/marketing_role_list.html'
     context_object_name = 'roles'
+    paginate_by = 50
 
 
 class MarketingRoleCreateView(AdminRequiredMixin, CreateView):

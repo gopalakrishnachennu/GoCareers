@@ -448,6 +448,9 @@ class SubmissionDetailView(LoginRequiredMixin, UserPassesTestMixin, DetailView):
     template_name = 'submissions/submission_detail.html'
     context_object_name = 'submission'
 
+    def get_queryset(self):
+        return super().get_queryset().select_related('job', 'consultant__user')
+
     def test_func(self):
         obj = self.get_object()
         u = self.request.user
