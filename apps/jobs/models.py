@@ -252,6 +252,15 @@ class Job(models.Model):
     def __str__(self):
         return self.title
 
+    @property
+    def is_recent(self):
+        """True if created within the last 3 days."""
+        from django.utils import timezone
+        from datetime import timedelta
+        if not self.created_at:
+            return False
+        return self.created_at >= timezone.now() - timedelta(days=3)
+
     class Meta:
         ordering = ['-created_at']
 

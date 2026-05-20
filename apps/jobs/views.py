@@ -258,7 +258,10 @@ class JobListView(LoginRequiredMixin, ListView):
         return get_page_size(self.request, default=100)
 
     def get_queryset(self):
-        qs = apply_job_list_filters(super().get_queryset(), self.request)
+        qs = apply_job_list_filters(
+            super().get_queryset().select_related('posted_by').prefetch_related('marketing_roles'),
+            self.request,
+        )
         return qs.annotate(application_count=Count('submissions'))
 
     def get_context_data(self, **kwargs):

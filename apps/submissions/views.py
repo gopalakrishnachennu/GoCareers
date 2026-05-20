@@ -255,7 +255,7 @@ class SubmissionListView(LoginRequiredMixin, ListView):
         return context
 
     def get_queryset(self):
-        qs = super().get_queryset()
+        qs = super().get_queryset().select_related('job', 'consultant__user')
         user = self.request.user
         status = self.request.GET.get('status')
         search = self.request.GET.get('search')

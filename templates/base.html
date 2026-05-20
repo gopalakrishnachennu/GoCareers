@@ -5,8 +5,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ PLATFORM_CONFIG.site_name|default:"EduConsult" }} - {{ PLATFORM_CONFIG.site_tagline|default:"Dashboard" }}
-    </title>
+    <title>{% block title %}{{ PLATFORM_CONFIG.site_name|default:"Chennu" }} - {{ PLATFORM_CONFIG.site_tagline|default:"Dashboard" }}{% endblock %}</title>
+
+    {# ── Favicon — adaptive SVG + fallback PNG ── #}
+    <link rel="icon" type="image/svg+xml" href="{% static 'images/favicon.svg' %}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'images/logo-icon.svg' %}">
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'images/logo-icon.svg' %}">
     {% tailwind_css %}
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <script src="https://unpkg.com/alpinejs@3.13.3/dist/cdn.min.js" defer></script>
@@ -227,7 +231,7 @@
 
     <!-- HTMX Global Loading Bar -->
     <div id="global-loading-bar" class="fixed top-0 left-0 right-0 z-[100] h-0.5 bg-transparent">
-        <div class="htmx-indicator h-full bg-indigo-500 animate-loading-bar"></div>
+        <div class="htmx-indicator h-full animate-loading-bar" style="background-color:var(--brand-500)"></div>
     </div>
 
     {% if PLATFORM_CONFIG.nav_layout == 'left' %}
@@ -244,8 +248,17 @@
                 class="font-semibold text-xl tracking-tight text-white hover:text-blue-100 transition">
                 {% if PLATFORM_CONFIG.logo_url %}
                 <img src="{{ PLATFORM_CONFIG.logo_url }}" alt="Logo" class="h-8 inline-block mr-2 rounded bg-white p-1">
+                {% else %}
+                <span class="inline-flex items-center justify-center h-8 w-8 mr-2 rounded bg-white/15">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" class="w-5 h-5">
+                        <g transform="translate(256,256)">
+                            <path fill="#ffffff" d="M20,-140 A160,160,0,1,0,20,140 A24,24,0,0,1,20,96 A116,116,0,1,1,20,-96 A24,24,0,0,1,20,-140 Z"/>
+                            <circle fill="#ffffff" cx="-20" cy="0" r="32"/>
+                        </g>
+                    </svg>
+                </span>
                 {% endif %}
-                {{ PLATFORM_CONFIG.site_name|default:"EduConsult" }}
+                {{ PLATFORM_CONFIG.site_name|default:"Chennu" }}
             </a>
         </div>
         <div class="block lg:hidden">
@@ -479,7 +492,7 @@
             <div class="relative" x-data="{ profileOpen: false }" @keydown.escape.window="profileOpen = false">
                 <button type="button"
                     @click="profileOpen = !profileOpen"
-                    class="inline-flex items-center justify-center h-10 w-10 rounded-full bg-blue-700text-white font-bold shadow-sm border border-blue-500 hover:bg-blue-800 transition"
+                    class="inline-flex items-center justify-center h-10 w-10 rounded-full bg-blue-700 text-white font-bold shadow-sm border border-blue-500 hover:bg-blue-800 transition"
                     aria-label="Open profile menu"
                     :aria-expanded="profileOpen">
                     {{ user.username|slice:":1"|upper }}

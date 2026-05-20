@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 48" fill="none">
+  <!-- Chennu full logo: icon + wordmark, white on transparent (for dark nav backgrounds) -->
+  <g transform="translate(4,4)">
+    <!-- Icon: rounded square with C + bindu -->
+    <rect fill="rgba(255,255,255,0.15)" width="40" height="40" rx="8" ry="8"/>
+    <g transform="translate(20,20)">
+      <path fill="#ffffff" d="M1.5,-13 A14,14,0,1,0,1.5,13 A2.2,2.2,0,0,1,1.5,9 A10.2,10.2,0,1,1,1.5,-9 A2.2,2.2,0,0,1,1.5,-13 Z"/>
+      <circle fill="#ffffff" cx="-1.8" cy="0" r="2.8"/>
+    </g>
+  </g>
+  <!-- Wordmark -->
+  <text x="54" y="32" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-weight="800" font-size="22" fill="#ffffff" letter-spacing="2">CHENNU</text>
+</svg>

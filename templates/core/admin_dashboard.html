@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load humanize %}
+{% block title %}Dashboard - {{ PLATFORM_CONFIG.site_name|default:"Chennu" }}{% endblock %}
 
 {% block content %}
 <div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5 space-y-5">

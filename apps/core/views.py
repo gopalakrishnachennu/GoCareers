@@ -725,28 +725,48 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
 
     def _get_kpi_context(self):
         ctx = {}
-        ctx['total_jobs'] = Job.objects.count()
-        ctx['active_jobs'] = Job.objects.filter(status=Job.Status.OPEN).count()
-        ctx['total_consultants'] = User.objects.filter(role=User.Role.CONSULTANT).count()
-        ctx['total_employees'] = User.objects.filter(role=User.Role.EMPLOYEE).count()
-        ctx['total_applications'] = ApplicationSubmission.objects.count()
-        ctx['pending_applications_count'] = ApplicationSubmission.objects.filter(
-            status=ApplicationSubmission.Status.APPLIED
-        ).count()
-        ctx['total_placements'] = Placement.objects.count()
-        ctx['active_placements'] = Placement.objects.filter(
-            status=Placement.PlacementStatus.ACTIVE
-        ).count()
-        ctx['placed_count'] = ApplicationSubmission.objects.filter(
-            status=ApplicationSubmission.Status.PLACED
-        ).count()
+        # Jobs — 1 aggregate instead of 3 separate counts
+        job_agg = Job.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status=Job.Status.OPEN)),
+            pool=Count('id', filter=Q(status='POOL', is_archived=False)),
+        )
+        ctx['total_jobs'] = job_agg['total']
+        ctx['active_jobs'] = job_agg['active']
+        ctx['job_pool'] = job_agg['pool']
+
+        # Users — 1 aggregate instead of 2
+        user_agg = User.objects.aggregate(
+            consultants=Count('id', filter=Q(role=User.Role.CONSULTANT)),
+            employees=Count('id', filter=Q(role=User.Role.EMPLOYEE)),
+        )
+        ctx['total_consultants'] = user_agg['consultants']
+        ctx['total_employees'] = user_agg['employees']
+
+        # Applications — 1 aggregate instead of 3
+        app_agg = ApplicationSubmission.objects.aggregate(
+            total=Count('id'),
+            pending=Count('id', filter=Q(status=ApplicationSubmission.Status.APPLIED)),
+            placed=Count('id', filter=Q(status=ApplicationSubmission.Status.PLACED)),
+        )
+        ctx['total_applications'] = app_agg['total']
+        ctx['pending_applications_count'] = app_agg['pending']
+        ctx['placed_count'] = app_agg['placed']
+
+        # Placements — 1 aggregate instead of 2
+        placement_agg = Placement.objects.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status=Placement.PlacementStatus.ACTIVE)),
+        )
+        ctx['total_placements'] = placement_agg['total']
+        ctx['active_placements'] = placement_agg['active']
+
         ctx['pending_timesheets'] = Timesheet.objects.filter(
             status=Timesheet.TimesheetStatus.SUBMITTED
         ).count()
         ctx['pending_commissions_amount'] = Commission.objects.filter(
             status=Commission.CommissionStatus.PENDING
         ).aggregate(total=Sum('commission_amount'))['total'] or 0
-        ctx['job_pool'] = Job.objects.filter(status='POOL', is_archived=False).count()
         try:
             from companies.models import Company
             ctx['company_total'] = Company.objects.count()
@@ -756,17 +776,23 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
         except Exception:
             ctx['company_total'] = 0
             ctx['company_with_platform'] = 0
+        # Consultant status — 1 query instead of N
+        consultant_status_agg = dict(
+            ConsultantProfile.objects.values_list('status').annotate(c=Count('id')).order_by()
+        )
         ctx['consultant_status'] = {
-            s.value: ConsultantProfile.objects.filter(status=s).count()
+            s.value: consultant_status_agg.get(s.value, 0)
             for s in ConsultantProfile.Status
         }
         ctx['rawjob_total'] = 0
         try:
             from harvest.models import RawJob
-            ctx['rawjob_total'] = RawJob.objects.count()
+            rawjob_sync_agg = dict(
+                RawJob.objects.values_list('sync_status').annotate(c=Count('id')).order_by()
+            )
+            ctx['rawjob_total'] = sum(rawjob_sync_agg.values())
             ctx['rawjob_sync'] = {
-                s.value: RawJob.objects.filter(sync_status=s).count()
-                for s in RawJob.SyncStatus
+                s.value: rawjob_sync_agg.get(s.value, 0) for s in RawJob.SyncStatus
             }
         except Exception:
             ctx['rawjob_sync'] = {}
@@ -775,18 +801,23 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
     def _get_harvest_context(self):
         try:
             from harvest.models import RawJob
+            # Bulk aggregation: 2 queries instead of 12+
+            sync_agg = dict(
+                RawJob.objects.values_list('sync_status').annotate(c=Count('id')).order_by()
+            )
+            scope_agg = dict(
+                RawJob.objects.values_list('scope_status').annotate(c=Count('id')).order_by()
+            )
+            jd_agg = dict(
+                RawJob.objects.values_list('has_description').annotate(c=Count('id')).order_by()
+            )
+            total = sum(sync_agg.values())
             return {
-                'rawjob_total': RawJob.objects.count(),
-                'rawjob_sync': {
-                    s.value: RawJob.objects.filter(sync_status=s).count()
-                    for s in RawJob.SyncStatus
-                },
-                'rawjob_scope': {
-                    s.value: RawJob.objects.filter(scope_status=s).count()
-                    for s in RawJob.ScopeStatus
-                },
-                'rawjob_with_jd': RawJob.objects.filter(has_description=True).count(),
-                'rawjob_missing_jd': RawJob.objects.filter(has_description=False).count(),
+                'rawjob_total': total,
+                'rawjob_sync': {s.value: sync_agg.get(s.value, 0) for s in RawJob.SyncStatus},
+                'rawjob_scope': {s.value: scope_agg.get(s.value, 0) for s in RawJob.ScopeStatus},
+                'rawjob_with_jd': jd_agg.get(True, 0),
+                'rawjob_missing_jd': jd_agg.get(False, 0),
             }
         except Exception:
             return {
