@@ -1,0 +1,29 @@
+{% load humanize %}
+<div class="bg-white rounded-xl border border-gray-200 p-5">
+  <div class="flex items-center gap-2 mb-4">
+    <span class="w-6 h-6 rounded-md bg-red-50 flex items-center justify-center">
+      <svg class="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    </span>
+    <h2 class="text-sm font-bold text-gray-900">Action Items</h2>
+    {% if action_items %}
+    <span class="ml-auto inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold bg-red-500 text-white">{{ action_items|length }}</span>
+    {% endif %}
+  </div>
+  {% if action_items %}
+  <div class="space-y-2">
+    {% for item in action_items %}
+    <a href="{{ item.url }}" class="flex items-center gap-3 p-2.5 rounded-lg hover:bg-gray-50 transition group">
+      <span class="text-base">{{ item.icon }}</span>
+      <span class="text-sm text-gray-700 group-hover:text-gray-900 flex-1">{{ item.text }}</span>
+      <svg class="w-4 h-4 text-gray-300 group-hover:text-gray-500 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="flex flex-col items-center justify-center py-8 text-gray-400">
+    <svg class="w-10 h-10 mb-2 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+    <p class="text-sm font-medium text-emerald-600">All clear!</p>
+    <p class="text-xs text-gray-400">No action items right now</p>
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,115 @@
+{% load humanize %}
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+
+  {# -- Consultant Overview -------------------------------------------------- #}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="w-6 h-6 rounded-md bg-teal-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Consultant Status</h2>
+      <a href="{% url 'consultant-list' %}" class="ml-auto text-xs text-indigo-600 hover:text-indigo-800 font-medium">View all &rarr;</a>
+    </div>
+    <div class="space-y-2.5">
+      {% for cs in consultant_stats %}
+      <a href="{% url 'consultant-detail' cs.pk %}" class="flex items-center gap-3 p-2 rounded-lg hover:bg-gray-50 transition group">
+        <div class="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 flex items-center justify-center text-white text-xs font-bold shrink-0">
+          {{ cs.user.first_name|first|default:"?" }}{{ cs.user.last_name|first|default:"" }}
+        </div>
+        <div class="flex-1 min-w-0">
+          <p class="text-sm font-semibold text-gray-800 truncate group-hover:text-indigo-700">{{ cs.user.get_full_name|default:cs.user.username }}</p>
+          <p class="text-[11px] text-gray-400">
+            {% if cs.status == 'ACTIVE' %}<span class="text-emerald-600">Active</span>
+            {% elif cs.status == 'BENCH' %}<span class="text-amber-600">Bench</span>
+            {% elif cs.status == 'PLACED' %}<span class="text-blue-600">Placed</span>
+            {% else %}<span class="text-gray-400">{{ cs.status }}</span>{% endif %}
+            &middot; {{ cs.total_apps }} apps
+          </p>
+        </div>
+        <div class="flex gap-1.5 text-[10px]">
+          {% if cs.interview %}<span class="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 font-bold">{{ cs.interview }} int</span>{% endif %}
+          {% if cs.offer %}<span class="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">{{ cs.offer }} offer</span>{% endif %}
+        </div>
+      </a>
+      {% empty %}
+      <p class="text-sm text-gray-400 text-center py-4">No consultants yet</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# -- Recent Ops Runs ------------------------------------------------------ #}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="w-6 h-6 rounded-md bg-gray-100 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Recent Ops Runs</h2>
+      <a href="{% url 'ops-center' %}" class="ml-auto text-xs text-indigo-600 hover:text-indigo-800 font-medium">All runs &rarr;</a>
+    </div>
+    <div class="space-y-1.5">
+      {% for run in recent_ops_runs %}
+      <a href="{% url 'ops-center' %}" class="flex items-center gap-2.5 px-2.5 py-2 rounded-lg hover:bg-gray-50 text-xs transition group">
+        {% if run.status == 'SUCCESS' %}
+        <span class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
+        {% elif run.status == 'FAILED' %}
+        <span class="w-2 h-2 rounded-full bg-red-400 shrink-0"></span>
+        {% elif run.status == 'RUNNING' %}
+        <span class="w-2 h-2 rounded-full bg-blue-400 animate-pulse shrink-0"></span>
+        {% else %}
+        <span class="w-2 h-2 rounded-full bg-gray-300 shrink-0"></span>
+        {% endif %}
+        <span class="font-mono text-gray-500">#{{ run.id }}</span>
+        <span class="font-semibold text-gray-700 truncate flex-1 group-hover:text-indigo-700">{{ run.operation }}</span>
+        {% if run.progress_current and run.progress_total %}
+        <span class="text-gray-400">{{ run.progress_current }}/{{ run.progress_total }}</span>
+        {% endif %}
+        <span class="text-gray-400 whitespace-nowrap">{{ run.created_at|timesince }} ago</span>
+      </a>
+      {% empty %}
+      <p class="text-sm text-gray-400 text-center py-4">No ops runs yet</p>
+      {% endfor %}
+    </div>
+  </div>
+
+  {# -- Resume Pipeline + LLM Usage ----------------------------------------- #}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="w-6 h-6 rounded-md bg-orange-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Resume Pipeline</h2>
+      <a href="{% url 'resume-generate' %}" class="ml-auto text-xs text-indigo-600 hover:text-indigo-800 font-medium">Generate &rarr;</a>
+    </div>
+
+    <a href="{% url 'resume-generate' %}" class="block">
+      <div class="grid grid-cols-2 gap-2 mb-4">
+        <div class="text-center p-2.5 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
+          <p class="text-lg font-extrabold text-gray-800">{{ resume_total }}</p>
+          <p class="text-[10px] font-semibold text-gray-400 uppercase">Total Drafts</p>
+        </div>
+        <div class="text-center p-2.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 transition">
+          <p class="text-lg font-extrabold text-emerald-700">{{ resume_avg_ats|floatformat:0 }}%</p>
+          <p class="text-[10px] font-semibold text-emerald-500 uppercase">Avg ATS</p>
+        </div>
+      </div>
+    </a>
+
+    <div class="space-y-1.5 mb-5">
+      {% if resume_stats.DRAFT %}<a href="{% url 'resume-generate' %}" class="flex items-center gap-2 text-xs hover:bg-gray-50 rounded p-1 transition"><span class="w-2 h-2 rounded-full bg-blue-400"></span><span class="text-gray-600 flex-1">Draft</span><span class="font-bold text-gray-800">{{ resume_stats.DRAFT }}</span></a>{% endif %}
+      {% if resume_stats.REVIEW %}<a href="{% url 'resume-generate' %}" class="flex items-center gap-2 text-xs hover:bg-gray-50 rounded p-1 transition"><span class="w-2 h-2 rounded-full bg-amber-400"></span><span class="text-gray-600 flex-1">Review</span><span class="font-bold text-gray-800">{{ resume_stats.REVIEW }}</span></a>{% endif %}
+      {% if resume_stats.FINAL %}<a href="{% url 'resume-generate' %}" class="flex items-center gap-2 text-xs hover:bg-gray-50 rounded p-1 transition"><span class="w-2 h-2 rounded-full bg-emerald-400"></span><span class="text-gray-600 flex-1">Final</span><span class="font-bold text-gray-800">{{ resume_stats.FINAL }}</span></a>{% endif %}
+      {% if resume_stats.ERROR %}<a href="{% url 'resume-generate' %}" class="flex items-center gap-2 text-xs hover:bg-gray-50 rounded p-1 transition"><span class="w-2 h-2 rounded-full bg-red-400"></span><span class="text-gray-600 flex-1">Error</span><span class="font-bold text-gray-800">{{ resume_stats.ERROR }}</span></a>{% endif %}
+      {% if resume_stats.PROCESSING %}<div class="flex items-center gap-2 text-xs p-1"><span class="w-2 h-2 rounded-full bg-gray-300 animate-pulse"></span><span class="text-gray-600 flex-1">Processing</span><span class="font-bold text-gray-800">{{ resume_stats.PROCESSING }}</span></div>{% endif %}
+    </div>
+
+    {# LLM Usage (this month) #}
+    <a href="{% url 'llm-logs' %}" class="block border-t border-gray-100 pt-3 hover:bg-gray-50 -mx-2 px-2 rounded transition">
+      <p class="text-[10px] font-semibold text-gray-400 uppercase tracking-wider mb-2">LLM Usage (this month)</p>
+      <div class="flex items-center gap-4 text-xs text-gray-600">
+        <span><strong class="text-gray-900">{{ llm_usage.calls }}</strong> calls</span>
+        <span><strong class="text-gray-900">{{ llm_usage.tokens|intcomma }}</strong> tokens</span>
+        <span><strong class="text-gray-900">${{ llm_usage.cost|floatformat:2 }}</strong> cost</span>
+      </div>
+    </a>
+  </div>
+</div>

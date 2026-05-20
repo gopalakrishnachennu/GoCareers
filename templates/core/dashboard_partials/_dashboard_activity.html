@@ -1,0 +1,91 @@
+{% load humanize %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+  {# -- Submission Funnel ---------------------------------------------------- #}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="w-6 h-6 rounded-md bg-indigo-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Submission Funnel</h2>
+      <a href="{% url 'submission-kanban' %}" class="ml-auto text-xs text-indigo-600 hover:text-indigo-800 font-medium">Kanban &rarr;</a>
+    </div>
+    {% if funnel_global %}
+    <div class="space-y-3">
+      {% with f=funnel_global %}
+      <a href="{% url 'resume-generate' %}" class="flex items-center gap-3 group">
+        <span class="w-20 text-xs text-gray-500 group-hover:text-gray-700">Resumes</span>
+        <div class="flex-1 h-6 rounded-full bg-gray-100 overflow-hidden"><div class="h-full rounded-full bg-gray-400" style="width:100%"></div></div>
+        <span class="text-sm font-bold text-gray-800 w-12 text-right">{{ f.resumes }}</span>
+      </a>
+      <a href="{% url 'submission-list' %}?status=APPLIED" class="flex items-center gap-3 group">
+        <span class="w-20 text-xs text-gray-500 group-hover:text-gray-700">Submitted</span>
+        <div class="flex-1 h-6 rounded-full bg-blue-50 overflow-hidden"><div class="h-full rounded-full bg-blue-400" style="width:{% widthratio f.submitted f.resumes 100 %}%"></div></div>
+        <span class="text-sm font-bold text-gray-800 w-12 text-right">{{ f.submitted }}</span>
+      </a>
+      <a href="{% url 'submission-list' %}?status=INTERVIEW" class="flex items-center gap-3 group">
+        <span class="w-20 text-xs text-gray-500 group-hover:text-gray-700">Interview</span>
+        <div class="flex-1 h-6 rounded-full bg-violet-50 overflow-hidden"><div class="h-full rounded-full bg-violet-400" style="width:{% widthratio f.interview f.resumes 100 %}%"></div></div>
+        <span class="text-sm font-bold text-gray-800 w-12 text-right">{{ f.interview }}</span>
+      </a>
+      <a href="{% url 'submission-list' %}?status=OFFER" class="flex items-center gap-3 group">
+        <span class="w-20 text-xs text-gray-500 group-hover:text-gray-700">Hired</span>
+        <div class="flex-1 h-6 rounded-full bg-emerald-50 overflow-hidden"><div class="h-full rounded-full bg-emerald-400" style="width:{% widthratio f.hired f.resumes 100 %}%"></div></div>
+        <span class="text-sm font-bold text-gray-800 w-12 text-right">{{ f.hired }}</span>
+      </a>
+      {% endwith %}
+    </div>
+    {% else %}
+    <p class="text-sm text-gray-400 text-center py-6">No submission data yet</p>
+    {% endif %}
+  </div>
+
+  {# -- Recent Activity Feed ------------------------------------------------- #}
+  <div class="bg-white rounded-xl border border-gray-200 p-5">
+    <div class="flex items-center gap-2 mb-4">
+      <span class="w-6 h-6 rounded-md bg-sky-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-sky-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Recent Activity</h2>
+    </div>
+    <div class="space-y-3">
+      {# Recent Jobs #}
+      {% for job in recent_jobs %}
+      <a href="{% url 'job-detail' job.pk %}" class="flex items-start gap-3 text-xs group hover:bg-gray-50 rounded-lg p-1 -mx-1 transition">
+        <span class="w-6 h-6 rounded-md bg-blue-50 flex items-center justify-center shrink-0 mt-0.5">
+          <svg class="w-3 h-3 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+        </span>
+        <div class="flex-1 min-w-0">
+          <p class="text-gray-800 font-medium truncate group-hover:text-indigo-700">{{ job.title }}</p>
+          <p class="text-gray-400">{{ job.company }} &middot; {{ job.created_at|timesince }} ago</p>
+        </div>
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold
+          {% if job.status == 'POOL' %}bg-indigo-50 text-indigo-700
+          {% elif job.status == 'OPEN' %}bg-emerald-50 text-emerald-700
+          {% else %}bg-gray-100 text-gray-500{% endif %}">{{ job.status }}</span>
+      </a>
+      {% endfor %}
+
+      {% if recent_applications %}
+      <div class="border-t border-gray-100 pt-2"></div>
+      {% for app in recent_applications %}
+      <a href="{% url 'submission-detail' app.pk %}" class="flex items-start gap-3 text-xs group hover:bg-gray-50 rounded-lg p-1 -mx-1 transition">
+        <span class="w-6 h-6 rounded-md bg-orange-50 flex items-center justify-center shrink-0 mt-0.5">
+          <svg class="w-3 h-3 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        </span>
+        <div class="flex-1 min-w-0">
+          <p class="text-gray-800 font-medium truncate group-hover:text-indigo-700">{{ app.consultant.user.get_full_name|default:"--" }} &rarr; {{ app.job.title }}</p>
+          <p class="text-gray-400">{{ app.created_at|timesince }} ago</p>
+        </div>
+        <span class="px-1.5 py-0.5 rounded text-[10px] font-bold
+          {% if app.status == 'APPLIED' %}bg-blue-50 text-blue-700
+          {% elif app.status == 'INTERVIEW' %}bg-violet-50 text-violet-700
+          {% elif app.status == 'OFFER' %}bg-emerald-50 text-emerald-700
+          {% elif app.status == 'REJECTED' %}bg-red-50 text-red-700
+          {% else %}bg-gray-100 text-gray-500{% endif %}">{{ app.get_status_display }}</span>
+      </a>
+      {% endfor %}
+      {% endif %}
+    </div>
+  </div>
+</div>

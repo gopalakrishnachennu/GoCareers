@@ -631,13 +631,83 @@ class MasterPromptActivateView(AdminRequiredMixin, View):
 class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
     template_name = 'core/admin_dashboard.html'
 
+    # Section -> partial template mapping for HTMX polling
+    SECTION_TEMPLATES = {
+        'kpis':           'core/dashboard_partials/_dashboard_kpis.html',
+        'actions':        'core/dashboard_partials/_dashboard_actions.html',
+        'harvest':        'core/dashboard_partials/_dashboard_harvest.html',
+        'mid':            'core/dashboard_partials/_dashboard_consultants_ops.html',
+        'activity':       'core/dashboard_partials/_dashboard_activity.html',
+        'tables':         'core/dashboard_partials/_dashboard_tables.html',
+    }
+
     def test_func(self):
         return self.request.user.is_superuser or self.request.user.role == 'ADMIN'
 
+    def get_template_names(self):
+        if self.request.headers.get('HX-Request'):
+            section = self.request.GET.get('section', '')
+            if section in self.SECTION_TEMPLATES:
+                return [self.SECTION_TEMPLATES[section]]
+        return [self.template_name]
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        section = self.request.GET.get('section', '') if self.request.headers.get('HX-Request') else ''
 
-        # Security warnings for admin
+        if section == 'kpis':
+            context.update(self._get_kpi_context())
+        elif section == 'actions':
+            # Action items depend on harvest + kpi data
+            context.update(self._get_kpi_context())
+            context.update(self._get_harvest_context())
+            context.update(self._get_resume_context())
+            context.update(self._get_interview_context())
+            context.update(self._get_action_items_context(context))
+        elif section == 'harvest':
+            context.update(self._get_harvest_context())
+        elif section == 'mid':
+            context.update(self._get_consultant_status_context())
+            context.update(self._get_ops_runs_context())
+            context.update(self._get_resume_context())
+            context.update(self._get_llm_usage_context())
+        elif section == 'activity':
+            context.update(get_submission_funnel_metrics())
+            context.update(self._get_recent_activity_context())
+        elif section == 'tables':
+            context.update(self._get_consultant_roi_data())
+            context.update(self._get_employee_stats_context())
+            context.update(self._get_interview_context())
+            context.update(self._get_job_breakdown_context())
+        else:
+            # Full page load -- all context
+            context.update(self._get_warnings_context())
+            context.update(self._get_kpi_context())
+            context.update(self._get_harvest_context())
+            context.update(self._get_consultant_status_context())
+            context.update(self._get_ops_runs_context())
+            context.update(self._get_resume_context())
+            context.update(self._get_interview_context())
+            context.update(self._get_job_breakdown_context())
+            context.update(self._get_company_context())
+            context.update(self._get_llm_usage_context())
+            context.update(self._get_recent_activity_context())
+            context.update(self._get_employee_stats_context())
+            context.update(self._get_consultant_stats_context())
+            context.update(get_submission_funnel_metrics())
+            context.update(get_consultant_performance_metrics())
+            context.update(get_time_to_hire_metrics())
+            context.update(get_employee_leaderboard_metrics())
+            context.update(self._get_market_intelligence_data())
+            context.update(self._get_consultant_roi_data())
+            context.update(self._get_submission_quality_data())
+            context.update(self._get_action_items_context(context))
+
+        return context
+
+    # -- Section context builders -----------------------------------------------
+
+    def _get_warnings_context(self):
         warnings = []
         if not settings.LLM_ENCRYPTION_KEY:
             warnings.append(
@@ -649,44 +719,189 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
         if not decrypt_value(llm_config.encrypted_api_key):
             warnings.append(
                 "No OpenAI API key is configured. Resume generation will not work. "
-                "Go to Settings \u2192 LLM Config to set one."
+                "Go to Settings → LLM Config to set one."
             )
-        context['admin_warnings'] = warnings
+        return {'admin_warnings': warnings}
 
-        # Top-level KPIs
-        context['total_jobs'] = Job.objects.count()
-        context['active_jobs'] = Job.objects.filter(status=Job.Status.OPEN).count()
-        context['total_consultants'] = User.objects.filter(role=User.Role.CONSULTANT).count()
-        context['total_employees'] = User.objects.filter(role=User.Role.EMPLOYEE).count()
-        context['total_applications'] = ApplicationSubmission.objects.count()
-        context['pending_applications_count'] = ApplicationSubmission.objects.filter(
+    def _get_kpi_context(self):
+        ctx = {}
+        ctx['total_jobs'] = Job.objects.count()
+        ctx['active_jobs'] = Job.objects.filter(status=Job.Status.OPEN).count()
+        ctx['total_consultants'] = User.objects.filter(role=User.Role.CONSULTANT).count()
+        ctx['total_employees'] = User.objects.filter(role=User.Role.EMPLOYEE).count()
+        ctx['total_applications'] = ApplicationSubmission.objects.count()
+        ctx['pending_applications_count'] = ApplicationSubmission.objects.filter(
             status=ApplicationSubmission.Status.APPLIED
         ).count()
-
-        # Phase 1: Placement & Revenue KPIs
-        context['total_placements'] = Placement.objects.count()
-        context['active_placements'] = Placement.objects.filter(
+        ctx['total_placements'] = Placement.objects.count()
+        ctx['active_placements'] = Placement.objects.filter(
             status=Placement.PlacementStatus.ACTIVE
         ).count()
-        context['placed_count'] = ApplicationSubmission.objects.filter(
+        ctx['placed_count'] = ApplicationSubmission.objects.filter(
             status=ApplicationSubmission.Status.PLACED
         ).count()
-        pending_timesheets = Timesheet.objects.filter(
+        ctx['pending_timesheets'] = Timesheet.objects.filter(
             status=Timesheet.TimesheetStatus.SUBMITTED
         ).count()
-        context['pending_timesheets'] = pending_timesheets
-        pending_commissions_amount = Commission.objects.filter(
+        ctx['pending_commissions_amount'] = Commission.objects.filter(
             status=Commission.CommissionStatus.PENDING
         ).aggregate(total=Sum('commission_amount'))['total'] or 0
-        context['pending_commissions_amount'] = pending_commissions_amount
+        ctx['job_pool'] = Job.objects.filter(status='POOL', is_archived=False).count()
+        try:
+            from companies.models import Company
+            ctx['company_total'] = Company.objects.count()
+            ctx['company_with_platform'] = Company.objects.filter(
+                platform_labels__isnull=False
+            ).distinct().count()
+        except Exception:
+            ctx['company_total'] = 0
+            ctx['company_with_platform'] = 0
+        ctx['consultant_status'] = {
+            s.value: ConsultantProfile.objects.filter(status=s).count()
+            for s in ConsultantProfile.Status
+        }
+        ctx['rawjob_total'] = 0
+        try:
+            from harvest.models import RawJob
+            ctx['rawjob_total'] = RawJob.objects.count()
+            ctx['rawjob_sync'] = {
+                s.value: RawJob.objects.filter(sync_status=s).count()
+                for s in RawJob.SyncStatus
+            }
+        except Exception:
+            ctx['rawjob_sync'] = {}
+        return ctx
 
-        # Recent activity (Overview tab)
-        context['recent_jobs'] = Job.objects.select_related('posted_by').order_by('-created_at')[:5]
-        context['recent_applications'] = ApplicationSubmission.objects.select_related(
-            'job', 'consultant__user'
-        ).order_by('-created_at')[:5]
+    def _get_harvest_context(self):
+        try:
+            from harvest.models import RawJob
+            return {
+                'rawjob_total': RawJob.objects.count(),
+                'rawjob_sync': {
+                    s.value: RawJob.objects.filter(sync_status=s).count()
+                    for s in RawJob.SyncStatus
+                },
+                'rawjob_scope': {
+                    s.value: RawJob.objects.filter(scope_status=s).count()
+                    for s in RawJob.ScopeStatus
+                },
+                'rawjob_with_jd': RawJob.objects.filter(has_description=True).count(),
+                'rawjob_missing_jd': RawJob.objects.filter(has_description=False).count(),
+            }
+        except Exception:
+            return {
+                'rawjob_total': 0, 'rawjob_sync': {}, 'rawjob_scope': {},
+                'rawjob_with_jd': 0, 'rawjob_missing_jd': 0,
+            }
 
-        # Employee lens: per-employee micro stats (jobs posted, open, apps received, pending)
+    def _get_ops_runs_context(self):
+        try:
+            from harvest.models import HarvestOpsRun
+            return {
+                'recent_ops_runs': list(
+                    HarvestOpsRun.objects.order_by("-created_at")
+                    .values("id", "operation", "status", "created_at", "finished_at",
+                            "progress_current", "progress_total", "progress_message")[:8]
+                ),
+            }
+        except Exception:
+            return {'recent_ops_runs': []}
+
+    def _get_consultant_status_context(self):
+        consultants = ConsultantProfile.objects.select_related('user').annotate(
+            total_apps=Count('submissions'),
+            in_progress=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.IN_PROGRESS)),
+            applied=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.APPLIED)),
+            interview=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.INTERVIEW)),
+            offer=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.OFFER)),
+            rejected=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.REJECTED)),
+        ).order_by('user__first_name', 'user__last_name')
+        return {
+            'consultant_stats': list(consultants),
+            'consultant_status': {
+                s.value: ConsultantProfile.objects.filter(status=s).count()
+                for s in ConsultantProfile.Status
+            },
+        }
+
+    def _get_consultant_stats_context(self):
+        return self._get_consultant_status_context()
+
+    def _get_resume_context(self):
+        try:
+            from resumes.models import ResumeDraft
+            return {
+                'resume_stats': {
+                    s.value: ResumeDraft.objects.filter(status=s).count()
+                    for s in ResumeDraft.Status
+                },
+                'resume_total': ResumeDraft.objects.count(),
+                'resume_avg_ats': ResumeDraft.objects.filter(
+                    status__in=[ResumeDraft.Status.DRAFT, ResumeDraft.Status.FINAL],
+                    ats_score__gt=0,
+                ).aggregate(avg=Avg('ats_score'))['avg'] or 0,
+            }
+        except Exception:
+            return {'resume_stats': {}, 'resume_total': 0, 'resume_avg_ats': 0}
+
+    def _get_interview_context(self):
+        try:
+            from interviews_app.models import Interview
+            return {
+                'interview_stats': {
+                    'scheduled': Interview.objects.filter(status='SCHEDULED').count(),
+                    'completed': Interview.objects.filter(status='COMPLETED').count(),
+                    'total': Interview.objects.count(),
+                },
+            }
+        except Exception:
+            return {'interview_stats': {'scheduled': 0, 'completed': 0, 'total': 0}}
+
+    def _get_job_breakdown_context(self):
+        return {
+            'total_jobs': Job.objects.count(),
+            'job_pool': Job.objects.filter(status='POOL', is_archived=False).count(),
+            'job_open': Job.objects.filter(status='OPEN', is_archived=False).count(),
+            'job_closed': Job.objects.filter(status='CLOSED').count(),
+            'job_draft': Job.objects.filter(status='DRAFT').count(),
+        }
+
+    def _get_company_context(self):
+        try:
+            from companies.models import Company
+            return {
+                'company_total': Company.objects.count(),
+                'company_with_platform': Company.objects.filter(
+                    platform_labels__isnull=False
+                ).distinct().count(),
+            }
+        except Exception:
+            return {'company_total': 0, 'company_with_platform': 0}
+
+    def _get_llm_usage_context(self):
+        try:
+            month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            from core.models import LLMUsageLog
+            llm_qs = LLMUsageLog.objects.filter(created_at__gte=month_start)
+            return {
+                'llm_usage': {
+                    'calls': llm_qs.count(),
+                    'tokens': llm_qs.aggregate(t=Sum('total_tokens'))['t'] or 0,
+                    'cost': float(llm_qs.aggregate(c=Sum('cost_total'))['c'] or 0),
+                },
+            }
+        except Exception:
+            return {'llm_usage': {'calls': 0, 'tokens': 0, 'cost': 0}}
+
+    def _get_recent_activity_context(self):
+        return {
+            'recent_jobs': Job.objects.select_related('posted_by').order_by('-created_at')[:5],
+            'recent_applications': ApplicationSubmission.objects.select_related(
+                'job', 'consultant__user'
+            ).order_by('-created_at')[:5],
+        }
+
+    def _get_employee_stats_context(self):
         employees = User.objects.filter(role=User.Role.EMPLOYEE).select_related(
             'employee_profile', 'employee_profile__department'
         ).annotate(
@@ -700,191 +915,68 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             pending=Count('id', filter=Q(status=ApplicationSubmission.Status.APPLIED)),
         )
         app_by_employee = {r['job__posted_by']: r for r in app_counts}
-        context['employee_stats'] = [
-            {
-                'user': e,
-                'jobs_posted': e.jobs_posted,
-                'open_jobs': e.open_jobs,
-                'apps_received': app_by_employee.get(e.pk, {}).get('apps_received', 0),
-                'pending': app_by_employee.get(e.pk, {}).get('pending', 0),
-            }
-            for e in employees
-        ]
-
-        # Consultant lens: per-consultant micro stats (applications by stage)
-        consultants = ConsultantProfile.objects.select_related('user').annotate(
-            total_apps=Count('submissions'),
-            in_progress=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.IN_PROGRESS)),
-            applied=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.APPLIED)),
-            interview=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.INTERVIEW)),
-            offer=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.OFFER)),
-            rejected=Count('submissions', filter=Q(submissions__status=ApplicationSubmission.Status.REJECTED)),
-        ).order_by('user__first_name', 'user__last_name')
-        context['consultant_stats'] = list(consultants)
-
-        # --- Analytics That Matter (admin-only) ---
-        context.update(get_submission_funnel_metrics())
-        context.update(get_consultant_performance_metrics())
-        context.update(get_time_to_hire_metrics())
-        context.update(get_employee_leaderboard_metrics())
-        context.update(self._get_market_intelligence_data())
-        context.update(self._get_consultant_roi_data())
-        context.update(self._get_submission_quality_data())
-
-        # ── Harvest Pipeline Stats ───────────────────────────────────────
-        try:
-            from harvest.models import RawJob, HarvestOpsRun
-            context['rawjob_total'] = RawJob.objects.count()
-            context['rawjob_sync'] = {
-                s.value: RawJob.objects.filter(sync_status=s).count()
-                for s in RawJob.SyncStatus
-            }
-            context['rawjob_scope'] = {
-                s.value: RawJob.objects.filter(scope_status=s).count()
-                for s in RawJob.ScopeStatus
-            }
-            context['rawjob_with_jd'] = RawJob.objects.filter(has_description=True).count()
-            context['rawjob_missing_jd'] = RawJob.objects.filter(has_description=False).count()
-            context['recent_ops_runs'] = list(
-                HarvestOpsRun.objects.order_by("-created_at")
-                .values("id", "operation", "status", "created_at", "finished_at",
-                        "progress_current", "progress_total", "progress_message")[:8]
-            )
-        except Exception:
-            context['rawjob_total'] = 0
-            context['rawjob_sync'] = {}
-            context['rawjob_scope'] = {}
-            context['recent_ops_runs'] = []
-
-        # ── Consultant Status Breakdown ──────────────────────────────────
-        context['consultant_status'] = {
-            s.value: ConsultantProfile.objects.filter(status=s).count()
-            for s in ConsultantProfile.Status
+        return {
+            'employee_stats': [
+                {
+                    'user': e,
+                    'jobs_posted': e.jobs_posted,
+                    'open_jobs': e.open_jobs,
+                    'apps_received': app_by_employee.get(e.pk, {}).get('apps_received', 0),
+                    'pending': app_by_employee.get(e.pk, {}).get('pending', 0),
+                }
+                for e in employees
+            ],
         }
 
-        # ── Resume Pipeline Stats ────────────────────────────────────────
-        try:
-            from resumes.models import ResumeDraft
-            context['resume_stats'] = {
-                s.value: ResumeDraft.objects.filter(status=s).count()
-                for s in ResumeDraft.Status
-            }
-            context['resume_total'] = ResumeDraft.objects.count()
-            context['resume_avg_ats'] = ResumeDraft.objects.filter(
-                status__in=[ResumeDraft.Status.DRAFT, ResumeDraft.Status.FINAL],
-                ats_score__gt=0,
-            ).aggregate(avg=Avg('ats_score'))['avg'] or 0
-        except Exception:
-            context['resume_stats'] = {}
-            context['resume_total'] = 0
-            context['resume_avg_ats'] = 0
-
-        # ── Interview Stats ──────────────────────────────────────────────
-        try:
-            from interviews_app.models import Interview
-            context['interview_stats'] = {
-                'scheduled': Interview.objects.filter(status='SCHEDULED').count(),
-                'completed': Interview.objects.filter(status='COMPLETED').count(),
-                'total': Interview.objects.count(),
-            }
-        except Exception:
-            context['interview_stats'] = {'scheduled': 0, 'completed': 0, 'total': 0}
-
-        # ── Job Pool Breakdown ───────────────────────────────────────────
-        context['job_pool'] = Job.objects.filter(status='POOL', is_archived=False).count()
-        context['job_open'] = Job.objects.filter(status='OPEN', is_archived=False).count()
-        context['job_closed'] = Job.objects.filter(status='CLOSED').count()
-        context['job_draft'] = Job.objects.filter(status='DRAFT').count()
-
-        # ── Company Stats ────────────────────────────────────────────────
-        try:
-            from companies.models import Company
-            context['company_total'] = Company.objects.count()
-            context['company_with_platform'] = Company.objects.filter(
-                platform_labels__isnull=False
-            ).distinct().count()
-        except Exception:
-            context['company_total'] = 0
-            context['company_with_platform'] = 0
-
-        # ── Action Items (things that need attention NOW) ────────────────
+    def _get_action_items_context(self, context):
         action_items = []
-        # Unknown country jobs
         uc_count = context.get('rawjob_scope', {}).get('REVIEW_UNKNOWN_COUNTRY', 0)
         if uc_count:
             action_items.append({
-                'type': 'warning',
-                'icon': '🌍',
+                'type': 'warning', 'icon': '\U0001f30d',
                 'text': f'{uc_count} jobs need country review',
                 'url': '/raw-jobs/unknown-country/',
             })
-        # Failed sync
         failed_sync = context.get('rawjob_sync', {}).get('FAILED', 0)
         if failed_sync:
             action_items.append({
-                'type': 'error',
-                'icon': '❌',
+                'type': 'error', 'icon': '❌',
                 'text': f'{failed_sync} RawJobs failed to sync',
                 'url': '/raw-jobs/?sync_status=FAILED',
             })
-        # Pending applications
         if context.get('pending_applications_count', 0):
             action_items.append({
-                'type': 'info',
-                'icon': '📋',
+                'type': 'info', 'icon': '\U0001f4cb',
                 'text': f'{context["pending_applications_count"]} applications pending review',
                 'url': '/submissions/?status=APPLIED',
             })
-        # Pending timesheets
         if context.get('pending_timesheets', 0):
             action_items.append({
-                'type': 'info',
-                'icon': '⏱️',
+                'type': 'info', 'icon': '⏱️',
                 'text': f'{context["pending_timesheets"]} timesheets awaiting approval',
                 'url': '/submissions/timesheets/',
             })
-        # Scheduled interviews
         if context.get('interview_stats', {}).get('scheduled', 0):
             action_items.append({
-                'type': 'info',
-                'icon': '🎯',
+                'type': 'info', 'icon': '\U0001f3af',
                 'text': f'{context["interview_stats"]["scheduled"]} interviews scheduled',
                 'url': '/interviews/',
             })
-        # Unscoped rawjobs
         unscoped = context.get('rawjob_scope', {}).get('UNSCOPED', 0)
         if unscoped:
             action_items.append({
-                'type': 'warning',
-                'icon': '🔍',
+                'type': 'warning', 'icon': '\U0001f50d',
                 'text': f'{unscoped:,} unscoped raw jobs need evaluation',
                 'url': '/raw-jobs/?scope_status=UNSCOPED',
             })
-        # Resume errors
         resume_errors = context.get('resume_stats', {}).get('ERROR', 0)
         if resume_errors:
             action_items.append({
-                'type': 'error',
-                'icon': '📄',
+                'type': 'error', 'icon': '\U0001f4c4',
                 'text': f'{resume_errors} resume drafts failed generation',
                 'url': '/resumes/',
             })
-        context['action_items'] = action_items
-
-        # ── LLM Usage (current month) ───────────────────────────────────
-        try:
-            month_start = timezone.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            from core.models import LLMUsageLog
-            llm_qs = LLMUsageLog.objects.filter(created_at__gte=month_start)
-            context['llm_usage'] = {
-                'calls': llm_qs.count(),
-                'tokens': llm_qs.aggregate(t=Sum('total_tokens'))['t'] or 0,
-                'cost': float(llm_qs.aggregate(c=Sum('cost_total'))['c'] or 0),
-            }
-        except Exception:
-            context['llm_usage'] = {'calls': 0, 'tokens': 0, 'cost': 0}
-
-        return context
+        return {'action_items': action_items}
 
     def _get_market_intelligence_data(self):
         """Market Intelligence: skills/roles in demand, top companies, salary by role."""
