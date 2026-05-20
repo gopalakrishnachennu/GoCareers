@@ -588,18 +588,21 @@ class CompanyLabelListView(SuperuserRequiredMixin, ListView):
         ).filter(company_count__gt=0).order_by("-company_count")
         from companies.models import Company
 
-        ctx["stat_labeled"] = CompanyPlatformLabel.objects.exclude(
-            detection_method="UNDETECTED"
-        ).count()
-        ctx["stat_undetected"] = CompanyPlatformLabel.objects.filter(
-            detection_method="UNDETECTED"
-        ).count()
-        ctx["stat_unlabeled"] = Company.objects.exclude(
-            platform_label__isnull=False
-        ).count()
-        ctx["stat_verified"] = CompanyPlatformLabel.objects.filter(is_verified=True).count()
-        ctx["stat_live"] = CompanyPlatformLabel.objects.filter(portal_alive=True).count()
-        ctx["stat_down"] = CompanyPlatformLabel.objects.filter(portal_alive=False).count()
+        # Consolidated: 1 aggregate instead of 6 separate COUNT queries
+        label_agg = CompanyPlatformLabel.objects.aggregate(
+            labeled=Count("id", filter=~Q(detection_method="UNDETECTED")),
+            undetected=Count("id", filter=Q(detection_method="UNDETECTED")),
+            verified=Count("id", filter=Q(is_verified=True)),
+            live=Count("id", filter=Q(portal_alive=True)),
+            down=Count("id", filter=Q(portal_alive=False)),
+            total=Count("id"),
+        )
+        ctx["stat_labeled"] = label_agg["labeled"]
+        ctx["stat_undetected"] = label_agg["undetected"]
+        ctx["stat_unlabeled"] = Company.objects.count() - label_agg["total"]
+        ctx["stat_verified"] = label_agg["verified"]
+        ctx["stat_live"] = label_agg["live"]
+        ctx["stat_down"] = label_agg["down"]
         ctx["confidence_choices"] = CompanyPlatformLabel.Confidence.choices
         ctx["method_choices"] = CompanyPlatformLabel.DetectionMethod.choices
         ctx["selected_platform"] = self.request.GET.get("platform", "")

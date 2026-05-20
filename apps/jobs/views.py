@@ -874,7 +874,9 @@ class ArchivedJobsView(LoginRequiredMixin, EmployeeRequiredMixin, ListView):
     paginate_by = 25
 
     def get_queryset(self):
-        return Job.objects.filter(is_archived=True).order_by('-archived_at')
+        return Job.objects.filter(is_archived=True).select_related(
+            'posted_by', 'archived_by'
+        ).order_by('-archived_at')
 
 
 # ─── Job Pool / Validation Pipeline ──────────────────────────────────────────

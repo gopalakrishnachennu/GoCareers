@@ -444,27 +444,34 @@ class LLMConfigView(AdminRequiredMixin, View):
         start_week = now - timedelta(days=7)
         start_day = now - timedelta(days=1)
 
-        logs = LLMUsageLog.objects.all()
-        total_calls = logs.count()
-        success_calls = logs.filter(success=True).count()
-        failed_calls = logs.filter(success=False).count()
-        total_tokens = logs.aggregate(total=Sum('total_tokens'))['total'] or 0
-        total_cost = logs.aggregate(total=Sum('cost_total'))['total'] or 0
-        total_latency = logs.aggregate(total=Sum('latency_ms'))['total'] or 0
+        # Single aggregate instead of 6 separate queries
+        agg = LLMUsageLog.objects.aggregate(
+            total_calls=Count('id'),
+            success_calls=Count('id', filter=Q(success=True)),
+            failed_calls=Count('id', filter=Q(success=False)),
+            total_tokens=Sum('total_tokens'),
+            total_cost=Sum('cost_total'),
+            total_latency=Sum('latency_ms'),
+            calls_today=Count('id', filter=Q(created_at__gte=start_day)),
+            calls_week=Count('id', filter=Q(created_at__gte=start_week)),
+            calls_month=Count('id', filter=Q(created_at__gte=start_month)),
+        )
+        total_calls = agg['total_calls'] or 0
+        total_latency = agg['total_latency'] or 0
         avg_latency = int(total_latency / total_calls) if total_calls else 0
 
         return {
             'llm_config': LLMConfig.load(),
             'total_calls': total_calls,
-            'success_calls': success_calls,
-            'failed_calls': failed_calls,
-            'total_tokens': total_tokens,
-            'total_cost': total_cost,
+            'success_calls': agg['success_calls'] or 0,
+            'failed_calls': agg['failed_calls'] or 0,
+            'total_tokens': agg['total_tokens'] or 0,
+            'total_cost': agg['total_cost'] or 0,
             'avg_latency': avg_latency,
-            'calls_today': logs.filter(created_at__gte=start_day).count(),
-            'calls_week': logs.filter(created_at__gte=start_week).count(),
-            'calls_month': logs.filter(created_at__gte=start_month).count(),
-            'recent_logs': logs.order_by('-created_at')[:20],
+            'calls_today': agg['calls_today'] or 0,
+            'calls_week': agg['calls_week'] or 0,
+            'calls_month': agg['calls_month'] or 0,
+            'recent_logs': LLMUsageLog.objects.order_by('-created_at')[:20],
         }
 
 
@@ -1012,32 +1019,42 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
     def _get_market_intelligence_data(self):
         """Market Intelligence: skills/roles in demand, top companies, salary by role."""
         from users.models import MarketingRole
-        jobs = Job.objects.filter(status=Job.Status.OPEN).prefetch_related('marketing_roles')
-        role_counts = {}
-        for job in jobs:
-            for role in job.marketing_roles.all():
-                role_counts[role.name] = role_counts.get(role.name, 0) + 1
-        top_roles = sorted(
-            [{'name': k, 'job_count': v} for k, v in role_counts.items()],
-            key=lambda x: -x['job_count'],
-        )[:15]
+        open_jobs = Job.objects.filter(status=Job.Status.OPEN)
+
+        # Role counts — DB-side aggregation, no Python loops (was N+1)
+        top_roles = list(
+            MarketingRole.objects
+            .filter(jobs__status=Job.Status.OPEN)
+            .values('name')
+            .annotate(job_count=Count('jobs', distinct=True))
+            .order_by('-job_count')[:15]
+        )
+
         company_counts = list(
-            Job.objects.filter(status=Job.Status.OPEN)
-            .values('company')
+            open_jobs.values('company')
             .annotate(job_count=Count('id'))
             .order_by('-job_count')[:15]
         )
+
+        # Salary by role — single query with values, no Python loop over all jobs
+        salary_rows = (
+            open_jobs
+            .filter(marketing_roles__isnull=False, salary_range__isnull=False)
+            .exclude(salary_range='')
+            .values('marketing_roles__name', 'salary_range')
+            .order_by('marketing_roles__name')[:500]
+        )
         salary_by_role = {}
-        for job in Job.objects.filter(status=Job.Status.OPEN).prefetch_related('marketing_roles'):
-            for role in job.marketing_roles.all():
-                name = role.name
+        for row in salary_rows:
+            name = row['marketing_roles__name']
+            sal = row['salary_range'].strip()
+            if sal:
                 if name not in salary_by_role:
                     salary_by_role[name] = []
-                if job.salary_range and job.salary_range.strip():
-                    salary_by_role[name].append(job.salary_range.strip())
-        for k in salary_by_role:
-            salary_by_role[k] = list(dict.fromkeys(salary_by_role[k]))[:5]
-        job_type_qs = Job.objects.filter(status=Job.Status.OPEN).values('job_type').annotate(c=Count('id'))
+                if sal not in salary_by_role[name] and len(salary_by_role[name]) < 5:
+                    salary_by_role[name].append(sal)
+
+        job_type_qs = open_jobs.values('job_type').annotate(c=Count('id'))
         job_type_labels = dict(Job.JobType.choices)
         job_type_counts = [
             (row['job_type'], job_type_labels.get(row['job_type'], row['job_type']), row['c']) for row in job_type_qs

@@ -979,17 +979,19 @@ class PlacementDetailView(_StaffRequiredMixin, DetailView):
         context['commissions'] = placement.commissions.select_related('employee').all()
         context['timesheet_form'] = TimesheetForm()
         context['commission_form'] = CommissionForm()
-        # Calculate total revenue
-        context['total_billed'] = sum(
-            (ts.bill_amount or 0) for ts in placement.timesheets.filter(status=Timesheet.TimesheetStatus.APPROVED)
+        # Calculate total revenue — single DB query instead of 3 Python loops
+        from django.db.models import Sum
+        ts_agg = placement.timesheets.filter(
+            status=Timesheet.TimesheetStatus.APPROVED
+        ).aggregate(
+            total_billed=Sum('bill_amount'),
+            total_paid=Sum('pay_amount'),
+            total_hours=Sum('hours_worked'),
         )
-        context['total_paid'] = sum(
-            (ts.pay_amount or 0) for ts in placement.timesheets.filter(status=Timesheet.TimesheetStatus.APPROVED)
-        )
+        context['total_billed'] = ts_agg['total_billed'] or 0
+        context['total_paid'] = ts_agg['total_paid'] or 0
         context['total_margin'] = context['total_billed'] - context['total_paid']
-        context['total_hours'] = sum(
-            ts.hours_worked for ts in placement.timesheets.filter(status=Timesheet.TimesheetStatus.APPROVED)
-        )
+        context['total_hours'] = ts_agg['total_hours'] or 0
         return context
 
 

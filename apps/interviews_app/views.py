@@ -184,6 +184,7 @@ class InterviewListView(InterviewListAccessMixin, ListView):
     model = Interview
     template_name = 'interviews/interview_list.html'
     context_object_name = 'interviews'
+    paginate_by = 50
 
     def get_queryset(self):
         return _get_interview_list_queryset(self.request)
