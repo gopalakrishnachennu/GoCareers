@@ -1513,13 +1513,12 @@ def _ops_run_summary(result_payload) -> str:
 
 
 def _build_ops_snapshot() -> dict:
-    cache_key = "ops_center_snapshot_v1"
+    cache_key = "ops_center_snapshot_v2"
     cached = cache.get(cache_key)
     if cached:
         return cached
 
     from celery import current_app
-    from celery.result import AsyncResult
     from django_celery_beat.models import PeriodicTask
     from django_celery_results.models import TaskResult
     from companies.models import Company
@@ -1533,7 +1532,7 @@ def _build_ops_snapshot() -> dict:
 
     inspect_errors = []
     try:
-        inspect = current_app.control.inspect(timeout=2)
+        inspect = current_app.control.inspect(timeout=1)
     except Exception as exc:
         inspect = None
         inspect_errors.append(f"Failed to initialize Celery inspect: {exc}")
@@ -1548,10 +1547,17 @@ def _build_ops_snapshot() -> dict:
             inspect_errors.append(f"Celery inspect.{callable_name} failed: {exc}")
             return {}
 
-    active_map = _safe_inspect("active")
-    reserved_map = _safe_inspect("reserved")
-    eta_map = _safe_inspect("scheduled")
-    stats_map = _safe_inspect("stats")
+    # Run all 4 inspect calls in parallel (each is a blocking RPC with 1s timeout)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        f_active = executor.submit(_safe_inspect, "active")
+        f_reserved = executor.submit(_safe_inspect, "reserved")
+        f_eta = executor.submit(_safe_inspect, "scheduled")
+        f_stats = executor.submit(_safe_inspect, "stats")
+    active_map = f_active.result()
+    reserved_map = f_reserved.result()
+    eta_map = f_eta.result()
+    stats_map = f_stats.result()
 
     live_tasks = []
     seen_live_keys = set()
@@ -1570,16 +1576,7 @@ def _build_ops_snapshot() -> dict:
             task_name = t.get("name", "")
             meta = _ops_task_meta(task_name)
             state = "RUNNING"
-            percent, message = 0, "Running..."
-            try:
-                res = AsyncResult(task_id)
-                if res.state == "PROGRESS" and isinstance(res.info, dict):
-                    percent = int(res.info.get("percent") or 0)
-                    message = (res.info.get("message") or "Running...")[:180]
-                elif res.state == "STARTED":
-                    percent = 5
-            except Exception:
-                pass
+            percent, message = 5, "Running..."
             started = t.get("time_start")
             age_seconds = int((timezone.now().timestamp() - float(started))) if started else None
             _append_live_task({
@@ -1677,7 +1674,9 @@ def _build_ops_snapshot() -> dict:
             "schedule": _ops_schedule_label(pt),
         })
 
-    recent_results_qs = TaskResult.objects.order_by("-date_done")[:120]
+    recent_results_qs = TaskResult.objects.only(
+        "task_id", "task_name", "status", "date_done", "date_created"
+    ).order_by("-date_done")[:120]
     recent_results = []
     for tr in recent_results_qs:
         runtime = None
@@ -1909,7 +1908,7 @@ def _build_ops_snapshot() -> dict:
         "ops_runs": ops_runs,
         "trend": trend,
     }
-    cache.set(cache_key, payload, timeout=5)
+    cache.set(cache_key, payload, timeout=30)
     return payload
 
 
