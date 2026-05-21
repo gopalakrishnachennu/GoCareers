@@ -3,7 +3,15 @@
 {% block title %}Dashboard - {{ PLATFORM_CONFIG.site_name|default:"Chennu" }}{% endblock %}
 
 {% block content %}
-<div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5 space-y-5">
+<div class="max-w-[1440px] mx-auto px-4 sm:px-6 py-5 space-y-5"
+     x-data="{
+       sections: JSON.parse(localStorage.getItem('dashboard_sections') || '{}'),
+       toggle(name) {
+         this.sections[name] = !this.isOpen(name);
+         localStorage.setItem('dashboard_sections', JSON.stringify(this.sections));
+       },
+       isOpen(name) { return this.sections[name] !== false; }
+     }">
 
 {# ━━ HEADER + WARNINGS (static, no poll) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
 {% include "core/dashboard_partials/_dashboard_header.html" %}
@@ -18,46 +26,253 @@
 </div>
 
 {# ━━ ACTION ITEMS + HARVEST PIPELINE (poll every 30s) ━━━━━━━━━━━━━━━━━ #}
-<div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-  <div id="dashboard-actions"
-       hx-get="{% url 'admin-dashboard' %}?section=actions"
-       hx-trigger="every 30s"
-       hx-swap="innerHTML"
-       data-dashboard-poll
-       class="lg:col-span-2">
-    {% include "core/dashboard_partials/_dashboard_actions.html" %}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('actions_harvest')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-red-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Action Items & Harvest Pipeline</h2>
+      {% if action_items %}<span class="ml-2 inline-flex items-center justify-center h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold bg-red-500 text-white">{{ action_items|length }}</span>{% endif %}
+    </div>
+    <svg :class="isOpen('actions_harvest') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('actions_harvest')" x-collapse>
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 p-5 pt-0">
+      <div id="dashboard-actions"
+           hx-get="{% url 'admin-dashboard' %}?section=actions"
+           hx-trigger="every 30s"
+           hx-swap="innerHTML"
+           data-dashboard-poll
+           class="lg:col-span-2">
+        {% include "core/dashboard_partials/_dashboard_actions.html" %}
+      </div>
+      <div id="dashboard-harvest"
+           hx-get="{% url 'admin-dashboard' %}?section=harvest"
+           hx-trigger="every 30s"
+           hx-swap="innerHTML"
+           data-dashboard-poll
+           class="lg:col-span-3">
+        {% include "core/dashboard_partials/_dashboard_harvest.html" %}
+      </div>
+    </div>
   </div>
-  <div id="dashboard-harvest"
-       hx-get="{% url 'admin-dashboard' %}?section=harvest"
-       hx-trigger="every 30s"
-       hx-swap="innerHTML"
-       data-dashboard-poll
-       class="lg:col-span-3">
-    {% include "core/dashboard_partials/_dashboard_harvest.html" %}
+</div>
+
+{# ━━ SYSTEM HEALTH MONITOR (new section) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('system_health')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-emerald-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">System Health Monitor</h2>
+    </div>
+    <svg :class="isOpen('system_health') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('system_health')" x-collapse>
+    <div class="p-5 pt-0">
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+        {# Harvest Pipeline Health #}
+        {% with h=harvest_health %}
+        {% if h %}
+        <div class="rounded-lg border border-gray-100 p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Harvest Pipeline</span>
+            <a href="{% url 'company-list' %}?view=engine" class="ml-auto text-[10px] text-indigo-600 hover:underline">Engine</a>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <a href="{% url 'company-list' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Companies</p>
+              <p class="text-lg font-extrabold text-gray-900">{{ h.total_companies|intcomma }}</p>
+            </a>
+            <div class="p-1.5">
+              <p class="text-gray-400">Coverage</p>
+              <p class="text-lg font-extrabold {% if h.companies_coverage_pct >= 50 %}text-emerald-600{% elif h.companies_coverage_pct >= 20 %}text-amber-600{% else %}text-red-600{% endif %}">{{ h.companies_coverage_pct }}%</p>
+            </div>
+            <a href="{% url 'harvest-labels' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Live portals</p>
+              <p class="font-bold text-emerald-600">{{ h.labels_live|intcomma }}</p>
+            </a>
+            <a href="{% url 'harvest-labels' %}?portal_alive=down" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Down portals</p>
+              <p class="font-bold {% if h.labels_down > 50 %}text-red-600{% else %}text-amber-600{% endif %}">{{ h.labels_down }}</p>
+            </a>
+          </div>
+          {% if h.labels_no_tenant %}
+          <a href="{% url 'harvest-labels' %}?has_tenant=no" class="block text-[10px] px-2 py-1 rounded bg-amber-50 text-amber-700 hover:bg-amber-100 transition">{{ h.labels_no_tenant }} labels missing tenant ID</a>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {# Harvest Activity #}
+        {% with h=harvest_health %}
+        {% if h %}
+        <div class="rounded-lg border border-gray-100 p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Harvest Activity</span>
+            <a href="{% url 'harvest-rawjobs' %}" class="ml-auto text-[10px] text-indigo-600 hover:underline">Raw Jobs</a>
+          </div>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="p-1.5">
+              <p class="text-gray-400">New (24h)</p>
+              <p class="text-lg font-extrabold {% if h.new_rawjobs_24h > 0 %}text-emerald-600{% else %}text-gray-400{% endif %}">{{ h.new_rawjobs_24h|intcomma }}</p>
+            </div>
+            <div class="p-1.5">
+              <p class="text-gray-400">New (7d)</p>
+              <p class="text-lg font-extrabold text-gray-900">{{ h.new_rawjobs_7d|intcomma }}</p>
+            </div>
+            <div class="p-1.5">
+              <p class="text-gray-400">Missing JD</p>
+              <p class="font-bold {% if h.rawjobs_no_jd > 1000 %}text-red-600{% elif h.rawjobs_no_jd > 100 %}text-amber-600{% else %}text-gray-600{% endif %}">{{ h.rawjobs_no_jd|intcomma }}</p>
+            </div>
+            <div class="p-1.5">
+              <p class="text-gray-400">Cold jobs</p>
+              <p class="font-bold text-gray-500">{{ h.rawjobs_cold|intcomma }}</p>
+            </div>
+          </div>
+          {% if h.last_batch_at %}
+          <p class="text-[10px] text-gray-400">Last batch: {{ h.last_batch_at|timesince }} ago</p>
+          {% else %}
+          <p class="text-[10px] text-red-500 font-medium">No harvest batches found</p>
+          {% endif %}
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {# Application Pipeline #}
+        {% with p=pipeline_health %}
+        {% if p %}
+        <div class="rounded-lg border border-gray-100 p-4 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Application Pipeline</span>
+            <a href="{% url 'submission-kanban' %}" class="ml-auto text-[10px] text-indigo-600 hover:underline">Kanban</a>
+          </div>
+          <div class="space-y-1.5">
+            <a href="{% url 'submission-list' %}?status=IN_PROGRESS" class="flex justify-between text-xs py-1 hover:bg-gray-50 rounded px-1.5 transition">
+              <span class="text-gray-500">In Progress</span>
+              <span class="font-bold text-gray-800">{{ p.in_progress|default:"0" }}</span>
+            </a>
+            <a href="{% url 'submission-list' %}?status=APPLIED" class="flex justify-between text-xs py-1 hover:bg-gray-50 rounded px-1.5 transition">
+              <span class="text-gray-500">Applied</span>
+              <span class="font-bold text-blue-600">{{ p.applied|default:"0" }}</span>
+            </a>
+            <a href="{% url 'submission-list' %}?status=INTERVIEW" class="flex justify-between text-xs py-1 hover:bg-gray-50 rounded px-1.5 transition">
+              <span class="text-gray-500">Interview</span>
+              <span class="font-bold text-violet-600">{{ p.interview|default:"0" }}</span>
+            </a>
+            <a href="{% url 'submission-list' %}?status=OFFER" class="flex justify-between text-xs py-1 hover:bg-gray-50 rounded px-1.5 transition">
+              <span class="text-gray-500">Offer</span>
+              <span class="font-bold text-emerald-600">{{ p.offer|default:"0" }}</span>
+            </a>
+            <a href="{% url 'submission-list' %}?status=REJECTED" class="flex justify-between text-xs py-1 hover:bg-gray-50 rounded px-1.5 transition">
+              <span class="text-gray-500">Rejected</span>
+              <span class="font-bold text-red-500">{{ p.rejected|default:"0" }}</span>
+            </a>
+          </div>
+        </div>
+        {% endif %}
+        {% endwith %}
+
+        {# Activity Pulse #}
+        {% with a=activity_metrics %}
+        {% if a %}
+        <div class="rounded-lg border border-gray-100 p-4 space-y-3">
+          <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Activity Pulse</span>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <a href="{% url 'job-list' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Jobs (24h)</p>
+              <p class="text-lg font-extrabold {% if a.new_jobs_24h > 0 %}text-blue-600{% else %}text-gray-400{% endif %}">{{ a.new_jobs_24h }}</p>
+            </a>
+            <a href="{% url 'job-list' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Jobs (7d)</p>
+              <p class="text-lg font-extrabold text-gray-900">{{ a.new_jobs_7d }}</p>
+            </a>
+            <a href="{% url 'submission-list' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Apps (24h)</p>
+              <p class="text-lg font-extrabold {% if a.new_apps_24h > 0 %}text-emerald-600{% else %}text-gray-400{% endif %}">{{ a.new_apps_24h }}</p>
+            </a>
+            <a href="{% url 'submission-list' %}" class="hover:bg-gray-50 rounded p-1.5 transition">
+              <p class="text-gray-400">Apps (7d)</p>
+              <p class="text-lg font-extrabold text-gray-900">{{ a.new_apps_7d }}</p>
+            </a>
+          </div>
+        </div>
+        {% endif %}
+        {% endwith %}
+      </div>
+    </div>
   </div>
 </div>
 
 {# ━━ CONSULTANTS + OPS + RESUMES (poll every 120s) ━━━━━━━━━━━━━━━━━━━ #}
-<div id="dashboard-mid"
-     hx-get="{% url 'admin-dashboard' %}?section=mid"
-     hx-trigger="every 120s"
-     hx-swap="innerHTML"
-     data-dashboard-poll>
-  {% include "core/dashboard_partials/_dashboard_consultants_ops.html" %}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('consultants_ops')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-teal-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-teal-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Team & Operations</h2>
+    </div>
+    <svg :class="isOpen('consultants_ops') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('consultants_ops')" x-collapse>
+    <div id="dashboard-mid"
+         hx-get="{% url 'admin-dashboard' %}?section=mid"
+         hx-trigger="every 120s"
+         hx-swap="innerHTML"
+         data-dashboard-poll
+         class="p-5 pt-0">
+      {% include "core/dashboard_partials/_dashboard_consultants_ops.html" %}
+    </div>
+  </div>
 </div>
 
 {# ━━ SUBMISSION FUNNEL + RECENT ACTIVITY (poll every 120s) ━━━━━━━━━━━ #}
-<div id="dashboard-activity"
-     hx-get="{% url 'admin-dashboard' %}?section=activity"
-     hx-trigger="every 120s"
-     hx-swap="innerHTML"
-     data-dashboard-poll>
-  {% include "core/dashboard_partials/_dashboard_activity.html" %}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('activity')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-indigo-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Funnel & Recent Activity</h2>
+    </div>
+    <svg :class="isOpen('activity') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('activity')" x-collapse>
+    <div id="dashboard-activity"
+         hx-get="{% url 'admin-dashboard' %}?section=activity"
+         hx-trigger="every 120s"
+         hx-swap="innerHTML"
+         data-dashboard-poll
+         class="p-5 pt-0">
+      {% include "core/dashboard_partials/_dashboard_activity.html" %}
+    </div>
+  </div>
 </div>
 
 {# ━━ ROI + EMPLOYEE + INTERVIEW + JOB BREAKDOWN (static, no poll) ━━━━ #}
-<div id="dashboard-tables" class="space-y-5">
-  {% include "core/dashboard_partials/_dashboard_tables.html" %}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('tables')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-emerald-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Analytics & Breakdown</h2>
+    </div>
+    <svg :class="isOpen('tables') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('tables')" x-collapse>
+    <div id="dashboard-tables" class="p-5 pt-0 space-y-5">
+      {% include "core/dashboard_partials/_dashboard_tables.html" %}
+    </div>
+  </div>
 </div>
 
 {# ━━ FOOTER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
@@ -81,7 +296,6 @@ document.addEventListener('htmx:beforeRequest', function(evt) {
         evt.preventDefault();
     }
 });
-// Reset "ago" counter on every successful HTMX swap
 document.addEventListener('htmx:afterSwap', function() {
     var el = document.querySelector('[x-data]');
     if (el && el.__x) el.__x.$data.ago = 0;

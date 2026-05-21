@@ -709,6 +709,7 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             context.update(self._get_market_intelligence_data())
             context.update(self._get_consultant_roi_data())
             context.update(self._get_submission_quality_data())
+            context.update(self._get_system_health_context())
             context.update(self._get_action_items_context(context))
 
         return context
@@ -974,46 +975,46 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             action_items.append({
                 'type': 'warning', 'icon': '\U0001f30d',
                 'text': f'{uc_count} jobs need country review',
-                'url': '/raw-jobs/unknown-country/',
+                'url': reverse('harvest-unknown-country-review'),
             })
         failed_sync = context.get('rawjob_sync', {}).get('FAILED', 0)
         if failed_sync:
             action_items.append({
                 'type': 'error', 'icon': '❌',
                 'text': f'{failed_sync} RawJobs failed to sync',
-                'url': '/raw-jobs/?sync_status=FAILED',
+                'url': reverse('harvest-rawjobs') + '?sync_status=FAILED',
             })
         if context.get('pending_applications_count', 0):
             action_items.append({
                 'type': 'info', 'icon': '\U0001f4cb',
                 'text': f'{context["pending_applications_count"]} applications pending review',
-                'url': '/submissions/?status=APPLIED',
+                'url': reverse('submission-list') + '?status=APPLIED',
             })
         if context.get('pending_timesheets', 0):
             action_items.append({
                 'type': 'info', 'icon': '⏱️',
                 'text': f'{context["pending_timesheets"]} timesheets awaiting approval',
-                'url': '/submissions/timesheets/',
+                'url': reverse('timesheet-list'),
             })
         if context.get('interview_stats', {}).get('scheduled', 0):
             action_items.append({
                 'type': 'info', 'icon': '\U0001f3af',
                 'text': f'{context["interview_stats"]["scheduled"]} interviews scheduled',
-                'url': '/interviews/',
+                'url': reverse('interview-list'),
             })
         unscoped = context.get('rawjob_scope', {}).get('UNSCOPED', 0)
         if unscoped:
             action_items.append({
                 'type': 'warning', 'icon': '\U0001f50d',
                 'text': f'{unscoped:,} unscoped raw jobs need evaluation',
-                'url': '/raw-jobs/?scope_status=UNSCOPED',
+                'url': reverse('harvest-rawjobs') + '?scope_status=UNSCOPED',
             })
         resume_errors = context.get('resume_stats', {}).get('ERROR', 0)
         if resume_errors:
             action_items.append({
                 'type': 'error', 'icon': '\U0001f4c4',
                 'text': f'{resume_errors} resume drafts failed generation',
-                'url': '/resumes/',
+                'url': reverse('resume-generate'),
             })
         return {'action_items': action_items}
 
@@ -1144,6 +1145,74 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             )
         rows.sort(key=lambda r: (r['quality_pct'] is None, -(r['quality_pct'] or 0)))
         return {'submission_quality': rows}
+
+    def _get_system_health_context(self):
+        """System health: harvest pipeline, data quality, celery, coverage metrics."""
+        now = timezone.now()
+        health = {}
+        try:
+            from harvest.models import RawJob, CompanyPlatformLabel, FetchBatch
+            from companies.models import Company
+
+            # Harvest pipeline health
+            total_companies = Company.objects.count()
+            companies_with_labels = Company.objects.filter(platform_labels__isnull=False).distinct().count()
+            labels_live = CompanyPlatformLabel.objects.filter(portal_alive=True).count()
+            labels_down = CompanyPlatformLabel.objects.filter(portal_alive=False).count()
+            labels_no_tenant = CompanyPlatformLabel.objects.filter(tenant_id='').count() + \
+                               CompanyPlatformLabel.objects.filter(tenant_id__isnull=True).count()
+
+            # Recent harvest activity
+            last_24h = now - timedelta(hours=24)
+            last_7d = now - timedelta(days=7)
+            new_rawjobs_24h = RawJob.objects.filter(fetched_at__gte=last_24h).count()
+            new_rawjobs_7d = RawJob.objects.filter(fetched_at__gte=last_7d).count()
+            last_batch = FetchBatch.objects.order_by('-created_at').first()
+
+            # Data quality
+            rawjobs_no_jd = RawJob.objects.filter(has_description=False, is_active=True).count()
+            rawjobs_cold = RawJob.objects.filter(is_cold=True).count()
+
+            health['harvest_health'] = {
+                'total_companies': total_companies,
+                'companies_with_labels': companies_with_labels,
+                'companies_coverage_pct': round(companies_with_labels / total_companies * 100) if total_companies else 0,
+                'labels_live': labels_live,
+                'labels_down': labels_down,
+                'labels_no_tenant': labels_no_tenant,
+                'new_rawjobs_24h': new_rawjobs_24h,
+                'new_rawjobs_7d': new_rawjobs_7d,
+                'last_batch_at': last_batch.created_at if last_batch else None,
+                'last_batch_count': last_batch.raw_jobs_created if last_batch and hasattr(last_batch, 'raw_jobs_created') else 0,
+                'rawjobs_no_jd': rawjobs_no_jd,
+                'rawjobs_cold': rawjobs_cold,
+            }
+        except Exception:
+            health['harvest_health'] = {}
+
+        # Application pipeline health
+        AS = ApplicationSubmission
+        pipeline_agg = AS.objects.aggregate(
+            in_progress=Count('id', filter=Q(status=AS.Status.IN_PROGRESS)),
+            applied=Count('id', filter=Q(status=AS.Status.APPLIED)),
+            interview=Count('id', filter=Q(status=AS.Status.INTERVIEW)),
+            offer=Count('id', filter=Q(status=AS.Status.OFFER)),
+            rejected=Count('id', filter=Q(status=AS.Status.REJECTED)),
+            withdrawn=Count('id', filter=Q(status=AS.Status.WITHDRAWN)),
+        )
+        health['pipeline_health'] = pipeline_agg
+
+        # Time-based activity
+        last_24h = now - timedelta(hours=24)
+        last_7d = now - timedelta(days=7)
+        health['activity_metrics'] = {
+            'new_jobs_24h': Job.objects.filter(created_at__gte=last_24h).count(),
+            'new_jobs_7d': Job.objects.filter(created_at__gte=last_7d).count(),
+            'new_apps_24h': AS.objects.filter(created_at__gte=last_24h).count(),
+            'new_apps_7d': AS.objects.filter(created_at__gte=last_7d).count(),
+        }
+
+        return health
 
 
 class WarRoomDashboardView(AdminRequiredMixin, TemplateView):
