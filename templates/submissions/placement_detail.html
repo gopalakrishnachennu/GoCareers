@@ -1,238 +1,261 @@
 {% extends 'base.html' %}
-{% load widget_tweaks %}
+{% load widget_tweaks humanize %}
 
 {% block content %}
-<div class="max-w-7xl mx-auto px-4 py-6">
-    <!-- Breadcrumb -->
-    <div class="mb-4">
-        <a href="{% url 'placement-list' %}" class="text-blue-600 hover:text-blue-800 text-sm font-medium">&larr; All Placements</a>
-    </div>
+<div class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
 
-    <!-- Header -->
-    <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-        <div>
-            <h1 class="text-2xl font-bold text-gray-900">Placement #{{ placement.pk }}</h1>
-            <p class="text-gray-600">{{ placement.submission.consultant.user.get_full_name }} &rarr; {{ placement.submission.job.title }} at {{ placement.submission.job.company }}</p>
+  {# ━━ BREADCRUMB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <nav class="flex items-center gap-2 text-sm text-gray-500 mb-5">
+    <a href="{% url 'admin-dashboard' %}" class="hover:text-gray-700 transition">Dashboard</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <a href="{% url 'placement-list' %}" class="hover:text-gray-700 transition">Placements</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <span class="text-gray-900 font-medium">#{{ placement.pk }}</span>
+  </nav>
+
+  {# ━━ HERO CARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-6 sm:p-8 mb-6">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+      <div class="flex items-start gap-4 min-w-0">
+        <div class="h-14 w-14 rounded-xl flex items-center justify-center text-xl font-bold shrink-0 shadow-sm
+            {% if placement.status == 'ACTIVE' %}bg-gradient-to-br from-emerald-500 to-teal-600 text-white
+            {% elif placement.status == 'COMPLETED' %}bg-gradient-to-br from-blue-500 to-blue-600 text-white
+            {% elif placement.status == 'TERMINATED' %}bg-gradient-to-br from-red-400 to-red-500 text-white
+            {% else %}bg-gradient-to-br from-gray-400 to-gray-500 text-white{% endif %}">
+          {{ placement.submission.consultant.user.get_full_name|first|upper }}
         </div>
-        <div class="flex gap-2">
-            <span class="px-3 py-1 rounded-full text-sm font-medium
-                {% if placement.status == 'ACTIVE' %}bg-emerald-50 text-emerald-700 border border-emerald-200
-                {% elif placement.status == 'COMPLETED' %}bg-blue-50 text-blue-700 border border-blue-200
-                {% elif placement.status == 'TERMINATED' %}bg-red-50 text-red-700 border border-red-200
-                {% else %}bg-gray-100 text-gray-700 border border-gray-200{% endif %}">
-                {{ placement.get_status_display }}
+        <div class="min-w-0">
+          <div class="flex flex-wrap items-center gap-2 mb-1">
+            <h1 class="text-xl font-extrabold text-gray-900">
+              <a href="{% url 'consultant-detail' placement.submission.consultant.user.pk %}" class="hover:text-indigo-700 transition">
+                {{ placement.submission.consultant.user.get_full_name }}
+              </a>
+            </h1>
+            <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"/></svg>
+            <a href="{% url 'job-detail' placement.submission.job.pk %}" class="text-lg font-bold text-gray-700 hover:text-indigo-700 transition truncate">{{ placement.submission.job.title }}</a>
+          </div>
+          <div class="flex flex-wrap items-center gap-2 text-sm">
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-bold
+                {% if placement.status == 'ACTIVE' %}bg-emerald-100 text-emerald-800
+                {% elif placement.status == 'COMPLETED' %}bg-blue-100 text-blue-800
+                {% elif placement.status == 'TERMINATED' %}bg-red-100 text-red-800
+                {% else %}bg-gray-100 text-gray-700{% endif %}">
+              {{ placement.get_status_display }}
             </span>
-            <a href="{% url 'placement-update' placement.pk %}" class="px-4 py-2 rounded-lg border border-gray-300 text-sm font-medium text-gray-700 hover:bg-gray-50">Edit</a>
+            <span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 text-gray-600">{{ placement.get_placement_type_display }}</span>
+            <span class="text-gray-400">&middot;</span>
+            <span class="text-gray-600">{{ placement.submission.job.company }}</span>
+            <span class="text-gray-400">&middot;</span>
+            <span class="text-gray-500">{{ placement.start_date|date:"M d, Y" }} &ndash; {{ placement.end_date|date:"M d, Y"|default:"Ongoing" }}</span>
+          </div>
         </div>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <a href="{% url 'placement-update' placement.pk %}" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+          Edit
+        </a>
+        <a href="{% url 'submission-detail' placement.submission.pk %}" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition">
+          View Submission &rarr;
+        </a>
+      </div>
     </div>
+  </div>
 
-    <!-- Placement Details Card -->
-    <div class="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <h2 class="text-lg font-semibold text-gray-800 mb-4">Placement Details</h2>
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Type</div>
-                <div class="font-semibold text-gray-800 mt-0.5">{{ placement.get_placement_type_display }}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Start Date</div>
-                <div class="font-semibold text-gray-800 mt-0.5">{{ placement.start_date|date:"M d, Y" }}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">End Date</div>
-                <div class="font-semibold text-gray-800 mt-0.5">{{ placement.end_date|date:"M d, Y"|default:"Ongoing" }}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Bill Rate</div>
-                <div class="font-semibold text-gray-800 mt-0.5 font-mono">{% if placement.bill_rate %}{{ placement.currency }} {{ placement.bill_rate }}/hr{% else %}&mdash;{% endif %}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Pay Rate</div>
-                <div class="font-semibold text-gray-800 mt-0.5 font-mono">{% if placement.pay_rate %}{{ placement.currency }} {{ placement.pay_rate }}/hr{% else %}&mdash;{% endif %}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Spread (Margin/hr)</div>
-                <div class="font-semibold mt-0.5 font-mono {% if placement.spread and placement.spread > 0 %}text-emerald-600{% else %}text-gray-800{% endif %}">
-                    {% if placement.spread %}{{ placement.currency }} {{ placement.spread }}/hr{% else %}&mdash;{% endif %}
-                </div>
-            </div>
-            {% if placement.placement_type == 'PERMANENT' %}
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Annual Salary</div>
-                <div class="font-semibold text-gray-800 mt-0.5 font-mono">{% if placement.annual_salary %}{{ placement.currency }} {{ placement.annual_salary }}{% else %}&mdash;{% endif %}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Fee %</div>
-                <div class="font-semibold text-gray-800 mt-0.5">{% if placement.fee_percentage %}{{ placement.fee_percentage }}%{% else %}&mdash;{% endif %}</div>
-            </div>
-            <div>
-                <div class="text-xs text-gray-500 uppercase tracking-wide">Fee Amount</div>
-                <div class="font-semibold text-emerald-600 mt-0.5 font-mono">{% if placement.fee_amount %}{{ placement.currency }} {{ placement.fee_amount }}{% elif placement.calculated_revenue %}{{ placement.currency }} {{ placement.calculated_revenue }}{% else %}&mdash;{% endif %}</div>
-            </div>
-            {% endif %}
-        </div>
-        {% if placement.notes %}
-        <div class="mt-4 pt-4 border-t border-gray-100">
-            <div class="text-xs text-gray-500 uppercase tracking-wide mb-1">Notes</div>
-            <p class="text-gray-700 text-sm">{{ placement.notes }}</p>
-        </div>
-        {% endif %}
+  {# ━━ RATES + FINANCIALS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Bill Rate</p>
+      <p class="mt-1 text-lg font-bold text-gray-900 font-mono">{% if placement.bill_rate %}{{ placement.currency }} {{ placement.bill_rate }}/hr{% else %}&mdash;{% endif %}</p>
     </div>
-
-    <!-- Revenue Summary (for contract placements) -->
-    {% if placement.placement_type != 'PERMANENT' %}
-    <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <div class="bg-white rounded-xl border border-gray-200 px-4 py-3">
-            <p class="text-xs text-gray-500 uppercase tracking-wide">Total Hours</p>
-            <p class="mt-1 text-xl font-bold text-gray-900">{{ total_hours }}</p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-200 px-4 py-3">
-            <p class="text-xs text-gray-500 uppercase tracking-wide">Total Billed</p>
-            <p class="mt-1 text-xl font-bold text-gray-900 font-mono">{{ placement.currency }} {{ total_billed }}</p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-200 px-4 py-3">
-            <p class="text-xs text-gray-500 uppercase tracking-wide">Total Paid</p>
-            <p class="mt-1 text-xl font-bold text-gray-900 font-mono">{{ placement.currency }} {{ total_paid }}</p>
-        </div>
-        <div class="bg-white rounded-xl border border-emerald-200 px-4 py-3 bg-emerald-50/50">
-            <p class="text-xs text-emerald-600 uppercase tracking-wide">Total Margin</p>
-            <p class="mt-1 text-xl font-bold text-emerald-700 font-mono">{{ placement.currency }} {{ total_margin }}</p>
-        </div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Pay Rate</p>
+      <p class="mt-1 text-lg font-bold text-gray-900 font-mono">{% if placement.pay_rate %}{{ placement.currency }} {{ placement.pay_rate }}/hr{% else %}&mdash;{% endif %}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-emerald-200 shadow-sm px-4 py-3 bg-emerald-50/30">
+      <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Spread</p>
+      <p class="mt-1 text-lg font-bold text-emerald-700 font-mono">{% if placement.spread %}{{ placement.currency }} {{ placement.spread }}/hr{% else %}&mdash;{% endif %}</p>
+    </div>
+    {% if placement.placement_type == 'PERMANENT' %}
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Annual Salary</p>
+      <p class="mt-1 text-lg font-bold text-gray-900 font-mono">{% if placement.annual_salary %}{{ placement.currency }} {{ placement.annual_salary|intcomma }}{% else %}&mdash;{% endif %}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Fee %</p>
+      <p class="mt-1 text-lg font-bold text-gray-900">{% if placement.fee_percentage %}{{ placement.fee_percentage }}%{% else %}&mdash;{% endif %}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-emerald-200 shadow-sm px-4 py-3 bg-emerald-50/30">
+      <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Fee Amount</p>
+      <p class="mt-1 text-lg font-bold text-emerald-700 font-mono">{% if placement.fee_amount %}{{ placement.currency }} {{ placement.fee_amount|intcomma }}{% elif placement.calculated_revenue %}{{ placement.currency }} {{ placement.calculated_revenue|intcomma }}{% else %}&mdash;{% endif %}</p>
     </div>
     {% endif %}
+  </div>
 
-    <!-- Timesheets Section -->
-    {% if placement.placement_type != 'PERMANENT' %}
-    <div class="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-lg font-semibold text-gray-800">Timesheets</h2>
-            <a href="{% url 'timesheet-list' %}" class="text-blue-600 hover:underline text-sm">View all timesheets &rarr;</a>
-        </div>
-
-        <!-- Add Timesheet Form -->
-        <form method="post" action="{% url 'timesheet-create' placement.pk %}" class="filter-card mb-4">
-            {% csrf_token %}
-            <h3 class="text-sm font-semibold text-gray-700 mb-3">Add Timesheet</h3>
-            <div class="filter-grid md:grid-cols-4">
-                {% for field in timesheet_form.visible_fields %}
-                <div>
-                    <label class="form-label">{{ field.label }}</label>
-                    {% render_field field class="form-input" %}
-                </div>
-                {% endfor %}
-            </div>
-            <button type="submit" class="btn-primary mt-3">Add Timesheet</button>
-        </form>
-
-        <!-- Timesheet Table -->
-        <div class="table-scroll">
-            <table class="w-full text-sm table-min-wide">
-                <thead class="tbl-head">
-                    <tr>
-                        <th class="tbl-th">Week Ending</th>
-                        <th class="tbl-th-right">Hours</th>
-                        <th class="tbl-th-right">OT Hours</th>
-                        <th class="tbl-th-right">Billed</th>
-                        <th class="tbl-th-right">Margin</th>
-                        <th class="tbl-th">Status</th>
-                        <th class="tbl-th">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for ts in timesheets %}
-                    <tr class="tbl-row">
-                        <td class="tbl-td font-medium text-gray-900">{{ ts.week_ending|date:"M d, Y" }}</td>
-                        <td class="tbl-td-right tbl-mono">{{ ts.hours_worked }}</td>
-                        <td class="tbl-td-right tbl-mono text-gray-500">{{ ts.overtime_hours }}</td>
-                        <td class="tbl-td-right tbl-mono">{% if ts.bill_amount %}{{ placement.currency }} {{ ts.bill_amount }}{% else %}&mdash;{% endif %}</td>
-                        <td class="tbl-td-right tbl-mono {% if ts.margin and ts.margin > 0 %}text-emerald-600{% endif %}">{% if ts.margin %}{{ placement.currency }} {{ ts.margin }}{% else %}&mdash;{% endif %}</td>
-                        <td class="tbl-td">
-                            <span class="{% if ts.status == 'APPROVED' %}badge-green{% elif ts.status == 'SUBMITTED' %}badge-yellow{% elif ts.status == 'REJECTED' %}badge-red{% else %}badge-gray{% endif %}">
-                                {{ ts.get_status_display }}
-                            </span>
-                        </td>
-                        <td class="tbl-td">
-                            {% if ts.status == 'SUBMITTED' or ts.status == 'DRAFT' %}
-                            <form method="post" action="{% url 'timesheet-approve' ts.pk %}" class="inline-flex gap-1">
-                                {% csrf_token %}
-                                <button name="action" value="approve" class="btn-primary text-xs px-2.5 py-1.5">Approve</button>
-                                <button name="action" value="reject" class="btn-danger text-xs px-2.5 py-1.5">Reject</button>
-                            </form>
-                            {% elif ts.status == 'APPROVED' %}
-                            <span class="text-xs text-gray-500">by {{ ts.approved_by.get_full_name|default:"—" }}</span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="7" class="tbl-empty">No timesheets yet.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+  {# ━━ CONTRACT REVENUE SUMMARY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  {% if placement.placement_type != 'PERMANENT' %}
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Hours</p>
+      <p class="mt-1 text-xl font-extrabold text-gray-900">{{ total_hours|intcomma }}</p>
     </div>
-    {% endif %}
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Billed</p>
+      <p class="mt-1 text-xl font-extrabold text-gray-900 font-mono">{{ placement.currency }} {{ total_billed|intcomma }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 shadow-sm px-4 py-3">
+      <p class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Total Paid</p>
+      <p class="mt-1 text-xl font-extrabold text-gray-900 font-mono">{{ placement.currency }} {{ total_paid|intcomma }}</p>
+    </div>
+    <div class="bg-white rounded-xl border border-emerald-200 shadow-sm px-4 py-3 bg-emerald-50/30">
+      <p class="text-[10px] font-bold text-emerald-600 uppercase tracking-wider">Total Margin</p>
+      <p class="mt-1 text-xl font-extrabold text-emerald-700 font-mono">{{ placement.currency }} {{ total_margin|intcomma }}</p>
+    </div>
+  </div>
+  {% endif %}
 
-    <!-- Commissions Section -->
-    <div class="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-lg font-semibold text-gray-800">Commissions</h2>
-            <a href="{% url 'commission-list' %}" class="text-blue-600 hover:underline text-sm">View all commissions &rarr;</a>
-        </div>
+  {# Notes #}
+  {% if placement.notes %}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 mb-6">
+    <h3 class="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Notes</h3>
+    <p class="text-sm text-gray-700 leading-relaxed">{{ placement.notes }}</p>
+  </div>
+  {% endif %}
 
-        <!-- Add Commission Form -->
-        <form method="post" action="{% url 'commission-create' placement.pk %}" class="filter-card mb-4">
-            {% csrf_token %}
-            <h3 class="text-sm font-semibold text-gray-700 mb-3">Add Commission</h3>
-            <div class="filter-grid md:grid-cols-3">
-                {% for field in commission_form.visible_fields %}
-                <div>
-                    <label class="form-label">{{ field.label }}</label>
-                    {% render_field field class="form-input" %}
-                </div>
-                {% endfor %}
-            </div>
-            <button type="submit" class="btn-primary mt-3">Add Commission</button>
-        </form>
-
-        <div class="table-scroll">
-            <table class="w-full text-sm table-min-wide">
-                <thead class="tbl-head">
-                    <tr>
-                        <th class="tbl-th">Employee</th>
-                        <th class="tbl-th">Rate</th>
-                        <th class="tbl-th-right">Amount</th>
-                        <th class="tbl-th">Status</th>
-                        <th class="tbl-th">Paid Date</th>
-                        <th class="tbl-th">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for c in commissions %}
-                    <tr class="tbl-row">
-                        <td class="tbl-td font-medium text-gray-900">{{ c.employee.get_full_name|default:c.employee.username }}</td>
-                        <td class="tbl-td text-gray-600">{% if c.commission_rate %}{{ c.commission_rate }}%{% else %}&mdash;{% endif %}</td>
-                        <td class="tbl-td-right tbl-mono font-semibold text-gray-900">{{ c.currency }} {{ c.commission_amount }}</td>
-                        <td class="tbl-td">
-                            <span class="{% if c.status == 'PAID' %}badge-green{% elif c.status == 'APPROVED' %}badge-blue{% elif c.status == 'PENDING' %}badge-yellow{% else %}badge-red{% endif %}">
-                                {{ c.get_status_display }}
-                            </span>
-                        </td>
-                        <td class="tbl-td text-gray-600">{{ c.paid_date|date:"M d, Y"|default:"&mdash;" }}</td>
-                        <td class="tbl-td">
-                            <a href="{% url 'commission-update' c.pk %}" class="link-action text-xs">Edit</a>
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr><td colspan="6" class="tbl-empty">No commissions yet.</td></tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
+  {# ━━ TIMESHEETS (contract only) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  {% if placement.placement_type != 'PERMANENT' %}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
+    <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+      <h2 class="text-sm font-bold text-gray-700 uppercase tracking-wider">Timesheets</h2>
+      <a href="{% url 'timesheet-list' %}" class="text-xs font-semibold text-blue-600 hover:text-blue-800 transition">View all &rarr;</a>
     </div>
 
-    <!-- Link to Submission -->
-    <div class="text-sm text-gray-500">
-        <a href="{% url 'submission-detail' placement.submission.pk %}" class="link-action">View original submission &rarr;</a>
+    {# Add timesheet form #}
+    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+      <form method="post" action="{% url 'timesheet-create' placement.pk %}" class="flex flex-col sm:flex-row sm:items-end gap-3">
+        {% csrf_token %}
+        {% for field in timesheet_form.visible_fields %}
+        <div class="flex-1">
+          <label class="block text-[10px] font-bold text-gray-500 mb-1 uppercase tracking-wider">{{ field.label }}</label>
+          {% render_field field class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" %}
+        </div>
+        {% endfor %}
+        <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold whitespace-nowrap transition">Add Timesheet</button>
+      </form>
     </div>
+
+    {# Timesheet table #}
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-100">
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-6 py-2.5">Week Ending</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Hours</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">OT</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Billed</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Margin</th>
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Status</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-6 py-2.5">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for ts in timesheets %}
+          <tr class="hover:bg-gray-50/50 transition">
+            <td class="px-6 py-2.5 font-medium text-gray-900 text-xs">{{ ts.week_ending|date:"M d, Y" }}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-xs">{{ ts.hours_worked }}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-xs text-gray-400">{{ ts.overtime_hours }}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-xs">{% if ts.bill_amount %}{{ placement.currency }} {{ ts.bill_amount }}{% else %}&mdash;{% endif %}</td>
+            <td class="px-4 py-2.5 text-right font-mono text-xs {% if ts.margin and ts.margin > 0 %}text-emerald-600 font-semibold{% endif %}">{% if ts.margin %}{{ placement.currency }} {{ ts.margin }}{% else %}&mdash;{% endif %}</td>
+            <td class="px-4 py-2.5">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold
+                  {% if ts.status == 'APPROVED' %}bg-emerald-100 text-emerald-700
+                  {% elif ts.status == 'SUBMITTED' %}bg-amber-100 text-amber-700
+                  {% elif ts.status == 'REJECTED' %}bg-red-100 text-red-700
+                  {% else %}bg-gray-100 text-gray-600{% endif %}">
+                {{ ts.get_status_display }}
+              </span>
+            </td>
+            <td class="px-6 py-2.5 text-right">
+              {% if ts.status == 'SUBMITTED' or ts.status == 'DRAFT' %}
+              <form method="post" action="{% url 'timesheet-approve' ts.pk %}" class="inline-flex gap-1">
+                {% csrf_token %}
+                <button name="action" value="approve" class="px-2 py-1 rounded text-[10px] font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition">Approve</button>
+                <button name="action" value="reject" class="px-2 py-1 rounded text-[10px] font-bold text-white bg-red-500 hover:bg-red-600 transition">Reject</button>
+              </form>
+              {% elif ts.status == 'APPROVED' %}
+              <span class="text-[10px] text-gray-400">by {{ ts.approved_by.get_full_name|default:"—" }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="7" class="px-6 py-8 text-center text-gray-400 text-sm">No timesheets yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  {# ━━ COMMISSIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
+    <div class="px-6 py-4 border-b border-gray-100 flex justify-between items-center">
+      <h2 class="text-sm font-bold text-gray-700 uppercase tracking-wider">Commissions</h2>
+      <a href="{% url 'commission-list' %}" class="text-xs font-semibold text-blue-600 hover:text-blue-800 transition">View all &rarr;</a>
+    </div>
+
+    {# Add commission form #}
+    <div class="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
+      <form method="post" action="{% url 'commission-create' placement.pk %}" class="flex flex-col sm:flex-row sm:items-end gap-3">
+        {% csrf_token %}
+        {% for field in commission_form.visible_fields %}
+        <div class="flex-1">
+          <label class="block text-[10px] font-bold text-gray-500 mb-1 uppercase tracking-wider">{{ field.label }}</label>
+          {% render_field field class="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" %}
+        </div>
+        {% endfor %}
+        <button type="submit" class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold whitespace-nowrap transition">Add Commission</button>
+      </form>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead>
+          <tr class="border-b border-gray-100">
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-6 py-2.5">Employee</th>
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Rate</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Amount</th>
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Status</th>
+            <th class="text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider px-4 py-2.5">Paid Date</th>
+            <th class="text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider px-6 py-2.5">Actions</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-50">
+          {% for c in commissions %}
+          <tr class="hover:bg-gray-50/50 transition">
+            <td class="px-6 py-2.5 font-medium text-gray-900 text-xs">{{ c.employee.get_full_name|default:c.employee.username }}</td>
+            <td class="px-4 py-2.5 text-xs text-gray-600">{% if c.commission_rate %}{{ c.commission_rate }}%{% else %}&mdash;{% endif %}</td>
+            <td class="px-4 py-2.5 text-right font-mono font-semibold text-xs text-gray-900">{{ c.currency }} {{ c.commission_amount|intcomma }}</td>
+            <td class="px-4 py-2.5">
+              <span class="px-2 py-0.5 rounded-full text-[10px] font-bold
+                  {% if c.status == 'PAID' %}bg-emerald-100 text-emerald-700
+                  {% elif c.status == 'APPROVED' %}bg-blue-100 text-blue-700
+                  {% elif c.status == 'PENDING' %}bg-amber-100 text-amber-700
+                  {% else %}bg-red-100 text-red-700{% endif %}">
+                {{ c.get_status_display }}
+              </span>
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-500">{{ c.paid_date|date:"M d, Y"|default:"—" }}</td>
+            <td class="px-6 py-2.5 text-right">
+              <a href="{% url 'commission-update' c.pk %}" class="text-indigo-600 hover:text-indigo-800 text-[10px] font-bold transition">Edit</a>
+            </td>
+          </tr>
+          {% empty %}
+          <tr><td colspan="6" class="px-6 py-8 text-center text-gray-400 text-sm">No commissions yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
 </div>
 {% endblock %}
