@@ -509,6 +509,7 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
         resume_drafts = profile.resume_drafts.select_related('job').order_by('-created_at')
         context['resume_drafts'] = resume_drafts[:10]
         context['total_resume_drafts'] = resume_drafts.count()
+        context['latest_draft'] = resume_drafts.first()
 
         # Draft generate form (Admin/Employee only)
         if context['is_admin'] or context['is_employee']:

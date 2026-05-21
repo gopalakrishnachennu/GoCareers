@@ -64,15 +64,27 @@
       </div>
       {# Actions #}
       <div class="flex items-center gap-2 shrink-0 flex-wrap">
-        {% if is_admin or is_employee %}
+        {% if not is_own_profile %}
         <form method="post" action="{% url 'start-thread' consultant.id %}" class="inline">{% csrf_token %}<button type="submit" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>Message</button></form>
-        <a href="{% url 'consultant-edit' consultant.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit</a>
-        {% if is_admin %}
-        <a href="{% url 'start-impersonate' consultant.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>Impersonate</a>
         {% endif %}
+        {% if is_own_profile %}
+        <a href="{% url 'consultant-dashboard' %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>Dashboard</a>
+        {% endif %}
+        {% if is_admin or is_own_profile or is_employee %}
+        <a href="{% url 'consultant-edit' consultant.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit</a>
+        {% endif %}
+        {% if is_admin and not is_own_profile %}
+        <a href="{% url 'start-impersonate' consultant.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>Impersonate</a>
         {% endif %}
       </div>
     </div>
+    {# Public profile link #}
+    {% if profile.profile_slug %}
+    <div class="px-6 pb-4 flex items-center gap-2 text-xs text-gray-400">
+      <span>Public profile:</span>
+      <a href="{% url 'consultant-public-profile' slug=profile.profile_slug %}" target="_blank" rel="noopener" class="text-blue-500 hover:underline font-medium">/c/{{ profile.profile_slug }}/</a>
+    </div>
+    {% endif %}
   </div>
 
   {# ━━ KPI STRIP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
@@ -127,8 +139,25 @@
 
     {# Bio #}
     {% if profile.bio %}
-    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
-      <p class="text-sm text-gray-600 leading-relaxed">{{ profile.bio }}</p>
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5" x-data="{ expanded: false }">
+      <p class="text-sm text-gray-600 leading-relaxed" x-show="!expanded">{{ profile.bio|truncatewords:60 }}</p>
+      <div x-show="expanded" x-transition class="text-sm text-gray-600 leading-relaxed">{{ profile.bio|linebreaks }}</div>
+      {% if profile.bio|length > 350 %}
+      <button @click="expanded = !expanded" class="text-xs text-blue-600 hover:underline mt-1" x-text="expanded ? 'Show less' : 'Show more'"></button>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {# Base Resume (collapsible) #}
+    {% if profile.base_resume_text %}
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden" x-data="{ open: false }">
+      <button @click="open = !open" class="w-full px-5 py-3 flex items-center justify-between text-xs font-bold text-gray-600 uppercase tracking-wider hover:bg-gray-50 transition">
+        <span>Base Resume</span>
+        <svg class="w-4 h-4 text-gray-400 transition-transform" :class="{ 'rotate-180': open }" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+      </button>
+      <div x-show="open" x-transition class="px-5 pb-4">
+        <div class="text-xs text-gray-600 whitespace-pre-wrap bg-gray-50 border border-gray-100 rounded-xl p-4 max-h-64 overflow-y-auto">{{ profile.base_resume_text }}</div>
+      </div>
     </div>
     {% endif %}
 
@@ -406,26 +435,54 @@
       <div class="overflow-x-auto">
         <table class="w-full text-xs">
           <thead><tr class="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
-            <th class="px-5 py-2">Job</th><th class="py-2">Version</th><th class="py-2">ATS Score</th><th class="py-2">Status</th><th class="py-2">Created</th><th class="py-2"></th>
+            <th class="px-5 py-2">Job</th><th class="py-2">Ver</th><th class="py-2">ATS</th><th class="py-2">Status</th><th class="py-2">Tokens</th><th class="py-2">Created</th><th class="py-2 text-right">Actions</th>
           </tr></thead>
           <tbody class="divide-y divide-gray-50">
             {% for draft in resume_drafts %}
-            <tr class="hover:bg-gray-50 transition">
-              <td class="px-5 py-2.5 font-semibold text-gray-800">{{ draft.job.title|truncatechars:35 }}</td>
-              <td class="py-2.5 text-gray-500">v{{ draft.version }}</td>
+            <tr class="hover:bg-gray-50 transition group">
+              <td class="px-5 py-2.5">
+                <div class="font-semibold text-gray-900">{{ draft.job.title|truncatechars:35 }}</div>
+                <div class="text-[10px] text-gray-400">{{ draft.job.company }}</div>
+              </td>
+              <td class="py-2.5 font-mono font-bold text-gray-700">v{{ draft.version }}</td>
               <td class="py-2.5">
                 {% if draft.ats_score %}<span class="font-bold {% if draft.ats_score >= 80 %}text-emerald-600{% elif draft.ats_score >= 60 %}text-amber-600{% else %}text-red-500{% endif %}">{{ draft.ats_score }}%</span>
                 {% else %}<span class="text-gray-300">&mdash;</span>{% endif %}
               </td>
-              <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[9px] font-bold {% if draft.status == 'FINAL' %}bg-emerald-50 text-emerald-700{% elif draft.status == 'REVIEW' %}bg-amber-50 text-amber-700{% elif draft.status == 'ERROR' %}bg-red-50 text-red-600{% else %}bg-blue-50 text-blue-700{% endif %}">{{ draft.status }}</span></td>
-              <td class="py-2.5 text-gray-400">{{ draft.created_at|date:"M j" }}</td>
-              <td class="py-2.5 flex items-center gap-2">
-                <a href="{% url 'draft-detail' draft.pk %}" class="text-indigo-600 hover:text-indigo-800 font-bold">View</a>
-                <a href="{% url 'resume-editor' draft.pk %}" class="text-gray-400 hover:text-gray-600 font-bold">Edit</a>
+              <td class="py-2.5">
+                {% if draft.status == 'FINAL' %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Final</span>
+                {% elif draft.status == 'REVIEW' %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-700">Review</span>
+                {% elif draft.status == 'ERROR' %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700" title="{{ draft.error_message }}">Error</span>
+                {% elif draft.status == 'DRAFT' %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-100 text-blue-700">Draft</span>
+                {% else %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-600">Processing</span>{% endif %}
+              </td>
+              <td class="py-2.5 text-gray-500">{{ draft.tokens_used|default:"-"|intcomma }}</td>
+              <td class="py-2.5 text-gray-400">{{ draft.created_at|date:"M j, H:i" }}</td>
+              <td class="py-2.5 text-right">
+                <div class="flex items-center justify-end gap-2 flex-wrap">
+                  {% if draft.status == 'DRAFT' or draft.status == 'FINAL' or draft.status == 'REVIEW' %}
+                  <a href="{% url 'draft-detail' draft.pk %}" class="text-indigo-600 hover:text-indigo-800 text-[10px] font-bold">View</a>
+                  {% if draft.content %}<a href="{% url 'draft-download' draft.pk %}" class="text-emerald-600 hover:text-emerald-800 text-[10px] font-bold">DL</a>{% endif %}
+                  <a href="{% url 'draft-detail' draft.pk %}#llm-builder" class="text-gray-500 hover:text-gray-700 text-[10px] font-bold">LLM</a>
+                  {% endif %}
+                  {% if is_admin or is_employee %}
+                  {% if claimed_job_ids and draft.job_id in claimed_job_ids %}
+                  <span class="text-[10px] font-bold text-gray-300">Claimed</span>
+                  {% else %}
+                  <form method="post" action="{% url 'submission-claim' draft.pk %}" class="inline">{% csrf_token %}<button type="submit" class="text-indigo-600 hover:text-indigo-800 text-[10px] font-bold">Claim</button></form>
+                  {% endif %}
+                  {% endif %}
+                  {% if is_admin and draft.status == 'DRAFT' or is_admin and draft.status == 'REVIEW' %}
+                  <form method="post" action="{% url 'draft-promote' draft.pk %}" class="inline">{% csrf_token %}<button type="submit" class="text-purple-600 hover:text-purple-800 text-[10px] font-bold">Promote</button></form>
+                  {% endif %}
+                  {% if is_admin %}
+                  <form method="post" action="{% url 'draft-delete' draft.pk %}" class="inline">{% csrf_token %}<button type="submit" class="text-red-400 hover:text-red-600 text-[10px] font-bold" onclick="return confirm('Delete this draft?')">Del</button></form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% empty %}
-            <tr><td colspan="6" class="px-5 py-8 text-center text-gray-400">No resume drafts yet. Select a job above to generate one.</td></tr>
+            <tr><td colspan="7" class="px-5 py-8 text-center text-gray-400">No resume drafts yet. Select a job above to generate one.</td></tr>
             {% endfor %}
           </tbody>
         </table>
@@ -475,7 +532,8 @@
               </div>
               {% if is_admin or is_own_profile %}
               <div class="flex gap-1">
-                <a href="{% if is_admin %}{% url 'admin-experience-edit' consultant_pk=consultant.pk pk=exp.pk %}{% else %}{% url 'experience-edit' pk=exp.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+                <a href="{% if is_admin %}{% url 'admin-experience-edit' consultant_pk=consultant.pk pk=exp.pk %}{% else %}{% url 'experience-edit' pk=exp.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50" title="Edit"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+                <a href="{% if is_admin %}{% url 'admin-experience-delete' consultant_pk=consultant.pk pk=exp.pk %}{% else %}{% url 'experience-delete' pk=exp.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50" title="Delete"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></a>
               </div>
               {% endif %}
             </div>
@@ -504,7 +562,10 @@
                 <p class="text-[10px] text-gray-400">{{ edu.start_date|date:"Y" }} &ndash; {% if edu.end_date %}{{ edu.end_date|date:"Y" }}{% else %}Present{% endif %}</p>
               </div>
               {% if is_admin or is_own_profile %}
-              <a href="{% if is_admin %}{% url 'admin-education-edit' consultant_pk=consultant.pk pk=edu.pk %}{% else %}{% url 'education-edit' pk=edu.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+              <div class="flex gap-1">
+                <a href="{% if is_admin %}{% url 'admin-education-edit' consultant_pk=consultant.pk pk=edu.pk %}{% else %}{% url 'education-edit' pk=edu.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50" title="Edit"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+                <a href="{% if is_admin %}{% url 'admin-education-delete' consultant_pk=consultant.pk pk=edu.pk %}{% else %}{% url 'education-delete' pk=edu.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50" title="Delete"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></a>
+              </div>
               {% endif %}
             </div>
             {% empty %}
@@ -535,7 +596,10 @@
                 </div>
               </div>
               {% if is_admin or is_own_profile %}
-              <a href="{% if is_admin %}{% url 'admin-certification-edit' consultant_pk=consultant.pk pk=cert.pk %}{% else %}{% url 'certification-edit' pk=cert.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+              <div class="flex gap-1">
+                <a href="{% if is_admin %}{% url 'admin-certification-edit' consultant_pk=consultant.pk pk=cert.pk %}{% else %}{% url 'certification-edit' pk=cert.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-blue-600 hover:bg-blue-50" title="Edit"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></a>
+                <a href="{% if is_admin %}{% url 'admin-certification-delete' consultant_pk=consultant.pk pk=cert.pk %}{% else %}{% url 'certification-delete' pk=cert.pk %}{% endif %}" class="p-1 rounded text-gray-400 hover:text-red-600 hover:bg-red-50" title="Delete"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg></a>
+              </div>
               {% endif %}
             </div>
             {% empty %}
@@ -608,4 +672,21 @@
 
   {% endwith %}
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const form = document.querySelector('form[action*="resume-generate-run"]');
+    if (!form) return;
+    const btn = form.querySelector('button[type="submit"]');
+    form.addEventListener('submit', function () {
+        if (btn) {
+            btn.disabled = true;
+            btn.classList.add('opacity-70', 'cursor-not-allowed');
+            btn.innerHTML = '<svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg> Generating...';
+        }
+    });
+});
+</script>
 {% endblock %}
