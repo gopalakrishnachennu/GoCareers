@@ -105,7 +105,24 @@ class ConsultantListView(LoginRequiredMixin, ListView):
         if status_filter:
             qs = qs.filter(consultant_profile__status=status_filter)
 
-        return qs.select_related('consultant_profile').distinct()
+        return qs.select_related('consultant_profile').annotate(
+            total_submissions=Count(
+                'consultant_profile__submissions',
+                distinct=True,
+            ),
+            active_submissions=Count(
+                'consultant_profile__submissions',
+                filter=Q(consultant_profile__submissions__status__in=[
+                    'APPLIED', 'INTERVIEW', 'OFFER',
+                ]),
+                distinct=True,
+            ),
+            total_placements=Count(
+                'consultant_profile__submissions',
+                filter=Q(consultant_profile__submissions__status='PLACED'),
+                distinct=True,
+            ),
+        ).distinct()
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
