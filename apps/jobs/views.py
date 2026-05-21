@@ -1853,3 +1853,51 @@ class ClassifyJobsTriggerView(LoginRequiredMixin, UserPassesTestMixin, View):
         if res.state == "FAILURE":
             return JsonResponse({"state": "FAILURE", "task_id": task_id, "info": str(res.result)})
         return JsonResponse({"state": res.state, "task_id": task_id, "info": {}})
+
+
+# ─── Bulk Actions ───────────────────────────────────────────────────────────────
+
+class JobBulkActionView(LoginRequiredMixin, EmployeeRequiredMixin, View):
+    """Handle bulk actions on selected jobs from the job list."""
+
+    def post(self, request):
+        ids_str = request.POST.get("selected_ids", "")
+        action = request.POST.get("bulk_action", "")
+        ids = [int(x) for x in ids_str.split(",") if x.strip().isdigit()][:500]
+
+        if not ids:
+            messages.error(request, "No jobs selected.")
+            return redirect("job-list")
+
+        qs = Job.objects.filter(pk__in=ids, is_archived=False)
+
+        if action == "close":
+            updated = qs.exclude(status=Job.Status.CLOSED).update(status=Job.Status.CLOSED)
+            messages.success(request, f"Closed {updated} job(s).")
+        elif action == "open":
+            updated = qs.exclude(status=Job.Status.OPEN).update(status=Job.Status.OPEN)
+            messages.success(request, f"Reopened {updated} job(s).")
+        elif action == "archive":
+            updated = qs.update(
+                is_archived=True,
+                archived_at=timezone.now(),
+                archived_by=request.user,
+            )
+            messages.success(request, f"Archived {updated} job(s).")
+        elif action == "draft":
+            updated = qs.exclude(status=Job.Status.DRAFT).update(status=Job.Status.DRAFT)
+            messages.success(request, f"Set {updated} job(s) to Draft.")
+        elif action == "export":
+            # Return CSV of selected jobs
+            jobs = qs.select_related("posted_by").order_by("-created_at")
+            response = HttpResponse(content_type="text/csv")
+            response["Content-Disposition"] = 'attachment; filename="selected_jobs.csv"'
+            writer = csv.writer(response)
+            writer.writerow(["ID", "Title", "Company", "Location", "Status", "Stage", "Created"])
+            for j in jobs:
+                writer.writerow([j.pk, j.title, j.company, j.location, j.status, j.stage, j.created_at.date()])
+            return response
+        else:
+            messages.error(request, f"Unknown action: {action}")
+
+        return redirect("job-list")

@@ -208,6 +208,28 @@
   </div>
 </div>
 
+{# ━━ PIPELINE BOTTLENECK VIEW ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+{% if bottleneck_stages %}
+<div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+  <button @click="toggle('bottleneck')"
+          class="flex items-center justify-between w-full px-5 py-3 text-left hover:bg-gray-50 transition">
+    <div class="flex items-center gap-2">
+      <span class="w-6 h-6 rounded-md bg-violet-50 flex items-center justify-center">
+        <svg class="w-3.5 h-3.5 text-violet-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L13 13.414V19a1 1 0 01-.553.894l-4 2A1 1 0 017 21v-7.586L3.293 6.707A1 1 0 013 6V4z"/></svg>
+      </span>
+      <h2 class="text-sm font-bold text-gray-900">Pipeline Bottleneck View</h2>
+      <span class="text-[10px] text-gray-400 ml-1">Where jobs get stuck</span>
+    </div>
+    <svg :class="isOpen('bottleneck') ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="isOpen('bottleneck')" x-collapse>
+    <div class="p-5 pt-0">
+      {% include "core/dashboard_partials/_dashboard_bottleneck.html" %}
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {# ━━ CONSULTANTS + OPS + RESUMES (poll every 120s) ━━━━━━━━━━━━━━━━━━━ #}
 <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
   <button @click="toggle('consultants_ops')"

@@ -710,6 +710,7 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             context.update(self._get_consultant_roi_data())
             context.update(self._get_submission_quality_data())
             context.update(self._get_system_health_context())
+            context.update(self._get_pipeline_bottleneck_context())
             context.update(self._get_action_items_context(context))
 
         return context
@@ -739,10 +740,14 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             total=Count('id'),
             active=Count('id', filter=Q(status=Job.Status.OPEN)),
             pool=Count('id', filter=Q(status='POOL', is_archived=False)),
+            closed=Count('id', filter=Q(status=Job.Status.CLOSED)),
+            archived=Count('id', filter=Q(is_archived=True)),
         )
         ctx['total_jobs'] = job_agg['total']
         ctx['active_jobs'] = job_agg['active']
         ctx['job_pool'] = job_agg['pool']
+        ctx['closed_jobs'] = job_agg['closed']
+        ctx['archived_jobs'] = job_agg['archived']
 
         # Users — 1 aggregate instead of 2
         user_agg = User.objects.aggregate(
@@ -1173,6 +1178,16 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
             rawjobs_no_jd = RawJob.objects.filter(has_description=False, is_active=True).count()
             rawjobs_cold = RawJob.objects.filter(is_cold=True).count()
 
+            last_batch_at = last_batch.created_at if last_batch else None
+            harvest_stale = False
+            harvest_stale_hours = 0
+            if last_batch_at:
+                age = now - last_batch_at
+                harvest_stale_hours = int(age.total_seconds() / 3600)
+                harvest_stale = harvest_stale_hours >= 24
+            elif not last_batch:
+                harvest_stale = True
+
             health['harvest_health'] = {
                 'total_companies': total_companies,
                 'companies_with_labels': companies_with_labels,
@@ -1182,10 +1197,12 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
                 'labels_no_tenant': labels_no_tenant,
                 'new_rawjobs_24h': new_rawjobs_24h,
                 'new_rawjobs_7d': new_rawjobs_7d,
-                'last_batch_at': last_batch.created_at if last_batch else None,
+                'last_batch_at': last_batch_at,
                 'last_batch_count': last_batch.raw_jobs_created if last_batch and hasattr(last_batch, 'raw_jobs_created') else 0,
                 'rawjobs_no_jd': rawjobs_no_jd,
                 'rawjobs_cold': rawjobs_cold,
+                'harvest_stale': harvest_stale,
+                'harvest_stale_hours': harvest_stale_hours,
             }
         except Exception:
             health['harvest_health'] = {}
@@ -1213,6 +1230,53 @@ class AdminDashboardView(LoginRequiredMixin, UserPassesTestMixin, TemplateView):
         }
 
         return health
+
+    def _get_pipeline_bottleneck_context(self):
+        """Pipeline bottleneck: count jobs at each stage + average time spent."""
+        try:
+            from harvest.models import RawJob
+            stage_counts = {}
+            for stage_val, stage_label in Job.Stage.choices:
+                stage_counts[stage_val] = {
+                    'label': stage_label,
+                    'count': Job.objects.filter(stage=stage_val, is_archived=False).count(),
+                }
+
+            # RawJob scope pipeline
+            scope_counts = {}
+            scope_statuses = RawJob.objects.filter(is_active=True).values('scope_status').annotate(
+                cnt=Count('id')
+            )
+            for row in scope_statuses:
+                scope_counts[row['scope_status'] or 'UNSCOPED'] = row['cnt']
+
+            # Sync status pipeline
+            sync_counts = {}
+            sync_statuses = RawJob.objects.filter(is_active=True).values('sync_status').annotate(
+                cnt=Count('id')
+            )
+            for row in sync_statuses:
+                sync_counts[row['sync_status'] or 'NONE'] = row['cnt']
+
+            # Gate status counts
+            gate_counts = {}
+            gate_statuses = Job.objects.filter(is_archived=False).values('gate_status').annotate(
+                cnt=Count('id')
+            )
+            for row in gate_statuses:
+                gate_counts[row['gate_status'] or 'NONE'] = row['cnt']
+
+            max_stage_count = max((s['count'] for s in stage_counts.values()), default=1) or 1
+
+            return {
+                'bottleneck_stages': stage_counts,
+                'bottleneck_max_stage': max_stage_count,
+                'bottleneck_scope': scope_counts,
+                'bottleneck_sync': sync_counts,
+                'bottleneck_gate': gate_counts,
+            }
+        except Exception:
+            return {}
 
 
 class WarRoomDashboardView(AdminRequiredMixin, TemplateView):

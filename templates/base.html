@@ -237,9 +237,31 @@
 
     {% if PLATFORM_CONFIG.nav_layout == 'left' %}
     {# ═══════════════ LEFT SIDEBAR — fixed panel ═══════════════ #}
-    <aside class="brand-sidebar fixed top-0 left-0 bottom-0 w-64 z-40 flex flex-col overflow-hidden shadow-xl" style="background-color:var(--brand-nav-dark)">
-        {% include 'partials/_sidebar.html' %}
-    </aside>
+    {# Mobile: sidebar overlay with backdrop #}
+    <div x-data="{ sidebarOpen: false }" @keydown.escape.window="sidebarOpen = false">
+      {# Mobile toggle button #}
+      <button @click="sidebarOpen = true"
+              class="lg:hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-gray-900/80 text-white shadow-lg hover:bg-gray-800 transition backdrop-blur-sm"
+              x-show="!sidebarOpen" x-cloak>
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      {# Backdrop #}
+      <div x-show="sidebarOpen" @click="sidebarOpen = false"
+           x-transition:enter="transition-opacity ease-out duration-200" x-transition:enter-start="opacity-0" x-transition:enter-end="opacity-100"
+           x-transition:leave="transition-opacity ease-in duration-150" x-transition:leave-start="opacity-100" x-transition:leave-end="opacity-0"
+           class="lg:hidden fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" x-cloak></div>
+      {# Sidebar #}
+      <aside class="brand-sidebar fixed top-0 left-0 bottom-0 w-64 z-50 flex flex-col overflow-hidden shadow-xl transition-transform duration-200 ease-out"
+             :class="sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'"
+             style="background-color:var(--brand-nav-dark)">
+          {# Mobile close button inside sidebar #}
+          <button @click="sidebarOpen = false"
+                  class="lg:hidden absolute top-3 right-3 p-1.5 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition z-10">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+          {% include 'partials/_sidebar.html' %}
+      </aside>
+    </div>
     {% else %}
     {# ═══════════════ TOP NAVIGATION LAYOUT (default) ═══════════════ #}
     <nav class="brand-nav flex items-center gap-4 flex-wrap px-6 py-4 shadow-lg" style="background-color:var(--brand-nav)" x-data="{ open: false }"
@@ -583,7 +605,7 @@
 
     {% block fullscreen_content %}{% endblock %}
 
-    <div class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}ml-64 px-4 sm:px-6 py-4 max-w-[1600px]{% else %}w-full max-w-[1600px] mx-auto mt-4 px-4 sm:px-6{% endif %}" {% block hide_container %}{% endblock %}>
+    <div class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}lg:ml-64 px-4 sm:px-6 py-4 max-w-[1600px]{% else %}w-full max-w-[1600px] mx-auto mt-4 px-4 sm:px-6{% endif %}" {% block hide_container %}{% endblock %}>
         {% block breadcrumbs %}{% endblock %}
 
         {% block content %}
@@ -591,13 +613,13 @@
     </div>
 
     {% if PLATFORM_CONFIG.footer_text %}
-    <footer class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}ml-64{% else %}w-full max-w-[1600px] mx-auto{% endif %} text-center py-3 px-4 text-xs text-gray-400 border-t border-gray-100 mt-4">
+    <footer class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}lg:ml-64{% else %}w-full max-w-[1600px] mx-auto{% endif %} text-center py-3 px-4 text-xs text-gray-400 border-t border-gray-100 mt-4">
         {{ PLATFORM_CONFIG.footer_text }}
     </footer>
     {% endif %}
 
     {% if request.user.is_superuser and DEPLOYMENT_INFO %}
-    <footer class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}ml-64{% else %}w-full max-w-[1600px] mx-auto{% endif %} px-4 pb-4">
+    <footer class="{% if PLATFORM_CONFIG.nav_layout == 'left' %}lg:ml-64{% else %}w-full max-w-[1600px] mx-auto{% endif %} px-4 pb-4">
         <div class="mx-auto flex max-w-[1600px] flex-wrap items-center justify-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
             <span class="font-semibold uppercase tracking-wide text-slate-600">Admin deploy</span>
             {% if DEPLOYMENT_INFO.short_sha %}
@@ -808,6 +830,59 @@
 </script>
 {% endif %}
 {% block extra_js %}{% endblock %}
+
+{% if user.is_authenticated %}
+{# ━━ KEYBOARD SHORTCUTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+<div id="kb-help" class="fixed inset-0 z-[999] hidden" onclick="if(event.target===this)this.classList.add('hidden')">
+  <div class="absolute inset-0 bg-black/40 backdrop-blur-sm"></div>
+  <div class="relative mx-auto mt-[10vh] max-w-lg bg-white rounded-2xl shadow-2xl p-6 animate-[fadeIn_150ms_ease]">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-bold text-gray-900">Keyboard Shortcuts</h2>
+      <button onclick="document.getElementById('kb-help').classList.add('hidden')" class="p-1 rounded hover:bg-gray-100"><svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg></button>
+    </div>
+    <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+      <div class="font-medium text-gray-500 col-span-2 text-xs uppercase tracking-wider mt-2 mb-1">Navigation</div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">d</kbd><span class="text-gray-600">Dashboard</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">j</kbd><span class="text-gray-600">Jobs</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">p</kbd><span class="text-gray-600">Pipeline</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">a</kbd><span class="text-gray-600">Applications</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">c</kbd><span class="text-gray-600">Consultants</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">o</kbd><span class="text-gray-600">Ops Center</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">r</kbd><span class="text-gray-600">Resumes</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">h</kbd><span class="text-gray-600">Harvest Raw Jobs</span></div>
+      <div class="font-medium text-gray-500 col-span-2 text-xs uppercase tracking-wider mt-3 mb-1">Actions</div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">/</kbd><span class="text-gray-600">Focus search</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">?</kbd><span class="text-gray-600">This help panel</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">Esc</kbd><span class="text-gray-600">Close dialog</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">n</kbd><span class="text-gray-600">Notifications</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">s</kbd><span class="text-gray-600">Settings</span></div>
+      <div class="flex items-center gap-2"><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">g</kbd><kbd class="px-1.5 py-0.5 rounded bg-gray-100 text-[11px] font-mono font-bold">k</kbd><span class="text-gray-600">Kanban</span></div>
+    </div>
+    <p class="text-[10px] text-gray-400 mt-4 text-center">Press <kbd class="px-1 py-0.5 rounded bg-gray-100 text-[10px] font-mono">g</kbd> then a letter within 1 second</p>
+  </div>
+</div>
+<script>
+(function(){
+  var gPressed=0, routes={
+    d:'{% url "admin-dashboard" %}', j:'{% url "job-list" %}',
+    p:'{% url "jobs-pipeline" %}', a:'{% url "submission-list" %}',
+    c:'{% url "consultant-list" %}', o:'{% url "ops-center" %}',
+    r:'{% url "resume-generate" %}', h:'{% url "harvest-rawjobs" %}',
+    n:'{% url "notification-list" %}', s:'{% url "platform-config" %}',
+    k:'{% url "submission-kanban" %}'
+  };
+  document.addEventListener('keydown',function(e){
+    var t=e.target, tag=t.tagName;
+    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT'||t.isContentEditable) return;
+    if(e.key==='Escape'){document.getElementById('kb-help').classList.add('hidden');return;}
+    if(e.key==='?'&&e.shiftKey){e.preventDefault();document.getElementById('kb-help').classList.toggle('hidden');return;}
+    if(e.key==='/'){e.preventDefault();var sb=document.querySelector('[data-search-input]')||document.querySelector('input[type=search]')||document.querySelector('.search-input');if(sb){sb.focus();sb.select();}return;}
+    if(e.key==='g'&&!e.metaKey&&!e.ctrlKey){gPressed=Date.now();return;}
+    if(Date.now()-gPressed<1000&&routes[e.key]){e.preventDefault();window.location.href=routes[e.key];gPressed=0;}
+  });
+})();
+</script>
+{% endif %}
 
 </body>
 

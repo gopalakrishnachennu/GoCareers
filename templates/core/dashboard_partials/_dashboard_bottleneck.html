@@ -1,0 +1,120 @@
+{% load humanize %}
+
+{# ━━ Pipeline Bottleneck Flow ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+<div class="space-y-5">
+
+  {# Job Stage Pipeline #}
+  {% if bottleneck_stages %}
+  <div>
+    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">Job Pipeline Stages</h3>
+    <div class="flex items-end gap-1 h-32">
+      {% for stage_key, stage in bottleneck_stages.items %}
+      {% with max_count=bottleneck_max_stage %}
+      <a href="{% url 'job-list' %}?stage={{ stage_key }}"
+         class="flex-1 group relative flex flex-col items-center justify-end"
+         title="{{ stage.label }}: {{ stage.count }}">
+        <span class="text-[10px] font-bold text-gray-600 mb-1">{{ stage.count|intcomma }}</span>
+        <div class="w-full rounded-t-md transition-all group-hover:opacity-80
+            {% if stage_key == 'DISCOVERED' or stage_key == 'FETCHED' %}bg-violet-400
+            {% elif stage_key == 'ENRICHED' %}bg-purple-400
+            {% elif stage_key == 'SCORED' %}bg-blue-400
+            {% elif stage_key == 'VETTED' %}bg-cyan-400
+            {% elif stage_key == 'LIVE' %}bg-emerald-400
+            {% elif stage_key == 'MATCHED' %}bg-green-500
+            {% elif stage_key == 'FILLED' %}bg-gray-300
+            {% elif stage_key == 'ARCHIVED' %}bg-gray-200
+            {% else %}bg-gray-300{% endif %}"
+            style="height: {% widthratio stage.count max_count 100 %}%; min-height: 4px;">
+        </div>
+        <span class="text-[9px] text-gray-400 mt-1 truncate w-full text-center">{{ stage.label }}</span>
+      </a>
+      {% endwith %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {# Two-column: Scope & Gate status #}
+  <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+    {# Scope Status Distribution #}
+    {% if bottleneck_scope %}
+    <div>
+      <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Raw Job Scope Status</h3>
+      <div class="space-y-1.5">
+        {% for status, count in bottleneck_scope.items %}
+        <a href="{% url 'harvest-rawjobs' %}?scope_status={{ status }}"
+           class="flex items-center gap-2 text-xs group hover:bg-gray-50 rounded px-2 py-1 transition">
+          <span class="w-24 text-gray-500 truncate">{{ status|title }}</span>
+          <div class="flex-1 bg-gray-100 rounded-full h-2.5 overflow-hidden">
+            <div class="h-full rounded-full transition-all
+                {% if status == 'PRIORITY_TARGET' %}bg-emerald-500
+                {% elif status == 'UNSCOPED' %}bg-amber-400
+                {% elif 'COLD' in status %}bg-gray-300
+                {% elif 'REVIEW' in status %}bg-blue-400
+                {% else %}bg-violet-400{% endif %}"
+                style="width: {% widthratio count rawjob_total 100 %}%; min-width: 2px;"></div>
+          </div>
+          <span class="font-mono font-bold text-gray-700 w-16 text-right">{{ count|intcomma }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# Gate Status Distribution #}
+    {% if bottleneck_gate %}
+    <div>
+      <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Job Gate Status</h3>
+      <div class="space-y-1.5">
+        {% for status, count in bottleneck_gate.items %}
+        <a href="{% url 'job-list' %}?gate_status={{ status }}"
+           class="flex items-center gap-2 text-xs group hover:bg-gray-50 rounded px-2 py-1 transition">
+          <span class="w-24 text-gray-500 truncate">{{ status|title }}</span>
+          <div class="flex-1 bg-gray-100 rounded-full h-2.5 overflow-hidden">
+            <div class="h-full rounded-full transition-all
+                {% if status == 'ELIGIBLE' %}bg-emerald-500
+                {% elif status == 'REVIEW' %}bg-amber-400
+                {% elif status == 'BLOCKED' %}bg-red-400
+                {% else %}bg-gray-400{% endif %}"
+                style="width: {% widthratio count total_jobs 100 %}%; min-width: 2px;"></div>
+          </div>
+          <span class="font-mono font-bold text-gray-700 w-16 text-right">{{ count|intcomma }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# Sync Status (flow arrows) #}
+  {% if bottleneck_sync %}
+  <div>
+    <h3 class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2">Sync Pipeline</h3>
+    <div class="flex items-center gap-2 flex-wrap">
+      {% for status, count in bottleneck_sync.items %}
+      <a href="{% url 'harvest-rawjobs' %}?sync_status={{ status }}"
+         class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition hover:shadow-sm
+            {% if status == 'SYNCED' %}bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100
+            {% elif status == 'PENDING' %}bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100
+            {% elif status == 'FAILED' %}bg-red-50 border-red-200 text-red-700 hover:bg-red-100
+            {% elif status == 'SKIPPED' %}bg-gray-50 border-gray-200 text-gray-600 hover:bg-gray-100
+            {% else %}bg-violet-50 border-violet-200 text-violet-700 hover:bg-violet-100{% endif %}">
+        <span class="w-2 h-2 rounded-full
+            {% if status == 'SYNCED' %}bg-emerald-500
+            {% elif status == 'PENDING' %}bg-amber-500
+            {% elif status == 'FAILED' %}bg-red-500 animate-pulse
+            {% elif status == 'SKIPPED' %}bg-gray-400
+            {% else %}bg-violet-500{% endif %}"></span>
+        {{ status|title }}
+        <span class="font-mono">{{ count|intcomma }}</span>
+      </a>
+      {% if not forloop.last %}
+      <svg class="w-4 h-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+</div>

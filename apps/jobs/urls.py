@@ -13,6 +13,8 @@ from .views import (
     JobTimelineView, PipelineHealthView,
     # Classification engine
     ClassifyJobsTriggerView,
+    # Bulk actions
+    JobBulkActionView,
 )
 
 urlpatterns = [
@@ -22,6 +24,7 @@ urlpatterns = [
     path('duplicate-check/', JobDuplicateCheckView.as_view(), name='job-duplicate-check'),
     path('url-check/', JobUrlCheckView.as_view(), name='job-url-check'),
     path('archived/', ArchivedJobsView.as_view(), name='job-archived'),
+    path('bulk-action/', JobBulkActionView.as_view(), name='job-bulk-action'),
     path('new/', JobCreateView.as_view(), name='job-create'),
     path('bulk-upload/', JobBulkUploadView.as_view(), name='job-bulk-upload'),
     # Job Pool

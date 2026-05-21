@@ -1,13 +1,39 @@
-<!-- LIST CONTAINER -->
-<div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden" id="job-list-container">
+<!-- LIST CONTAINER with BULK SELECT -->
+<div x-data="bulkSelect()" class="relative" id="job-list-container">
+
+    <!-- Bulk Action Toolbar (slides in when items selected) -->
+    <div x-show="selected.length > 0" x-transition:enter="transition ease-out duration-200" x-transition:enter-start="opacity-0 -translate-y-2" x-transition:enter-end="opacity-100 translate-y-0"
+         class="sticky top-0 z-30 bg-indigo-600 text-white rounded-xl shadow-lg px-5 py-3 mb-3 flex items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <span class="text-sm font-bold" x-text="selected.length + ' selected'"></span>
+            <button @click="selectAll()" class="text-xs text-indigo-200 hover:text-white underline" x-text="allSelected ? 'Deselect all' : 'Select all on page'"></button>
+        </div>
+        <form method="post" action="{% url 'job-bulk-action' %}" class="flex items-center gap-2">
+            {% csrf_token %}
+            <input type="hidden" name="selected_ids" :value="selected.join(',')">
+            <button type="submit" name="bulk_action" value="close" class="px-3 py-1.5 text-xs font-semibold bg-white/20 hover:bg-white/30 rounded-lg transition">Close</button>
+            <button type="submit" name="bulk_action" value="open" class="px-3 py-1.5 text-xs font-semibold bg-white/20 hover:bg-white/30 rounded-lg transition">Reopen</button>
+            <button type="submit" name="bulk_action" value="draft" class="px-3 py-1.5 text-xs font-semibold bg-white/20 hover:bg-white/30 rounded-lg transition">Draft</button>
+            <button type="submit" name="bulk_action" value="archive" class="px-3 py-1.5 text-xs font-semibold bg-red-400/40 hover:bg-red-400/60 rounded-lg transition" onclick="return confirm('Archive ' + this.form.selected_ids.value.split(',').length + ' job(s)?')">Archive</button>
+            <button type="submit" name="bulk_action" value="export" class="px-3 py-1.5 text-xs font-semibold bg-emerald-400/30 hover:bg-emerald-400/50 rounded-lg transition">Export CSV</button>
+        </form>
+    </div>
+
+    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
     {% if jobs %}
     <div class="divide-y divide-gray-100">
         {% for job in jobs %}
-        <div
-            class="group relative p-5 hover:bg-blue-50/30 transition duration-150 ease-in-out flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="group relative p-5 hover:bg-blue-50/30 transition duration-150 ease-in-out flex flex-col md:flex-row md:items-center justify-between gap-4"
+             :class="{ 'bg-indigo-50/50 border-l-4 border-l-indigo-400': selected.includes({{ job.pk }}) }">
+
+            <!-- Checkbox -->
+            <div class="absolute left-1.5 top-1/2 -translate-y-1/2 z-20" @click.stop>
+                <input type="checkbox" :checked="selected.includes({{ job.pk }})" @change="toggle({{ job.pk }})"
+                    class="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer">
+            </div>
 
             <!-- LEFT: Main Info -->
-            <div class="min-w-0 flex-1">
+            <div class="min-w-0 flex-1 pl-6">
                 <div class="flex items-center gap-3 mb-1">
                     <h2 class="text-base font-bold text-gray-900 truncate group-hover:text-blue-600 transition-colors">
                         <a href="{% url 'job-detail' job.pk %}" class="focus:outline-none">
@@ -148,7 +174,27 @@
         <p class="mt-1 text-sm text-gray-500">Try adjusting your search or filters.</p>
     </div>
     {% endif %}
+    </div>
 </div>
+
+<script>
+function bulkSelect() {
+    return {
+        selected: [],
+        allIds: [{% for job in jobs %}{{ job.pk }}{% if not forloop.last %},{% endif %}{% endfor %}],
+        get allSelected() { return this.allIds.length > 0 && this.allIds.every(id => this.selected.includes(id)); },
+        toggle(id) {
+            const idx = this.selected.indexOf(id);
+            if (idx === -1) this.selected.push(id);
+            else this.selected.splice(idx, 1);
+        },
+        selectAll() {
+            if (this.allSelected) this.selected = [];
+            else this.selected = [...this.allIds];
+        }
+    };
+}
+</script>
 
 <!-- PAGINATION -->
 {% if is_paginated %}
