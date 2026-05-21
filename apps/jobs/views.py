@@ -368,7 +368,7 @@ class JobDetailView(LoginRequiredMixin, DetailView):
     context_object_name = 'job'
 
     def get_queryset(self):
-        return super().get_queryset().select_related('posted_by').prefetch_related('marketing_roles')
+        return super().get_queryset().select_related('posted_by', 'source_raw_job').prefetch_related('marketing_roles')
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
