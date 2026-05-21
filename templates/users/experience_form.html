@@ -1,0 +1,199 @@
+{% extends "base.html" %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+
+  {# ━━ BREADCRUMB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <nav class="flex items-center gap-2 text-sm text-gray-500 mb-5">
+    {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
+    <a href="{% url 'admin-dashboard' %}" class="hover:text-gray-700 transition">Dashboard</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% endif %}
+    <a href="{% url 'consultant-detail' consultant_pk %}" class="hover:text-gray-700 transition">Profile</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <span class="text-gray-900 font-medium">{{ form_title }}</span>
+  </nav>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    {# ━━ LEFT: FORM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="lg:col-span-2">
+      <form method="post" x-data="{
+        isCurrent: {% if form.instance.is_current %}true{% else %}false{% endif %},
+        startDate: '{{ form.instance.start_date|default:'' }}',
+        endDate: '{{ form.instance.end_date|default:'' }}',
+        descLen: {{ form.instance.description|length|default:'0' }}
+      }">
+        {% csrf_token %}
+
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {# Header #}
+          <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            </div>
+            <div>
+              <h1 class="text-lg font-extrabold text-gray-900">{{ form_title }}</h1>
+              <p class="text-xs text-gray-400">Work history builds your professional narrative</p>
+            </div>
+          </div>
+
+          <div class="p-6 space-y-5">
+            {# Job Title #}
+            <div>
+              <label for="{{ form.title.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Job Title *</label>
+              {% render_field form.title class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition" placeholder="e.g. Senior Software Engineer" %}
+              {% if form.title.errors %}<p class="text-red-500 text-xs mt-1">{{ form.title.errors.0 }}</p>{% endif %}
+            </div>
+
+            {# Company #}
+            <div>
+              <label for="{{ form.company.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Company *</label>
+              {% render_field form.company class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition" placeholder="e.g. Google, Microsoft, Accenture" %}
+              {% if form.company.errors %}<p class="text-red-500 text-xs mt-1">{{ form.company.errors.0 }}</p>{% endif %}
+            </div>
+
+            {# Date Row #}
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="{{ form.start_date.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Start Date *</label>
+                {% render_field form.start_date class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition" x-model="startDate" %}
+                {% if form.start_date.errors %}<p class="text-red-500 text-xs mt-1">{{ form.start_date.errors.0 }}</p>{% endif %}
+              </div>
+              <div x-show="!isCurrent" x-transition>
+                <label for="{{ form.end_date.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">End Date</label>
+                {% render_field form.end_date class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition" x-model="endDate" %}
+                {% if form.end_date.errors %}<p class="text-red-500 text-xs mt-1">{{ form.end_date.errors.0 }}</p>{% endif %}
+              </div>
+            </div>
+
+            {# Is Current Toggle #}
+            <label class="flex items-center gap-3 p-3 rounded-xl border border-gray-100 hover:bg-blue-50/50 hover:border-blue-200 transition cursor-pointer select-none">
+              {% render_field form.is_current class="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" x-model="isCurrent" %}
+              <div>
+                <span class="text-sm font-semibold text-gray-700">I currently work here</span>
+                <span class="block text-[10px] text-gray-400 mt-0.5">End date will be hidden and marked as present</span>
+              </div>
+              <span x-show="isCurrent" class="ml-auto px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-700">Present</span>
+            </label>
+
+            {# Duration indicator #}
+            <div x-show="startDate" class="flex items-center gap-2 text-xs text-gray-400">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span x-text="(() => {
+                if (!startDate) return '';
+                const s = new Date(startDate);
+                const e = (isCurrent || !endDate) ? new Date() : new Date(endDate);
+                const months = (e.getFullYear() - s.getFullYear()) * 12 + e.getMonth() - s.getMonth();
+                const y = Math.floor(months / 12);
+                const m = months % 12;
+                let result = '';
+                if (y > 0) result += y + (y === 1 ? ' year' : ' years');
+                if (m > 0) result += (y > 0 ? ', ' : '') + m + (m === 1 ? ' month' : ' months');
+                return result || 'Less than a month';
+              })()"></span>
+            </div>
+
+            {# Description #}
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label for="{{ form.description.id_for_label }}" class="block text-[10px] font-bold text-gray-500 uppercase tracking-wider">Description</label>
+                <span class="text-[10px] text-gray-300" x-text="descLen + ' chars'"></span>
+              </div>
+              {% render_field form.description class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition font-mono leading-relaxed" rows="5" placeholder="Describe your key responsibilities, achievements, and technologies used..." x-on:input="descLen = $el.value.length" %}
+              {% if form.description.errors %}<p class="text-red-500 text-xs mt-1">{{ form.description.errors.0 }}</p>{% endif %}
+              <p class="text-[10px] text-gray-400 mt-1.5">Tip: Use bullet points for clarity. Focus on impact and measurable achievements.</p>
+            </div>
+          </div>
+
+          {# Footer #}
+          <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+            <a href="{{ cancel_url }}" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition">Cancel</a>
+            <button type="submit" class="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              {% if object %}Save Changes{% else %}Add Experience{% endif %}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    {# ━━ RIGHT: SIDEBAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="space-y-5">
+
+      {# Existing Entries #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Work History</h2>
+          <span class="text-[10px] font-bold text-gray-400">{{ existing_entries|length }} entries</span>
+        </div>
+        <div class="divide-y divide-gray-50">
+          {% for entry in existing_entries %}
+          <div class="px-5 py-3 hover:bg-gray-50/50 transition {% if object.pk == entry.pk %}bg-blue-50/50 border-l-2 border-l-blue-500{% endif %}">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-gray-800 truncate">{{ entry.title }}</p>
+                <p class="text-xs text-gray-500">{{ entry.company }}</p>
+                <p class="text-[10px] text-gray-400 mt-0.5">
+                  {{ entry.start_date|date:"M Y" }} &ndash;
+                  {% if entry.is_current %}<span class="text-emerald-600 font-semibold">Present</span>{% elif entry.end_date %}{{ entry.end_date|date:"M Y" }}{% else %}—{% endif %}
+                </p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                {% if request.resolver_match.kwargs.consultant_pk %}
+                <a href="{% url 'admin-experience-edit' consultant_pk=consultant_pk pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition" title="Edit">
+                {% else %}
+                <a href="{% url 'experience-edit' pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition" title="Edit">
+                {% endif %}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                </a>
+                {% if request.resolver_match.kwargs.consultant_pk %}
+                <a href="{% url 'admin-experience-delete' consultant_pk=consultant_pk pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="Delete">
+                {% else %}
+                <a href="{% url 'experience-delete' pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="Delete">
+                {% endif %}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </a>
+              </div>
+            </div>
+          </div>
+          {% empty %}
+          <div class="px-5 py-8 text-center">
+            <svg class="w-8 h-8 text-gray-200 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+            <p class="text-xs text-gray-400">No experience added yet</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# Tips Card #}
+      <div class="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl border border-blue-100 p-5">
+        <h3 class="text-xs font-bold text-blue-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          Pro Tips
+        </h3>
+        <ul class="space-y-2 text-xs text-blue-700">
+          <li class="flex items-start gap-2">
+            <span class="text-blue-400 mt-0.5">&#x2022;</span>
+            <span>List most recent experience first &mdash; recruiters scan top-down</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-blue-400 mt-0.5">&#x2022;</span>
+            <span>Include technologies and tools used in each role</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-blue-400 mt-0.5">&#x2022;</span>
+            <span>Quantify achievements: "Reduced deploy time by 40%"</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-blue-400 mt-0.5">&#x2022;</span>
+            <span>Action verbs: Led, Built, Designed, Optimized, Migrated</span>
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}

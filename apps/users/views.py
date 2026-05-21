@@ -530,36 +530,44 @@ class ConsultantOwnerMixin(LoginRequiredMixin, UserPassesTestMixin):
 class ExperienceCreateView(ConsultantOwnerMixin, CreateView):
     model = Experience
     form_class = ExperienceForm
-    template_name = 'users/profile_form.html'
+    template_name = 'users/experience_form.html'
 
     def form_valid(self, form):
         form.instance.consultant_profile = self.get_profile()
         messages.success(self.request, MSG_EXPERIENCE_ADDED)
         return super().form_valid(form)
-    
+
     def get_success_url(self):
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Add Experience'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.experience.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
         return context
 
 class ExperienceUpdateView(ConsultantOwnerMixin, UpdateView):
     model = Experience
     form_class = ExperienceForm
-    template_name = 'users/profile_form.html'
-    
+    template_name = 'users/experience_form.html'
+
     def get_queryset(self):
         return Experience.objects.filter(consultant_profile=self.get_profile())
 
     def get_success_url(self):
         messages.success(self.request, MSG_EXPERIENCE_UPDATED)
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Edit Experience'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.experience.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
         return context
 
 class ExperienceDeleteView(ConsultantOwnerMixin, DeleteView):
@@ -578,36 +586,44 @@ class ExperienceDeleteView(ConsultantOwnerMixin, DeleteView):
 class EducationCreateView(ConsultantOwnerMixin, CreateView):
     model = Education
     form_class = EducationForm
-    template_name = 'users/profile_form.html'
+    template_name = 'users/education_form.html'
 
     def form_valid(self, form):
         form.instance.consultant_profile = self.get_profile()
         messages.success(self.request, MSG_EDUCATION_ADDED)
         return super().form_valid(form)
-    
+
     def get_success_url(self):
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Add Education'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.education.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
         return context
 
 class EducationUpdateView(ConsultantOwnerMixin, UpdateView):
     model = Education
     form_class = EducationForm
-    template_name = 'users/profile_form.html'
-    
+    template_name = 'users/education_form.html'
+
     def get_queryset(self):
         return Education.objects.filter(consultant_profile=self.get_profile())
 
     def get_success_url(self):
         messages.success(self.request, MSG_EDUCATION_UPDATED)
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Edit Education'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.education.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
         return context
 
 class EducationDeleteView(ConsultantOwnerMixin, DeleteView):
@@ -626,36 +642,46 @@ class EducationDeleteView(ConsultantOwnerMixin, DeleteView):
 class CertificationCreateView(ConsultantOwnerMixin, CreateView):
     model = Certification
     form_class = CertificationForm
-    template_name = 'users/profile_form.html'
+    template_name = 'users/certification_form.html'
 
     def form_valid(self, form):
         form.instance.consultant_profile = self.get_profile()
         messages.success(self.request, MSG_CERT_ADDED)
         return super().form_valid(form)
-    
+
     def get_success_url(self):
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Add Certification'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.certifications.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
+        context['today'] = timezone.now().date()
         return context
 
 class CertificationUpdateView(ConsultantOwnerMixin, UpdateView):
     model = Certification
     form_class = CertificationForm
-    template_name = 'users/profile_form.html'
-    
+    template_name = 'users/certification_form.html'
+
     def get_queryset(self):
         return Certification.objects.filter(consultant_profile=self.get_profile())
 
     def get_success_url(self):
         messages.success(self.request, MSG_CERT_UPDATED)
         return reverse_lazy('consultant-detail', kwargs={'pk': self._redirect_pk()})
-    
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context['form_title'] = 'Edit Certification'
+        profile = self.get_profile()
+        context['existing_entries'] = profile.certifications.all()
+        context['consultant_pk'] = self._redirect_pk()
+        context['cancel_url'] = reverse('consultant-detail', kwargs={'pk': self._redirect_pk()})
+        context['today'] = timezone.now().date()
         return context
 
 class CertificationDeleteView(ConsultantOwnerMixin, DeleteView):

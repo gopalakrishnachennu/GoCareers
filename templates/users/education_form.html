@@ -1,0 +1,178 @@
+{% extends "base.html" %}
+{% load widget_tweaks %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+
+  {# ━━ BREADCRUMB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <nav class="flex items-center gap-2 text-sm text-gray-500 mb-5">
+    {% if request.user.is_superuser or request.user.role == 'ADMIN' %}
+    <a href="{% url 'admin-dashboard' %}" class="hover:text-gray-700 transition">Dashboard</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    {% endif %}
+    <a href="{% url 'consultant-detail' consultant_pk %}" class="hover:text-gray-700 transition">Profile</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <span class="text-gray-900 font-medium">{{ form_title }}</span>
+  </nav>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    {# ━━ LEFT: FORM ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="lg:col-span-2">
+      <form method="post" x-data="{
+        startDate: '{{ form.instance.start_date|default:'' }}',
+        endDate: '{{ form.instance.end_date|default:'' }}'
+      }">
+        {% csrf_token %}
+
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          {# Header #}
+          <div class="px-6 py-4 border-b border-gray-100 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-600 flex items-center justify-center">
+              <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 14l9-5-9-5-9 5 9 5z"/><path d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"/></svg>
+            </div>
+            <div>
+              <h1 class="text-lg font-extrabold text-gray-900">{{ form_title }}</h1>
+              <p class="text-xs text-gray-400">Academic credentials strengthen your professional profile</p>
+            </div>
+          </div>
+
+          <div class="p-6 space-y-5">
+            {# Institution #}
+            <div>
+              <label for="{{ form.institution.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Institution *</label>
+              {% render_field form.institution class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" placeholder="e.g. MIT, Stanford, IIT Delhi" %}
+              {% if form.institution.errors %}<p class="text-red-500 text-xs mt-1">{{ form.institution.errors.0 }}</p>{% endif %}
+            </div>
+
+            {# Degree + Field of Study side by side #}
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="{{ form.degree.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Degree *</label>
+                {% render_field form.degree class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" placeholder="e.g. B.S., M.S., MBA, Ph.D." %}
+                {% if form.degree.errors %}<p class="text-red-500 text-xs mt-1">{{ form.degree.errors.0 }}</p>{% endif %}
+              </div>
+              <div>
+                <label for="{{ form.field_of_study.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Field of Study *</label>
+                {% render_field form.field_of_study class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" placeholder="e.g. Computer Science, Data Science" %}
+                {% if form.field_of_study.errors %}<p class="text-red-500 text-xs mt-1">{{ form.field_of_study.errors.0 }}</p>{% endif %}
+              </div>
+            </div>
+
+            {# Date Row #}
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <label for="{{ form.start_date.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">Start Date *</label>
+                {% render_field form.start_date class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" x-model="startDate" %}
+                {% if form.start_date.errors %}<p class="text-red-500 text-xs mt-1">{{ form.start_date.errors.0 }}</p>{% endif %}
+              </div>
+              <div>
+                <label for="{{ form.end_date.id_for_label }}" class="block text-[10px] font-bold text-gray-500 mb-1.5 uppercase tracking-wider">End Date <span class="text-gray-300 normal-case">(or expected)</span></label>
+                {% render_field form.end_date class="w-full px-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 transition" x-model="endDate" %}
+                {% if form.end_date.errors %}<p class="text-red-500 text-xs mt-1">{{ form.end_date.errors.0 }}</p>{% endif %}
+              </div>
+            </div>
+
+            {# Duration indicator #}
+            <div x-show="startDate" class="flex items-center gap-2 text-xs text-gray-400">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              <span x-text="(() => {
+                if (!startDate) return '';
+                const s = new Date(startDate);
+                const e = endDate ? new Date(endDate) : new Date();
+                const months = (e.getFullYear() - s.getFullYear()) * 12 + e.getMonth() - s.getMonth();
+                const y = Math.floor(months / 12);
+                const m = months % 12;
+                let result = '';
+                if (y > 0) result += y + (y === 1 ? ' year' : ' years');
+                if (m > 0) result += (y > 0 ? ', ' : '') + m + (m === 1 ? ' month' : ' months');
+                return result ? result + ' program' : 'Less than a month';
+              })()"></span>
+            </div>
+          </div>
+
+          {# Footer #}
+          <div class="px-6 py-4 border-t border-gray-100 bg-gray-50/50 flex items-center justify-between">
+            <a href="{{ cancel_url }}" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition">Cancel</a>
+            <button type="submit" class="px-6 py-2.5 rounded-xl text-sm font-semibold text-white bg-emerald-600 hover:bg-emerald-700 shadow-sm transition flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+              {% if object %}Save Changes{% else %}Add Education{% endif %}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    {# ━━ RIGHT: SIDEBAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="space-y-5">
+
+      {# Existing Entries #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+          <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Education History</h2>
+          <span class="text-[10px] font-bold text-gray-400">{{ existing_entries|length }} entries</span>
+        </div>
+        <div class="divide-y divide-gray-50">
+          {% for entry in existing_entries %}
+          <div class="px-5 py-3 hover:bg-gray-50/50 transition {% if object.pk == entry.pk %}bg-emerald-50/50 border-l-2 border-l-emerald-500{% endif %}">
+            <div class="flex items-start justify-between gap-2">
+              <div class="min-w-0 flex-1">
+                <p class="text-sm font-semibold text-gray-800 truncate">{{ entry.degree }} in {{ entry.field_of_study }}</p>
+                <p class="text-xs text-gray-500">{{ entry.institution }}</p>
+                <p class="text-[10px] text-gray-400 mt-0.5">
+                  {{ entry.start_date|date:"Y" }} &ndash; {% if entry.end_date %}{{ entry.end_date|date:"Y" }}{% else %}Present{% endif %}
+                </p>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                {% if request.resolver_match.kwargs.consultant_pk %}
+                <a href="{% url 'admin-education-edit' consultant_pk=consultant_pk pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition" title="Edit">
+                {% else %}
+                <a href="{% url 'education-edit' pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 transition" title="Edit">
+                {% endif %}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                </a>
+                {% if request.resolver_match.kwargs.consultant_pk %}
+                <a href="{% url 'admin-education-delete' consultant_pk=consultant_pk pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="Delete">
+                {% else %}
+                <a href="{% url 'education-delete' pk=entry.pk %}" class="p-1 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition" title="Delete">
+                {% endif %}
+                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                </a>
+              </div>
+            </div>
+          </div>
+          {% empty %}
+          <div class="px-5 py-8 text-center">
+            <svg class="w-8 h-8 text-gray-200 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 14l9-5-9-5-9 5 9 5zm0 0l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14zm-4 6v-7.5l4-2.222"/></svg>
+            <p class="text-xs text-gray-400">No education added yet</p>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+
+      {# Tips Card #}
+      <div class="bg-gradient-to-br from-emerald-50 to-teal-50 rounded-2xl border border-emerald-100 p-5">
+        <h3 class="text-xs font-bold text-emerald-800 uppercase tracking-wider mb-3 flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          Pro Tips
+        </h3>
+        <ul class="space-y-2 text-xs text-emerald-700">
+          <li class="flex items-start gap-2">
+            <span class="text-emerald-400 mt-0.5">&#x2022;</span>
+            <span>Include both formal degrees and relevant boot camps</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-emerald-400 mt-0.5">&#x2022;</span>
+            <span>List your highest degree first for maximum impact</span>
+          </li>
+          <li class="flex items-start gap-2">
+            <span class="text-emerald-400 mt-0.5">&#x2022;</span>
+            <span>For ongoing programs, leave end date empty</span>
+          </li>
+        </ul>
+      </div>
+
+    </div>
+  </div>
+</div>
+{% endblock %}
