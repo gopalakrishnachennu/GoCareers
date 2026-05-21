@@ -442,30 +442,78 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
     def get_queryset(self):
         return User.objects.filter(
             role=User.Role.CONSULTANT, consultant_profile__isnull=False
-        ).select_related('consultant_profile')
+        ).select_related('consultant_profile').prefetch_related(
+            'consultant_profile__marketing_roles',
+            'consultant_profile__experience',
+            'consultant_profile__education',
+            'consultant_profile__certifications',
+        )
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         profile = self.object.consultant_profile
-        context['experiences'] = profile.experience.all() if profile else []
-        context['educations'] = profile.education.all() if profile else []
-        context['certifications'] = profile.certifications.all() if profile else []
-        
+        now = timezone.now()
+        today = now.date()
+
         context['is_own_profile'] = self.request.user == self.object
         context['is_admin'] = self.request.user.is_superuser or self.request.user.role == 'ADMIN'
         context['is_employee'] = self.request.user.role == 'EMPLOYEE'
         context['consultant_pk'] = self.object.pk
-        context['matched_jobs'] = (
-            match_jobs_for_consultant(profile, limit=8) if profile else []
+        context['today'] = today
+
+        if not profile:
+            return context
+
+        # ── Profile basics ──────────────────────────────────────────────
+        context['experiences'] = profile.experience.all()
+        context['educations'] = profile.education.all()
+        context['certifications'] = profile.certifications.all()
+        context['marketing_roles'] = profile.marketing_roles.all()
+
+        # ── All submissions for this consultant ─────────────────────────
+        submissions = ApplicationSubmission.objects.filter(
+            consultant=profile, is_archived=False
+        ).select_related('job', 'job__company', 'submitted_by').order_by('-created_at')
+
+        context['submissions'] = submissions[:20]
+        context['total_submissions'] = submissions.count()
+
+        # Submission stats by status
+        status_counts = {}
+        for s in submissions:
+            status_counts[s.status] = status_counts.get(s.status, 0) + 1
+        context['submission_stats'] = status_counts
+        context['active_submissions'] = sum(
+            status_counts.get(s, 0) for s in ['APPLIED', 'INTERVIEW', 'OFFER', 'IN_PROGRESS']
         )
 
-        # Resume Drafts (Admin/Employee only)
+        # ── Placements ──────────────────────────────────────────────────
+        from submissions.models import Placement
+        placements = Placement.objects.filter(
+            submission__consultant=profile
+        ).select_related('submission', 'submission__job').order_by('-start_date')
+        context['placements'] = placements
+        context['active_placements'] = placements.filter(status='ACTIVE').count()
+
+        # ── Interviews ──────────────────────────────────────────────────
+        interviews = Interview.objects.filter(
+            consultant=profile
+        ).select_related('submission', 'submission__job').order_by('-scheduled_at')
+        context['interviews'] = interviews[:10]
+        context['total_interviews'] = interviews.count()
+        context['upcoming_interviews'] = interviews.filter(
+            scheduled_at__gte=now, status__in=['SCHEDULED', 'RESCHEDULED']
+        ).count()
+
+        # ── Resume Drafts ───────────────────────────────────────────────
+        resume_drafts = profile.resume_drafts.select_related('job').order_by('-created_at')
+        context['resume_drafts'] = resume_drafts[:10]
+        context['total_resume_drafts'] = resume_drafts.count()
+
+        # Draft generate form (Admin/Employee only)
         if context['is_admin'] or context['is_employee']:
-            context['resume_drafts'] = profile.resume_drafts.all() if profile else []
             from resumes.forms import DraftGenerateForm
-            
-            # Filter jobs: OPEN + Matches Consultant's Marketing Roles
-            roles = profile.marketing_roles.all() if profile else []
+            roles = profile.marketing_roles.all()
             form = DraftGenerateForm()
             if roles:
                 form.fields['job'].queryset = Job.objects.filter(
@@ -474,26 +522,44 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
                 ).distinct()
             else:
                 form.fields['job'].queryset = Job.objects.none()
-            
             context['draft_form'] = form
-            if profile:
-                context['claimed_job_ids'] = set(
-                    ApplicationSubmission.objects.filter(consultant=profile).values_list('job_id', flat=True)
-                )
+            context['claimed_job_ids'] = set(
+                submissions.values_list('job_id', flat=True)
+            )
 
-            # LLM Input (latest draft)
-            latest_draft = None
-            if profile:
-                latest_draft = profile.resume_drafts.order_by('-created_at').first()
-            context['latest_draft'] = latest_draft
-            if latest_draft:
-                from resumes.models import MasterPrompt
-                from resumes.services import get_system_prompt_text
-                master = MasterPrompt.get_active()
-                context['llm_system_prompt'] = latest_draft.llm_system_prompt or (master.system_prompt if master else "")
-                context['llm_user_prompt'] = latest_draft.llm_user_prompt or ""
-                context['active_master_prompt'] = master
-                context['llm_input_summary'] = latest_draft.llm_input_summary or {}
+        # ── Cover Letters ───────────────────────────────────────────────
+        from resumes.models import CoverLetter
+        context['cover_letters'] = CoverLetter.objects.filter(
+            consultant=profile
+        ).select_related('job').order_by('-created_at')[:5]
+
+        # ── Matched Jobs ────────────────────────────────────────────────
+        context['matched_jobs'] = match_jobs_for_consultant(profile, limit=8)
+
+        # ── Performance Metrics ─────────────────────────────────────────
+        thirty_days_ago = now - timedelta(days=30)
+        ninety_days_ago = now - timedelta(days=90)
+
+        context['submissions_30d'] = submissions.filter(created_at__gte=thirty_days_ago).count()
+        context['submissions_90d'] = submissions.filter(created_at__gte=ninety_days_ago).count()
+        context['interviews_30d'] = interviews.filter(scheduled_at__gte=thirty_days_ago).count()
+
+        # Win rate (offers / total excluding in-progress)
+        decided = sum(status_counts.get(s, 0) for s in ['OFFER', 'PLACED', 'REJECTED'])
+        won = sum(status_counts.get(s, 0) for s in ['OFFER', 'PLACED'])
+        context['win_rate'] = round(won / decided * 100) if decided > 0 else None
+
+        # Interview conversion (interviews / submitted)
+        submitted_total = sum(status_counts.get(s, 0) for s in ['APPLIED', 'INTERVIEW', 'OFFER', 'PLACED', 'REJECTED'])
+        interview_plus = sum(status_counts.get(s, 0) for s in ['INTERVIEW', 'OFFER', 'PLACED'])
+        context['interview_rate'] = round(interview_plus / submitted_total * 100) if submitted_total > 0 else None
+
+        # ── Account Info (admin only) ───────────────────────────────────
+        if context['is_admin']:
+            context['account_created'] = self.object.date_joined
+            context['last_login'] = self.object.last_login
+            context['is_active'] = self.object.is_active
+            context['onboarding_completed'] = profile.onboarding_completed_at
 
         return context
 
