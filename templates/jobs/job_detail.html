@@ -1,630 +1,526 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="bg-gray-50 min-h-screen pb-12">
+<div class="max-w-7xl mx-auto px-4 sm:px-6 py-6" x-data="{ showRawJson: false }">
 
-    <!-- Blue Header Section -->
-    <div class="bg-blue-600 text-white shadow-sm">
-        <div class="container mx-auto px-4 py-8 max-w-6xl">
-            <div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-                <div>
-                    <div class="flex items-center gap-3 mb-2">
-                        <span
-                            class="bg-blue-800 text-blue-100 text-xs font-mono py-1 px-2 rounded uppercase tracking-wider">
-                            JOB-{{ object.id }}
-                        </span>
-                        <a href="{% url 'job-list' %}"
-                            class="text-blue-200 hover:text-white text-sm flex items-center gap-1 transition">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20"
-                                fill="currentColor">
-                                <path fill-rule="evenodd"
-                                    d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z"
-                                    clip-rule="evenodd" />
-                            </svg>
-                            Back to Jobs
-                        </a>
-                    </div>
-                    <h1 class="text-3xl md:text-4xl font-bold leading-tight">{{ object.title }}</h1>
+  {# ━━ BREADCRUMB + QUICK NAV ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="flex items-center justify-between mb-4">
+    <nav class="flex items-center gap-2 text-sm text-gray-500">
+      <a href="{% url 'admin-dashboard' %}" class="hover:text-gray-700 transition">Dashboard</a>
+      <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <a href="{% url 'job-list' %}" class="hover:text-gray-700 transition">Jobs</a>
+      <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span class="text-gray-900 font-medium truncate max-w-[200px]">{{ object.title|truncatewords:6 }}</span>
+    </nav>
+    <span class="font-mono text-xs text-gray-400 bg-gray-100 px-2 py-1 rounded select-all">#{{ object.id }}</span>
+  </div>
 
-                    <div class="mt-4 flex flex-wrap gap-6 text-blue-100 text-sm">
-                        <div class="flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-75" viewBox="0 0 20 20" fill="currentColor">
-                                <path fill-rule="evenodd" d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h11V5zm2 4h-2v2h2V9z" clip-rule="evenodd" />
-                            </svg>
-                            <span class="font-medium">Company:</span> {{ object.company|default:"Confidential" }}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            {% with s=object.stage %}
-                            {% if s == 'LIVE' or s == 'MATCHED' %}
-                              <span class="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase">{{ object.get_stage_display }}</span>
-                            {% elif s == 'VETTED' or s == 'SCORED' %}
-                              <span class="bg-blue-400 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase">{{ object.get_stage_display }}</span>
-                            {% elif s == 'ARCHIVED' or s == 'FILLED' %}
-                              <span class="bg-gray-400 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase">{{ object.get_stage_display }}</span>
-                            {% else %}
-                              <span class="bg-yellow-500 text-white text-xs font-bold px-2 py-0.5 rounded-full uppercase">{{ object.get_stage_display }}</span>
-                            {% endif %}
-                            {% endwith %}
-                            {% if object.quality_score is not None %}<span class="text-blue-200 text-xs ml-1">Q: {{ object.quality_score }}</span>{% endif %}
-                        </div>
-                        {% if user.is_superuser or user.role == 'ADMIN' %}
-                        <a href="{% url 'job-timeline' object.pk %}" class="flex items-center gap-1 text-blue-200 hover:text-white text-xs transition">
-                            <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
-                            Pipeline timeline
-                        </a>
-                        {% endif %}
-                        <div class="flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-75" viewBox="0 0 20 20"
-                                fill="currentColor">
-                                <path fill-rule="evenodd"
-                                    d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z"
-                                    clip-rule="evenodd" />
-                            </svg>
-                            <span class="font-medium">Location:</span> {{ object.location|default:"Remote" }}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-75" viewBox="0 0 20 20"
-                                fill="currentColor">
-                                <path fill-rule="evenodd"
-                                    d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z"
-                                    clip-rule="evenodd" />
-                            </svg>
-                            <span class="font-medium">Type:</span> {{ object.get_job_type_display }}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-medium">Applications:</span> {{ application_count|default:0 }}
-                        </div>
-                        {% if object.country %}
-                        <div class="flex items-center gap-2">
-                            <span class="bg-sky-500/80 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
-                                🌍 {{ object.country }}{% if object.region %} · {{ object.region }}{% endif %}
-                            </span>
-                        </div>
-                        {% endif %}
-                        {% if object.department %}
-                        <div class="flex items-center gap-2" title="Source: {{ object.department_source }} · Confidence: {{ object.department_confidence }}">
-                            <span class="bg-violet-500/80 text-white text-xs font-semibold px-2.5 py-1 rounded-full">
-                                {{ object.get_department_display }}
-                            </span>
-                            {% if object.department_source == 'manual' %}
-                            <span class="bg-amber-400/80 text-white text-xs font-semibold px-2 py-0.5 rounded-full">manual</span>
-                            {% endif %}
-                        </div>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <div class="flex gap-3">
-                    {% if user.is_authenticated and object.posted_by == user or user.is_superuser or user.role == 'ADMIN' %}
-                    <a href="{% url 'job-update' object.pk %}"
-                        class="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 backdrop-blur-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path
-                                d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                        </svg>
-                        Edit
-                    </a>
-                    <a href="{% url 'job-delete' object.pk %}"
-                        class="bg-red-500/80 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 backdrop-blur-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                            <path fill-rule="evenodd"
-                                d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                                clip-rule="evenodd" />
-                        </svg>
-                        Delete
-                    </a>
-                    {% endif %}
-
-                    {% if user.is_authenticated and object.posted_by == user or user.is_superuser or user.role == 'ADMIN' %}
-                    <form action="{% url 'job-parse-jd' object.pk %}" method="post" class="inline">
-                        {% csrf_token %}
-                        <button type="submit"
-                            class="bg-indigo-500/80 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 backdrop-blur-sm">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20"
-                                fill="currentColor">
-                                <path d="M4 4h8l4 4v8a2 2 0 01-2 2H4a2 2 0 01-2-2V6a2 2 0 012-2z" />
-                                <path d="M8 10h6M8 14h6M8 6h2" />
-                            </svg>
-                            Parse JD
-                        </button>
-                    </form>
-                    <button type="button" id="copy-jd"
-                        class="bg-blue-500/80 hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 backdrop-blur-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 20 20"
-                            fill="currentColor">
-                            <path
-                                d="M8 2a2 2 0 00-2 2v10a2 2 0 002 2h6a2 2 0 002-2V8l-4-4H8z" />
-                            <path d="M6 6h6M6 10h6M6 14h4" />
-                        </svg>
-                        Copy JD
-                    </button>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
+  {# ━━ POOL BANNER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  {% if object.status == 'POOL' %}
+  <div class="mb-4 flex items-center justify-between gap-4 px-5 py-3.5 rounded-xl bg-amber-50 border border-amber-200">
+    <div class="flex items-center gap-3">
+      <span class="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center">
+        <svg class="w-5 h-5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </span>
+      <div>
+        <p class="text-sm font-bold text-amber-900">Vetting Pool</p>
+        <p class="text-xs text-amber-700">Not visible to consultants. Approve to make it live.</p>
+      </div>
     </div>
-
-    <!-- Pool / Validation Banner -->
-    {% if object.status == 'POOL' %}
-    <div class="container mx-auto px-4 max-w-6xl mt-4">
-        <div class="bg-yellow-50 border border-yellow-300 rounded-xl px-6 py-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <span class="bg-yellow-100 text-yellow-700 rounded-full p-2">
-                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                </span>
-                <div>
-                    <p class="font-bold text-yellow-800">This job is in the Vetting Pool</p>
-                    <p class="text-sm text-yellow-700">It is not yet visible to consultants. Review and approve to make it live.</p>
-                </div>
-            </div>
-            {% if user.is_superuser or user.role == 'ADMIN' or user.role == 'EMPLOYEE' %}
-            <div class="flex gap-2 flex-shrink-0">
-                <form method="post" action="{% url 'job-approve' object.pk %}">
-                    {% csrf_token %}
-                    <input type="hidden" name="next" value="{{ request.path }}">
-                    <button type="submit"
-                        class="px-4 py-2 bg-green-600 hover:bg-green-700 text-white text-sm font-semibold rounded-lg transition">
-                        ✓ Approve
-                    </button>
-                </form>
-                <a href="{% url 'job-pool' %}"
-                    class="px-4 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 text-sm font-semibold rounded-lg transition">
-                    View Pool
-                </a>
-            </div>
-            {% endif %}
-        </div>
+    {% if user.is_superuser or user.role == 'ADMIN' or user.role == 'EMPLOYEE' %}
+    <div class="flex gap-2 shrink-0">
+      <form method="post" action="{% url 'job-approve' object.pk %}" class="inline">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <button type="submit" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-lg transition shadow-sm">✓ Approve</button>
+      </form>
+      <form method="post" action="{% url 'job-reject' object.pk %}" class="inline">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.path }}">
+        <button type="submit" class="px-4 py-2 bg-white hover:bg-red-50 text-red-600 text-sm font-bold rounded-lg border border-red-200 transition" onclick="return confirm('Reject this job from the pool?')">✗ Reject</button>
+      </form>
+      <a href="{% url 'job-pool' %}" class="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-sm font-semibold rounded-lg transition">View Pool</a>
     </div>
     {% endif %}
+  </div>
+  {% endif %}
 
-    <!-- Main Content -->
-    <div class="container mx-auto px-4 max-w-6xl -mt-8">
-        <div class="flex flex-col lg:flex-row gap-8">
+  {# ━━ MAIN HERO CARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden mb-6">
 
-            <!-- Left Column: Details -->
-            <div class="w-full lg:w-3/4">
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+    {# Title + Actions #}
+    <div class="px-6 sm:px-8 pt-6 pb-5">
+      <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+        <div class="min-w-0 flex-1">
+          <h1 class="text-2xl sm:text-3xl font-extrabold text-gray-900 leading-tight mb-3">{{ object.title }}</h1>
 
-                    <!-- Metadata Bar -->
-                    <div
-                        class="px-8 py-4 bg-gray-50 border-b border-gray-200 flex flex-wrap gap-4 text-sm text-gray-600">
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold text-gray-800">Status:</span>
-                            <span class="px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide
-                                {% if object.status == 'OPEN' %}bg-green-100 text-green-800
-                                {% elif object.status == 'CLOSED' %}bg-red-100 text-red-800
-                                {% else %}bg-yellow-100 text-yellow-800{% endif %}">
-                                {{ object.get_status_display }}
-                            </span>
-                            {% if object.possibly_filled %}
-                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200"
-                                  title="The original job URL appears to be unavailable. This role may be already filled or closed on the client side.">
-                                Possibly filled
-                            </span>
-                            {% endif %}
-                        </div>
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold text-gray-800">Posted:</span> {{ object.created_at|date:"M d, Y" }}
-                        </div>
-                        {% if object.original_link %}
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold text-gray-800">Source:</span>
-                            <a href="{{ object.original_link }}" target="_blank"
-                                class="text-blue-600 hover:underline flex items-center gap-1">
-                                View Original
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20"
-                                    fill="currentColor">
-                                    <path
-                                        d="M11 3a1 1 0 100 2h2.586l-6.293 6.293a1 1 0 101.414 1.414L15 6.414V9a1 1 0 102 0V4a1 1 0 00-1-1h-5z" />
-                                    <path
-                                        d="M5 5a2 2 0 00-2 2v8a2 2 0 002 2h8a2 2 0 002-2v-3a1 1 0 10-2 0v3H5V7h3a1 1 0 000-2H5z" />
-                                </svg>
-                            </a>
-                        </div>
-                        {% endif %}
-                        {% if object.source_raw_job %}
-                        <div class="flex items-center gap-2">
-                            <span class="font-bold text-gray-800">Harvest Source:</span>
-                            <a href="{% url 'harvest-rawjob-detail' object.source_raw_job.pk %}"
-                                class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-violet-50 text-violet-700 text-xs font-semibold hover:bg-violet-100 transition">
-                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
-                                Raw Job #{{ object.source_raw_job.pk }}
-                            </a>
-                        </div>
-                        {% endif %}
-                    </div>
-
-                    <!-- Description Body -->
-                    <div class="p-8">
-                        <section class="mb-8">
-                            <h3 class="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2">
-                                <span class="bg-blue-100 text-blue-600 p-1 rounded">
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20"
-                                        fill="currentColor">
-                                        <path fill-rule="evenodd"
-                                            d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4z"
-                                            clip-rule="evenodd" />
-                                    </svg>
-                                </span>
-                                Description
-                            </h3>
-                            <div id="job-description" class="prose max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap font-sans">
-                                {{ description_collapsed|linebreaksbr }}
-                            </div>
-                        </section>
-
-
-                    </div>
-                </div>
+          {# Company + Location + Type — compact row #}
+          <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            <div class="flex items-center gap-2 text-gray-700">
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+              {% if object.company_obj_id %}
+                <a href="{% url 'company-detail' object.company_obj_id %}" class="font-semibold text-blue-600 hover:underline">{{ object.company_obj.name }}</a>
+              {% else %}
+                <span class="font-semibold">{{ object.company|default:"Confidential" }}</span>
+              {% endif %}
             </div>
-
-            <!-- Right Column: Sidebar -->
-            <div class="w-full lg:w-1/4 space-y-6">
-
-                <!-- At a Glance -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h4 class="font-bold text-gray-800 mb-4 uppercase tracking-wide text-xs">At a Glance</h4>
-
-                    <div class="space-y-4 text-sm">
-                        <div>
-                            <span class="block text-gray-500 mb-1">Posted By</span>
-                            <div class="flex items-center gap-2">
-                                <div
-                                    class="bg-blue-100 text-blue-600 rounded-full w-8 h-8 flex items-center justify-center font-bold">
-                                    {{ object.posted_by.email|first|upper }}
-                                </div>
-                                <span class="text-gray-900 font-medium">{{ object.posted_by.email }}</span>
-                            </div>
-                        </div>
-                        {% if object.last_edited_by and object.last_edited_by != object.posted_by %}
-                        <div>
-                            <span class="block text-gray-500 mb-1">Edited By</span>
-                            <div class="flex items-center gap-2">
-                                <div
-                                    class="bg-indigo-100 text-indigo-600 rounded-full w-8 h-8 flex items-center justify-center font-bold">
-                                    {{ object.last_edited_by.email|first|upper }}
-                                </div>
-                                <div class="text-gray-900 font-medium">
-                                    {{ object.last_edited_by.email }}
-                                    {% if object.last_edited_at %}
-                                    <div class="text-xs text-gray-500">
-                                        {{ object.last_edited_at|date:"M d, Y" }} at {{ object.last_edited_at|date:"H:i" }}
-                                    </div>
-                                    {% endif %}
-                                </div>
-                            </div>
-                        </div>
-                        {% endif %}
-
-                        {% if object.marketing_roles.exists %}
-                        <div>
-                            <span class="block text-gray-500 mb-1">Marketing Roles</span>
-                            <div class="flex flex-wrap gap-2">
-                                {% for role in object.marketing_roles.all %}
-                                <span
-                                    class="text-gray-900 font-medium bg-indigo-50 text-indigo-700 px-2 py-1 rounded text-xs">
-                                    {{ role.name }}
-                                </span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        {% endif %}
-
-                        {% if object.salary_range %}
-                        <div>
-                            <span class="block text-gray-500 mb-1">Salary Range</span>
-                            <span class="text-gray-900 font-medium bg-green-50 text-green-700 px-2 py-1 rounded">
-                                {{ object.salary_range }}
-                            </span>
-                        </div>
-                        {% endif %}
-
-                        <div>
-                            <span class="block text-gray-500 mb-1">Job ID</span>
-                            <span class="font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded text-xs select-all">
-                                {{ object.id }}
-                            </span>
-                        </div>
-                        {% if consultant_submission_for_job %}
-                        <div>
-                            <a href="{% url 'interview-add' %}?job={{ object.pk }}"
-                                class="inline-flex items-center gap-2 w-full justify-center bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 px-4 rounded-lg text-sm transition">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                                </svg>
-                                Schedule interview
-                            </a>
-                            <p class="text-xs text-gray-500 mt-1.5">You applied for this job. Add it to your calendar.</p>
-                        </div>
-                        {% endif %}
-                        <div>
-                            <span class="block text-gray-500 mb-1">JD Parse</span>
-                            <div class="flex items-center gap-2">
-                                {% if object.parsed_jd_status == 'OK' %}
-                                <span class="px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-800">OK</span>
-                                {% elif object.parsed_jd_status == 'ERROR' %}
-                                <span class="px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-800">ERROR</span>
-                                {% else %}
-                                <span class="px-2 py-0.5 rounded text-xs font-bold bg-gray-100 text-gray-600">N/A</span>
-                                {% endif %}
-                                {% if object.parsed_jd_updated_at %}
-                                <span class="text-xs text-gray-500">
-                                    {{ object.parsed_jd_updated_at|date:"M d, Y" }} at {{ object.parsed_jd_updated_at|date:"H:i" }}
-                                </span>
-                                {% endif %}
-                            </div>
-                            {% if object.parsed_jd_error %}
-                            <div class="text-xs text-red-600 mt-1">{{ object.parsed_jd_error }}</div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
-
-                {% if parsed_jd_json %}
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-4">
-                    <div class="flex items-center justify-between">
-                        <h4 class="font-bold text-gray-800">Parsed JD Summary</h4>
-                        <span class="text-xs text-gray-500">Auto‑extracted</span>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
-                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            <div class="text-xs text-gray-500 mb-1">Role Domain</div>
-                            <div class="font-semibold text-gray-900">{{ object.parsed_jd.role_domain|default:"—" }}</div>
-                        </div>
-                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            <div class="text-xs text-gray-500 mb-1">Seniority</div>
-                            <div class="font-semibold text-gray-900">{{ object.parsed_jd.seniority_level|default:"—" }}</div>
-                        </div>
-                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            <div class="text-xs text-gray-500 mb-1">Parsed Job Title</div>
-                            <div class="font-semibold text-gray-900">{{ object.parsed_jd.job_title|default:"—" }}</div>
-                        </div>
-                        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                            <div class="text-xs text-gray-500 mb-1">Parsed Company</div>
-                            <div class="font-semibold text-gray-900">{{ object.parsed_jd.company|default:"—" }}</div>
-                        </div>
-                    </div>
-
-                    <div class="space-y-4 text-sm">
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Required Skills</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.required_skills %}
-                                <span class="px-2 py-1 rounded bg-indigo-50 text-indigo-700 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Preferred Skills</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.preferred_skills %}
-                                <span class="px-2 py-1 rounded bg-blue-50 text-blue-700 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Tools & Technologies</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.tools_and_technologies %}
-                                <span class="px-2 py-1 rounded bg-gray-100 text-gray-800 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Platforms & Services</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.platforms_and_services %}
-                                <span class="px-2 py-1 rounded bg-green-50 text-green-700 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Domain Terms</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.domain_specific_terms %}
-                                <span class="px-2 py-1 rounded bg-yellow-50 text-yellow-800 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">Certifications Preferred</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.certifications_preferred %}
-                                <span class="px-2 py-1 rounded bg-purple-50 text-purple-700 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-xs text-gray-500 mb-2">ATS Keywords</div>
-                            <div class="flex flex-wrap gap-2">
-                                {% for item in object.parsed_jd.keywords_for_ats %}
-                                <span class="px-2 py-1 rounded bg-gray-50 text-gray-700 text-xs font-medium">{{ item }}</span>
-                                {% empty %}
-                                <span class="text-gray-500">—</span>
-                                {% endfor %}
-                            </div>
-                        </div>
-                    </div>
-
-                    <details>
-                        <summary class="cursor-pointer font-semibold text-gray-800">Parsed JD (JSON)</summary>
-                        <pre class="mt-3 text-xs text-gray-700 bg-gray-50 border border-gray-200 rounded-lg p-3 whitespace-pre-wrap">{{ parsed_jd_json }}</pre>
-                    </details>
-                </div>
-                {% endif %}
-
-                {% if consultant_match_rankings %}
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-                    <h4 class="font-bold text-gray-800 mb-1 flex items-center justify-between">
-                        <span class="uppercase tracking-wide text-xs">Consultant match</span>
-                        <span class="text-xs text-gray-500">Top {{ consultant_match_rankings|length }} by fit</span>
-                    </h4>
-                    <p class="text-xs text-gray-500 mb-4">Match % uses JD required skills vs consultant profile skills (same family as rejection analysis).</p>
-                    <div class="overflow-x-auto max-h-[28rem] overflow-y-auto space-y-2 text-sm">
-                        {% for row in consultant_match_rankings %}
-                        {% with c=row.consultant %}
-                        <div class="border border-gray-100 rounded-lg p-3 hover:bg-blue-50/40 transition">
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="min-w-0">
-                                    <div class="font-semibold text-gray-900 truncate">
-                                        <a href="{% url 'consultant-detail' c.user.pk %}" class="hover:text-blue-600">
-                                            {{ c.user.get_full_name|default:c.user.username }}
-                                        </a>
-                                    </div>
-                                    <div class="text-xs text-gray-500">
-                                        {% if c.hourly_rate %}${{ c.hourly_rate }}/hr ·{% endif %}
-                                        {{ c.get_status_display }}
-                                    </div>
-                                </div>
-                                <div class="flex flex-col items-end flex-shrink-0">
-                                    <span class="text-lg font-extrabold text-blue-700 tabular-nums">{{ row.match_pct }}%</span>
-                                    <span class="text-[10px] text-gray-400">score {{ row.raw_score }}</span>
-                                </div>
-                            </div>
-                            {% if row.total_required %}
-                            <p class="text-[10px] text-gray-500 mt-1">JD skills matched {{ row.matched_required }}/{{ row.total_required }}</p>
-                            {% endif %}
-                            {% if c.skills %}
-                            <div class="mt-2 flex flex-wrap gap-1">
-                                {% for s in c.skills|slice:":5" %}
-                                <span class="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 text-[10px] font-medium">{{ s }}</span>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
-                        </div>
-                        {% endwith %}
-                        {% endfor %}
-                    </div>
-                </div>
-                {% endif %}
-
-                <!-- Validation Score Card -->
-                {% if object.validation_score is not None %}
-                <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6 space-y-3">
-                    <div class="flex items-center justify-between">
-                        <h4 class="font-bold text-gray-800 uppercase tracking-wide text-xs">Validation Score</h4>
-                        {% if object.validation_score >= 80 %}
-                        <span class="px-2 py-1 bg-green-100 text-green-800 text-xs font-bold rounded-full">High</span>
-                        {% elif object.validation_score >= 50 %}
-                        <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs font-bold rounded-full">Review</span>
-                        {% else %}
-                        <span class="px-2 py-1 bg-red-100 text-red-800 text-xs font-bold rounded-full">Flagged</span>
-                        {% endif %}
-                    </div>
-
-                    <!-- Score bar -->
-                    <div>
-                        <div class="flex justify-between text-xs text-gray-500 mb-1">
-                            <span>Quality</span>
-                            <span class="font-bold text-gray-800">{{ object.validation_score }}/100</span>
-                        </div>
-                        <div class="w-full bg-gray-200 rounded-full h-2.5">
-                            <div class="h-2.5 rounded-full transition-all
-                                {% if object.validation_score >= 80 %}bg-green-500
-                                {% elif object.validation_score >= 50 %}bg-yellow-400
-                                {% else %}bg-red-500{% endif %}"
-                                style="width: {{ object.validation_score }}%"></div>
-                        </div>
-                    </div>
-
-                    <!-- Issues list -->
-                    {% if object.validation_result.issues %}
-                    <div class="space-y-1.5 pt-1">
-                        {% for issue in object.validation_result.issues %}
-                        <div class="flex items-start gap-2 text-xs">
-                            <span class="flex-shrink-0 mt-0.5
-                                {% if issue.severity == 'critical' %}text-red-600
-                                {% elif issue.severity == 'high' %}text-orange-500
-                                {% elif issue.severity == 'medium' %}text-yellow-500
-                                {% else %}text-gray-400{% endif %}">●</span>
-                            <span class="text-gray-600">{{ issue.message }}</span>
-                        </div>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-
-                    <!-- Passed checks -->
-                    {% if object.validation_result.passed %}
-                    <div class="flex flex-wrap gap-1 pt-1 border-t border-gray-100">
-                        {% for p in object.validation_result.passed %}
-                        <span class="px-1.5 py-0.5 bg-green-50 text-green-700 text-xs rounded font-mono">✓ {{ p }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-
-                    {% if object.validation_run_at %}
-                    <p class="text-xs text-gray-400">Last checked {{ object.validation_run_at|date:"M d, Y H:i" }}</p>
-                    {% endif %}
-
-                    {% if user.is_superuser or user.role == 'ADMIN' or user.role == 'EMPLOYEE' %}
-                    <form method="post" action="{% url 'job-revalidate' object.pk %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="redirect_to" value="job-detail">
-                        <button type="submit" class="w-full text-xs text-gray-500 hover:text-blue-600 py-1 transition">
-                            ↻ Re-run validation
-                        </button>
-                    </form>
-                    {% endif %}
-                </div>
-                {% endif %}
-
-                {% if object.status == 'OPEN' %}
-                    {% if user.role == 'CONSULTANT' %}
-                    <a href="{% url 'submission-quick-submit' %}"
-                        class="block w-full text-center bg-blue-600 hover:bg-blue-700 text-white font-medium py-3 rounded-lg shadow-sm hover:shadow transition">
-                        Start application
-                    </a>
-                    <p class="text-xs text-gray-500 mt-2 text-center">Uses Quick submit with your latest resume draft.</p>
-                    {% else %}
-                    <a href="{% url 'public-job-list' %}"
-                        class="block w-full text-center bg-gray-100 hover:bg-gray-200 text-gray-800 font-medium py-3 rounded-lg border border-gray-200 transition text-sm">
-                        Public job board
-                    </a>
-                    <p class="text-xs text-gray-500 mt-2 text-center">Consultants: use Quick submit or your workflow to apply.</p>
-                    {% endif %}
-                {% else %}
-                <div class="w-full bg-gray-200 text-gray-600 font-medium py-3 rounded-lg text-center text-sm">
-                    Not open for applications
-                </div>
-                {% endif %}
-
+            <div class="flex items-center gap-2 text-gray-500">
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+              {{ object.location|default:"Remote" }}
             </div>
+            <div class="flex items-center gap-2 text-gray-500">
+              <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              {{ object.get_job_type_display }}
+            </div>
+            {% if object.salary_range %}
+            <div class="flex items-center gap-2 text-emerald-700 font-semibold">
+              <svg class="w-4 h-4 text-emerald-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+              {{ object.salary_range }}
+            </div>
+            {% endif %}
+          </div>
         </div>
+
+        {# Action buttons — compact #}
+        {% if user.is_authenticated and object.posted_by == user or user.is_superuser or user.role == 'ADMIN' or user.role == 'EMPLOYEE' %}
+        <div class="flex items-center gap-2 shrink-0">
+          <a href="{% url 'job-update' object.pk %}" class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition" title="Edit">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+            Edit
+          </a>
+          <form action="{% url 'job-parse-jd' object.pk %}" method="post" class="inline">
+            {% csrf_token %}
+            <button type="submit" class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition" title="Parse JD with AI">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+              Parse JD
+            </button>
+          </form>
+          <button type="button" id="copy-jd" class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 transition" title="Copy JD to clipboard">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
+            <span id="copy-jd-text">Copy JD</span>
+          </button>
+          <a href="{% url 'job-delete' object.pk %}" class="inline-flex items-center gap-1.5 px-3.5 py-2 text-sm font-semibold rounded-lg border border-red-200 text-red-600 hover:bg-red-50 transition" title="Delete" onclick="return confirm('Delete this job permanently?')">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+          </a>
+        </div>
+        {% endif %}
+      </div>
     </div>
+
+    {# Status pills row #}
+    <div class="px-6 sm:px-8 pb-5 flex flex-wrap items-center gap-2">
+      {# Status #}
+      <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold uppercase tracking-wide
+          {% if object.status == 'OPEN' %}bg-emerald-100 text-emerald-800
+          {% elif object.status == 'CLOSED' %}bg-gray-200 text-gray-600
+          {% elif object.status == 'POOL' %}bg-amber-100 text-amber-800
+          {% else %}bg-blue-100 text-blue-700{% endif %}">
+        <span class="w-1.5 h-1.5 rounded-full
+            {% if object.status == 'OPEN' %}bg-emerald-500
+            {% elif object.status == 'CLOSED' %}bg-gray-400
+            {% elif object.status == 'POOL' %}bg-amber-500
+            {% else %}bg-blue-500{% endif %}"></span>
+        {{ object.get_status_display }}
+      </span>
+
+      {# Stage #}
+      {% if object.stage %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold
+          {% if object.stage == 'LIVE' or object.stage == 'MATCHED' %}bg-green-100 text-green-700
+          {% elif object.stage == 'VETTED' or object.stage == 'SCORED' %}bg-blue-100 text-blue-700
+          {% elif object.stage == 'ENRICHED' %}bg-purple-100 text-purple-700
+          {% elif object.stage == 'ARCHIVED' or object.stage == 'FILLED' %}bg-gray-100 text-gray-500
+          {% else %}bg-violet-100 text-violet-700{% endif %}">
+        {{ object.get_stage_display }}
+      </span>
+      {% endif %}
+
+      {# Quality score #}
+      {% if object.quality_score is not None %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-mono font-bold
+          {% if object.quality_score >= 0.7 %}bg-emerald-50 text-emerald-700
+          {% elif object.quality_score >= 0.4 %}bg-amber-50 text-amber-700
+          {% else %}bg-red-50 text-red-700{% endif %}"
+          title="Quality score">
+        Q: {{ object.quality_score }}
+      </span>
+      {% endif %}
+
+      {# Country #}
+      {% if object.country %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-50 text-sky-700 border border-sky-100">
+        🌍 {{ object.country }}{% if object.region %} · {{ object.region }}{% endif %}
+      </span>
+      {% endif %}
+
+      {# Department #}
+      {% if object.department %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-violet-50 text-violet-700 border border-violet-100"
+            title="Source: {{ object.department_source }} · Confidence: {{ object.department_confidence }}">
+        {{ object.get_department_display }}
+        {% if object.department_source == 'manual' %}
+        <span class="ml-1 px-1 py-0.5 rounded bg-amber-100 text-amber-700 text-[9px]">manual</span>
+        {% endif %}
+      </span>
+      {% endif %}
+
+      {# Marketing roles #}
+      {% for role in object.marketing_roles.all %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">{{ role.name }}</span>
+      {% endfor %}
+
+      {# Possibly filled #}
+      {% if object.possibly_filled %}
+      <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200 animate-pulse"
+            title="Source URL appears gone — role may be filled">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01"/></svg>
+        Possibly filled
+      </span>
+      {% endif %}
+
+      {# Link not live #}
+      {% if not object.original_link_is_live and object.original_link %}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-red-50 text-red-600 border border-red-100">Link down</span>
+      {% endif %}
+
+      {# Applications count #}
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-gray-100 text-gray-600">
+        {{ application_count|default:0 }} application{{ application_count|default:0|pluralize }}
+      </span>
+    </div>
+
+    {# Quick links bar #}
+    <div class="px-6 sm:px-8 pb-4 flex flex-wrap items-center gap-3 text-xs">
+      <span class="text-gray-400 font-medium">Posted {{ object.created_at|date:"M d, Y" }}{% if object.posted_by %} by {{ object.posted_by.get_full_name|default:object.posted_by.email }}{% endif %}</span>
+      {% if object.original_link %}
+      <span class="text-gray-300">·</span>
+      <a href="{{ object.original_link }}" target="_blank" class="text-blue-600 hover:underline flex items-center gap-1 font-medium">
+        View Original
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+      </a>
+      {% endif %}
+      {% if object.source_raw_job %}
+      <span class="text-gray-300">·</span>
+      <a href="{% url 'harvest-rawjob-detail' object.source_raw_job.pk %}" class="inline-flex items-center gap-1 text-violet-600 hover:underline font-medium">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+        Raw Job #{{ object.source_raw_job.pk }}
+      </a>
+      {% endif %}
+      {% if user.is_superuser or user.role == 'ADMIN' %}
+      <span class="text-gray-300">·</span>
+      <a href="{% url 'job-timeline' object.pk %}" class="text-gray-500 hover:text-blue-600 flex items-center gap-1 font-medium transition">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>
+        Timeline
+      </a>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ━━ TWO-COLUMN LAYOUT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+    {# ━━ LEFT: Description (2 cols wide) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="lg:col-span-2 space-y-6">
+
+      {# Job Description #}
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-6 sm:px-8 py-5 border-b border-gray-100 flex items-center justify-between">
+          <h2 class="text-base font-bold text-gray-900 flex items-center gap-2">
+            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            Job Description
+          </h2>
+          {% if object.last_edited_by and object.last_edited_by != object.posted_by %}
+          <span class="text-[10px] text-gray-400">Edited by {{ object.last_edited_by.email }} {{ object.last_edited_at|date:"M d" }}</span>
+          {% endif %}
+        </div>
+        <div class="px-6 sm:px-8 py-6">
+          <div id="job-description" class="prose prose-sm max-w-none text-gray-700 leading-relaxed whitespace-pre-wrap">{{ description_collapsed|linebreaksbr }}</div>
+        </div>
+      </div>
+
+      {# Parsed JD — Skills & Analysis #}
+      {% if parsed_jd_json %}
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden" x-data="{ expanded: true }">
+        <button @click="expanded = !expanded" class="w-full px-6 sm:px-8 py-4 flex items-center justify-between text-left hover:bg-gray-50 transition">
+          <h2 class="text-base font-bold text-gray-900 flex items-center gap-2">
+            <svg class="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+            AI-Parsed JD Analysis
+          </h2>
+          <svg :class="expanded ? 'rotate-180' : ''" class="w-4 h-4 text-gray-400 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <div x-show="expanded" x-collapse>
+          <div class="px-6 sm:px-8 pb-6 space-y-5">
+
+            {# Quick parsed cards #}
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div class="bg-gray-50 rounded-lg p-3">
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Domain</div>
+                <div class="text-sm font-bold text-gray-900">{{ object.parsed_jd.role_domain|default:"—" }}</div>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3">
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Seniority</div>
+                <div class="text-sm font-bold text-gray-900">{{ object.parsed_jd.seniority_level|default:"—" }}</div>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3">
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Parsed Title</div>
+                <div class="text-sm font-bold text-gray-900 truncate">{{ object.parsed_jd.job_title|default:"—" }}</div>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3">
+                <div class="text-[10px] text-gray-400 uppercase tracking-wider mb-1">Company</div>
+                <div class="text-sm font-bold text-gray-900 truncate">{{ object.parsed_jd.company|default:"—" }}</div>
+              </div>
+            </div>
+
+            {# Skills tags #}
+            {% if object.parsed_jd.required_skills %}
+            <div>
+              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Required Skills</h3>
+              <div class="flex flex-wrap gap-1.5">
+                {% for item in object.parsed_jd.required_skills %}
+                <span class="px-2.5 py-1 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium border border-indigo-100">{{ item }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            {% if object.parsed_jd.preferred_skills %}
+            <div>
+              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Preferred Skills</h3>
+              <div class="flex flex-wrap gap-1.5">
+                {% for item in object.parsed_jd.preferred_skills %}
+                <span class="px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 text-xs font-medium border border-blue-100">{{ item }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            {% if object.parsed_jd.tools_and_technologies %}
+            <div>
+              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Tools & Technologies</h3>
+              <div class="flex flex-wrap gap-1.5">
+                {% for item in object.parsed_jd.tools_and_technologies %}
+                <span class="px-2.5 py-1 rounded-full bg-gray-100 text-gray-700 text-xs font-medium">{{ item }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {% if object.parsed_jd.platforms_and_services %}
+              <div>
+                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Platforms</h3>
+                <div class="flex flex-wrap gap-1.5">
+                  {% for item in object.parsed_jd.platforms_and_services %}
+                  <span class="px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 text-xs font-medium">{{ item }}</span>
+                  {% endfor %}
+                </div>
+              </div>
+              {% endif %}
+              {% if object.parsed_jd.certifications_preferred %}
+              <div>
+                <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Certifications</h3>
+                <div class="flex flex-wrap gap-1.5">
+                  {% for item in object.parsed_jd.certifications_preferred %}
+                  <span class="px-2 py-0.5 rounded bg-purple-50 text-purple-700 text-xs font-medium">{{ item }}</span>
+                  {% endfor %}
+                </div>
+              </div>
+              {% endif %}
+            </div>
+
+            {% if object.parsed_jd.keywords_for_ats %}
+            <div>
+              <h3 class="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">ATS Keywords</h3>
+              <div class="flex flex-wrap gap-1.5">
+                {% for item in object.parsed_jd.keywords_for_ats %}
+                <span class="px-2 py-0.5 rounded bg-amber-50 text-amber-700 text-xs font-medium">{{ item }}</span>
+                {% endfor %}
+              </div>
+            </div>
+            {% endif %}
+
+            {# Raw JSON toggle #}
+            <div class="pt-2 border-t border-gray-100">
+              <button @click="showRawJson = !showRawJson" class="text-xs text-gray-400 hover:text-gray-600 transition">
+                <span x-text="showRawJson ? '▼ Hide raw JSON' : '▶ Show raw JSON'"></span>
+              </button>
+              <pre x-show="showRawJson" x-transition class="mt-2 text-xs text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3 overflow-x-auto max-h-72" x-cloak>{{ parsed_jd_json }}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ━━ RIGHT SIDEBAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+    <div class="space-y-5">
+
+      {# Quick Apply / CTA #}
+      {% if object.status == 'OPEN' %}
+        {% if user.role == 'CONSULTANT' %}
+        <a href="{% url 'submission-quick-submit' %}" class="flex items-center justify-center gap-2 w-full py-3.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm transition shadow-sm">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          Quick Submit Application
+        </a>
+        {% endif %}
+      {% endif %}
+
+      {# Consultant Match Rankings #}
+      {% if consultant_match_rankings %}
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+          <h3 class="text-xs font-bold text-gray-800 uppercase tracking-wider">Consultant Match</h3>
+          <span class="text-[10px] text-gray-400">Top {{ consultant_match_rankings|length }}</span>
+        </div>
+        <div class="divide-y divide-gray-50 max-h-80 overflow-y-auto">
+          {% for row in consultant_match_rankings %}
+          {% with c=row.consultant %}
+          <a href="{% url 'consultant-detail' c.user.pk %}" class="flex items-center gap-3 px-5 py-3 hover:bg-blue-50/50 transition">
+            <div class="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
+              {{ c.user.first_name|first|upper|default:"?" }}{{ c.user.last_name|first|upper }}
+            </div>
+            <div class="min-w-0 flex-1">
+              <div class="text-sm font-semibold text-gray-900 truncate">{{ c.user.get_full_name|default:c.user.username }}</div>
+              <div class="text-[10px] text-gray-400">{{ c.get_status_display }}{% if c.hourly_rate %} · ${{ c.hourly_rate }}/hr{% endif %}</div>
+            </div>
+            <div class="text-right shrink-0">
+              <div class="text-lg font-extrabold tabular-nums
+                  {% if row.match_pct >= 70 %}text-emerald-600
+                  {% elif row.match_pct >= 40 %}text-amber-600
+                  {% else %}text-gray-400{% endif %}">{{ row.match_pct }}%</div>
+              <div class="text-[9px] text-gray-400">{{ row.matched_required|default:0 }}/{{ row.total_required|default:"?" }} skills</div>
+            </div>
+          </a>
+          {% endwith %}
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+      {# Validation Score #}
+      {% if object.validation_score is not None %}
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-bold text-gray-800 uppercase tracking-wider">Validation</h3>
+          {% if object.validation_score >= 80 %}
+          <span class="px-2 py-0.5 bg-emerald-100 text-emerald-800 text-xs font-bold rounded-full">Passed</span>
+          {% elif object.validation_score >= 50 %}
+          <span class="px-2 py-0.5 bg-amber-100 text-amber-800 text-xs font-bold rounded-full">Review</span>
+          {% else %}
+          <span class="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-bold rounded-full">Flagged</span>
+          {% endif %}
+        </div>
+
+        <div>
+          <div class="flex justify-between text-xs text-gray-500 mb-1.5">
+            <span>Score</span>
+            <span class="font-bold text-gray-800">{{ object.validation_score }}/100</span>
+          </div>
+          <div class="w-full bg-gray-100 rounded-full h-2">
+            <div class="h-2 rounded-full transition-all
+                {% if object.validation_score >= 80 %}bg-emerald-500
+                {% elif object.validation_score >= 50 %}bg-amber-400
+                {% else %}bg-red-500{% endif %}"
+                style="width: {{ object.validation_score }}%"></div>
+          </div>
+        </div>
+
+        {% if object.validation_result.issues %}
+        <div class="space-y-1 pt-1">
+          {% for issue in object.validation_result.issues %}
+          <div class="flex items-start gap-1.5 text-[11px]">
+            <span class="mt-0.5 shrink-0 {% if issue.severity == 'critical' %}text-red-500{% elif issue.severity == 'high' %}text-orange-500{% else %}text-amber-400{% endif %}">●</span>
+            <span class="text-gray-600">{{ issue.message }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if object.validation_result.passed %}
+        <div class="flex flex-wrap gap-1 pt-2 border-t border-gray-100">
+          {% for p in object.validation_result.passed %}
+          <span class="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 text-[10px] rounded font-mono">✓ {{ p }}</span>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if object.validation_run_at %}
+        <p class="text-[10px] text-gray-400">Checked {{ object.validation_run_at|timesince }} ago</p>
+        {% endif %}
+
+        {% if user.is_superuser or user.role == 'ADMIN' or user.role == 'EMPLOYEE' %}
+        <form method="post" action="{% url 'job-revalidate' object.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="redirect_to" value="job-detail">
+          <button type="submit" class="w-full text-xs text-gray-400 hover:text-blue-600 py-1.5 border border-gray-200 rounded-lg hover:border-blue-200 transition">↻ Re-run validation</button>
+        </form>
+        {% endif %}
+      </div>
+      {% endif %}
+
+      {# JD Parse Status #}
+      <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+        <h3 class="text-xs font-bold text-gray-800 uppercase tracking-wider mb-3">JD Parse Status</h3>
+        <div class="flex items-center gap-2">
+          {% if object.parsed_jd_status == 'OK' %}
+          <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+          <span class="text-sm font-medium text-emerald-700">Parsed</span>
+          {% elif object.parsed_jd_status == 'ERROR' %}
+          <span class="w-2 h-2 rounded-full bg-red-500"></span>
+          <span class="text-sm font-medium text-red-700">Error</span>
+          {% else %}
+          <span class="w-2 h-2 rounded-full bg-gray-300"></span>
+          <span class="text-sm font-medium text-gray-500">Not parsed</span>
+          {% endif %}
+          {% if object.parsed_jd_updated_at %}
+          <span class="text-xs text-gray-400 ml-auto">{{ object.parsed_jd_updated_at|timesince }} ago</span>
+          {% endif %}
+        </div>
+        {% if object.parsed_jd_error %}
+        <p class="text-xs text-red-500 mt-2 bg-red-50 rounded p-2">{{ object.parsed_jd_error }}</p>
+        {% endif %}
+      </div>
+
+      {# Schedule Interview (for consultants who applied) #}
+      {% if consultant_submission_for_job %}
+      <a href="{% url 'interview-add' %}?job={{ object.pk }}" class="flex items-center justify-center gap-2 w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-sm transition shadow-sm">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+        Schedule Interview
+      </a>
+      {% endif %}
+
+      {# Not Open banner #}
+      {% if object.status == 'CLOSED' %}
+      <div class="w-full bg-gray-100 text-gray-500 font-medium py-3 rounded-xl text-center text-sm border border-gray-200">
+        This job is closed
+      </div>
+      {% endif %}
+
+    </div>
+  </div>
 </div>
+
 <textarea id="job-description-raw" class="hidden">{{ object.description }}</textarea>
 <script>
-    (function () {
-        const btn = document.getElementById('copy-jd');
-        const raw = document.getElementById('job-description-raw');
-        if (!btn || !raw) return;
-        btn.addEventListener('click', async () => {
-            const text = raw.value || '';
-            try {
-                await navigator.clipboard.writeText(text);
-                const original = btn.textContent.trim();
-                btn.textContent = 'JD Copied';
-                setTimeout(() => { btn.textContent = original; }, 1500);
-            } catch (e) {
-                alert('Copy failed. Select the description text manually.');
-            }
+(function () {
+    var btn = document.getElementById('copy-jd');
+    var raw = document.getElementById('job-description-raw');
+    var label = document.getElementById('copy-jd-text');
+    if (!btn || !raw) return;
+    btn.addEventListener('click', function() {
+        var text = raw.value || '';
+        navigator.clipboard.writeText(text).then(function() {
+            label.textContent = 'Copied!';
+            btn.classList.add('border-emerald-300', 'text-emerald-700');
+            setTimeout(function() {
+                label.textContent = 'Copy JD';
+                btn.classList.remove('border-emerald-300', 'text-emerald-700');
+            }, 2000);
+        }).catch(function() {
+            alert('Copy failed. Select the description text manually.');
         });
-    })();
+    });
+})();
 </script>
 {% endblock %}
