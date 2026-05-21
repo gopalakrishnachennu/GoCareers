@@ -473,7 +473,7 @@ class ConsultantDetailView(LoginRequiredMixin, DetailView):
         # ── All submissions for this consultant ─────────────────────────
         submissions = ApplicationSubmission.objects.filter(
             consultant=profile, is_archived=False
-        ).select_related('job', 'job__company', 'submitted_by').order_by('-created_at')
+        ).select_related('job', 'job__company_obj', 'submitted_by').order_by('-created_at')
 
         context['submissions'] = submissions[:20]
         context['total_submissions'] = submissions.count()
