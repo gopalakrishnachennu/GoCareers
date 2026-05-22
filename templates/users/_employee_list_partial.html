@@ -1,78 +1,82 @@
-<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
     {% for employee in employees %}
-    <div
-        class="bg-white rounded-lg shadow-sm hover:shadow-sm transition p-6 flex flex-col justify-between h-full border border-gray-100">
+    {% with ep=employee.employee_profile %}
+    <a href="{% url 'employee-detail' employee.pk %}" class="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all p-5 flex flex-col justify-between h-full group">
         <div>
-            <div class="mb-4">
-                <h3 class="text-lg font-bold text-gray-800">{{ employee.get_full_name|default:employee.username }}
-                </h3>
-                <p class="text-sm text-gray-500">{{ employee.email }}</p>
+            {# Header: Avatar + Name #}
+            <div class="flex items-start gap-3.5 mb-3">
+                <div class="h-11 w-11 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center text-sm font-bold shrink-0 shadow-sm">
+                    {{ employee.first_name|first|upper|default:"?" }}{{ employee.last_name|first|upper }}
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h3 class="text-sm font-extrabold text-gray-900 group-hover:text-indigo-700 transition truncate">{{ employee.get_full_name|default:employee.username }}</h3>
+                    <p class="text-[11px] text-gray-400 truncate">{{ employee.email }}</p>
+                </div>
+                {# Active/Inactive dot #}
+                {% if employee.is_active %}
+                <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0 mt-1.5" title="Active"></span>
+                {% else %}
+                <span class="w-2 h-2 rounded-full bg-red-400 shrink-0 mt-1.5" title="Inactive"></span>
+                {% endif %}
             </div>
 
-            <div class="mb-4 text-sm text-gray-600 space-y-1">
+            {# Info pills #}
+            <div class="space-y-1.5 mb-3">
+                {% if ep.designation %}
                 <div class="flex items-center gap-2">
-                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4">
-                        </path>
-                    </svg>
-                    <span>{{ employee.employee_profile.company_name|default:"-" }}</span>
+                    <svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4M7.835 4.697a3.42 3.42 0 001.946-.806 3.42 3.42 0 014.438 0 3.42 3.42 0 001.946.806 3.42 3.42 0 013.138 3.138 3.42 3.42 0 00.806 1.946 3.42 3.42 0 010 4.438 3.42 3.42 0 00-.806 1.946 3.42 3.42 0 01-3.138 3.138 3.42 3.42 0 00-1.946.806 3.42 3.42 0 01-4.438 0 3.42 3.42 0 00-1.946-.806 3.42 3.42 0 01-3.138-3.138 3.42 3.42 0 00-.806-1.946 3.42 3.42 0 010-4.438 3.42 3.42 0 00.806-1.946 3.42 3.42 0 013.138-3.138z"/></svg>
+                    <span class="text-xs font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded-full">{{ ep.designation.name }}</span>
                 </div>
+                {% endif %}
                 <div class="flex items-center gap-2">
-                    <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z">
-                        </path>
-                    </svg>
-                    <span>{{ employee.employee_profile.department|default:"No Department" }}</span>
+                    <svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+                    <span class="text-xs text-gray-500">{{ ep.company_name|default:"-" }}</span>
                 </div>
+                {% if ep.department %}
+                <div class="flex items-center gap-2">
+                    <svg class="w-3.5 h-3.5 text-gray-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                    <span class="text-xs text-gray-500">{{ ep.department }}</span>
+                </div>
+                {% endif %}
+            </div>
+
+            {# Permission badges #}
+            <div class="flex flex-wrap gap-1.5">
+                {% if ep.can_manage_consultants %}
+                <span class="px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100">Consultant Mgmt</span>
+                {% endif %}
+                {% if employee.is_superuser %}
+                <span class="px-2 py-0.5 rounded-full text-[9px] font-bold bg-red-50 text-red-600 border border-red-100">Superuser</span>
+                {% endif %}
             </div>
         </div>
 
-        <div class="mt-4 pt-4 border-t border-gray-100 flex justify-end items-center gap-3">
-            <a href="{% url 'employee-detail' employee.pk %}"
-                class="text-blue-600 hover:text-blue-800 text-sm font-medium">View Profile</a>
-
-            {% if user.is_superuser or user.role == 'ADMIN' %}
-            <a href="{% url 'start-impersonate' employee.pk %}"
-                class="bg-amber-100 text-amber-700 hover:bg-amber-200 px-3 py-1 rounded text-xs font-bold transition flex items-center gap-1">
-                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                </svg>
-                Impersonate
-            </a>
-            {% endif %}
+        {# Footer: stats row #}
+        <div class="mt-3 pt-3 border-t border-gray-100 flex items-center justify-between text-[10px] text-gray-400">
+            <span>{% if employee.last_login %}Last login {{ employee.last_login|timesince }} ago{% else %}Never logged in{% endif %}</span>
+            <span class="text-indigo-500 font-semibold group-hover:text-indigo-700">View &rarr;</span>
         </div>
-    </div>
+    </a>
+    {% endwith %}
     {% empty %}
-    <div class="col-span-full text-center py-12">
-        <p class="text-gray-500 text-lg">No employees found matching your criteria.</p>
+    <div class="col-span-full text-center py-16">
+        <svg class="w-12 h-12 text-gray-200 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M16 14a4 4 0 10-8 0v4a2 2 0 01-2 2h12a2 2 0 01-2-2v-4zM12 4a3 3 0 110 6 3 3 0 010-6z"/></svg>
+        <p class="text-gray-400 text-sm font-medium">No employees found matching your criteria.</p>
     </div>
     {% endfor %}
 </div>
 
 {% if is_paginated %}
-<div class="mt-8 flex justify-center">
-    <!-- Simple Pagination -->
-    <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
+<div class="mt-6 flex justify-center">
+    <nav class="flex items-center gap-1" aria-label="Pagination">
         {% if page_obj.has_previous %}
         <a href="?page={{ page_obj.previous_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
-            class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-            Previous
-        </a>
+           class="px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition">&larr; Prev</a>
         {% endif %}
-        <span
-            class="relative inline-flex items-center px-4 py-2 border border-gray-300 bg-white text-sm font-medium text-gray-700">
-            Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
-        </span>
+        <span class="px-3 py-1.5 rounded-lg text-xs font-bold text-gray-800 bg-gray-100">{{ page_obj.number }} / {{ page_obj.paginator.num_pages }}</span>
         {% if page_obj.has_next %}
         <a href="?page={{ page_obj.next_page_number }}{% if request.GET.search %}&search={{ request.GET.search }}{% endif %}"
-            class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
-            Next
-        </a>
+           class="px-3 py-1.5 rounded-lg text-xs font-semibold text-gray-600 bg-white border border-gray-200 hover:bg-gray-50 transition">Next &rarr;</a>
         {% endif %}
     </nav>
 </div>

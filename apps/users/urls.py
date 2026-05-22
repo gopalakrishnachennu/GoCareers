@@ -22,7 +22,9 @@ urlpatterns = [
     path('employees/export/', EmployeeExportCSVView.as_view(), name='employee-export-csv'),
     path('employees/', EmployeeListView.as_view(), name='employee-list'),
     path('employees/create/', EmployeeCreateView.as_view(), name='employee-create'),
-    
+    path('employees/<int:pk>/', EmployeeDetailView.as_view(), name='employee-detail'),
+    path('employees/<int:pk>/edit/', EmployeeEditView.as_view(), name='employee-edit'),
+
     path('account/email-notifications/', EmailNotificationPreferencesView.as_view(), name='email-notification-preferences'),
     path('settings/', SettingsView.as_view(), name='settings-dashboard'),
     

@@ -1,56 +1,412 @@
 {% extends 'base.html' %}
+{% load humanize %}
 
 {% block content %}
-<div class="container mx-auto mt-8">
-    <div class="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden mb-8">
-        <div class="p-8 w-full">
-                <div class="flex justify-between items-start">
-                    <div>
-                        <div class="uppercase tracking-wide text-sm text-blue-500 font-semibold">Employee</div>
-                        <h1 class="block mt-1 text-3xl leading-tight font-bold text-gray-900">{{ employee.get_full_name|default:employee.username }}</h1>
-                        <p class="mt-2 text-gray-600">{{ employee.email }}</p>
-                    </div>
-                    {% if is_admin %}
-                    <a href="{% url 'employee-edit' employee.pk %}" class="bg-blue-100 text-blue-700 hover:bg-blue-200 px-4 py-2 rounded-lg text-sm font-bold transition flex items-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" /></svg>Edit Profile</a>
-                    {% endif %}
-                </div>
-                <div class="mt-6 grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <h3 class="font-bold text-gray-700 mb-2">Department</h3>
-                        <p class="text-gray-900 bg-gray-50 p-2 rounded">{{ employee.employee_profile.department|default:"Not Specified" }}</p>
-                    </div>
-                    <div>
-                        <h3 class="font-bold text-gray-700 mb-2">Company</h3>
-                        <p class="text-gray-900 bg-gray-50 p-2 rounded">{{ employee.employee_profile.company_name|default:"Not Specified" }}</p>
-                    </div>
-                </div>
-                <div class="mt-6">
-                    <h3 class="font-bold text-gray-700 mb-2">Permissions</h3>
-                    <div class="bg-gray-50 border border-gray-200 rounded p-3 space-y-2 text-sm">
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-600">Role</span>
-                            <span class="font-medium text-gray-900">{{ employee.get_role_display }}</span>
-                        </div>
-                        <div class="flex items-center justify-between">
-                            <span class="text-gray-600">Can manage consultants</span>
-                            <span class="px-2 py-0.5 rounded-full text-xs font-semibold
-                                {% if employee.employee_profile.can_manage_consultants %}
-                                    bg-green-100 text-green-700
-                                {% else %}
-                                    bg-gray-100 text-gray-700
-                                {% endif %}">
-                                {% if employee.employee_profile.can_manage_consultants %}Yes{% else %}No{% endif %}
-                            </span>
-                        </div>
-                    </div>
-                </div>
-                <div class="mt-8 flex space-x-4">
-                    <a href="mailto:{{ employee.email }}" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-6 rounded shadow">Contact via Email</a>
-                    {% if is_admin %}
-                    <a href="{% url 'start-impersonate' employee.pk %}" class="bg-amber-500 hover:bg-amber-600 text-white font-bold py-2 px-6 rounded shadow flex items-center gap-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>Impersonate</a>
-                    {% endif %}
-                </div>
+<div class="max-w-[1400px] mx-auto px-4 sm:px-6 py-6 space-y-5"
+     x-data="{ tab: 'overview' }">
+
+  {% with ep=employee.employee_profile %}
+
+  {# ━━ BREADCRUMB ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <nav class="flex items-center gap-2 text-sm text-gray-500 mb-1">
+    <a href="{% url 'admin-dashboard' %}" class="hover:text-gray-700 transition">Dashboard</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <a href="{% url 'employee-list' %}" class="hover:text-gray-700 transition">Employees</a>
+    <svg class="w-3.5 h-3.5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+    <span class="text-gray-900 font-medium truncate max-w-[250px]">{{ employee.get_full_name|default:employee.username }}</span>
+  </nav>
+
+  {# ━━ HERO CARD ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+    <div class="px-6 py-5 flex flex-col md:flex-row items-start gap-5">
+      {# Avatar #}
+      <div class="h-16 w-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 text-white flex items-center justify-center text-2xl font-bold shrink-0 shadow-lg">
+        {{ employee.first_name|first|upper|default:"?" }}{{ employee.last_name|first|upper }}
+      </div>
+      {# Info #}
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-3 flex-wrap">
+          <h1 class="text-2xl font-extrabold text-gray-900">{{ employee.get_full_name|default:employee.username }}</h1>
+          {% if employee.is_active %}
+          <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-700"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span>Active</span>
+          {% else %}
+          <span class="px-2.5 py-1 rounded-full text-xs font-bold bg-red-100 text-red-600">Disabled</span>
+          {% endif %}
+          {% if employee.is_superuser %}<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-600 border border-red-100">Superuser</span>{% endif %}
         </div>
+        {# Designation + Department #}
+        <div class="flex flex-wrap gap-1.5 mt-1.5">
+          {% if ep.designation %}<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">{{ ep.designation.name }}</span>{% endif %}
+          {% if ep.department %}<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-blue-50 text-blue-700 border border-blue-100">{{ ep.department }}</span>{% endif %}
+        </div>
+        {# Contact row #}
+        <div class="flex items-center gap-4 mt-2 text-sm text-gray-500 flex-wrap">
+          {% if employee.email %}<a href="mailto:{{ employee.email }}" class="hover:text-indigo-600 transition flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>{{ employee.email }}</a>{% endif %}
+          {% if ep.company_name %}<span class="flex items-center gap-1"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>{{ ep.company_name }}</span>{% endif %}
+        </div>
+      </div>
+      {# Actions #}
+      <div class="flex items-center gap-2 shrink-0 flex-wrap">
+        <a href="mailto:{{ employee.email }}" class="px-4 py-2 rounded-xl text-sm font-semibold text-gray-700 bg-white border border-gray-200 hover:bg-gray-50 transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>Email</a>
+        <a href="{% url 'employee-edit' employee.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>Edit</a>
+        <a href="{% url 'start-impersonate' employee.pk %}" class="px-4 py-2 rounded-xl text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 shadow-sm transition flex items-center gap-1.5"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>Impersonate</a>
+      </div>
     </div>
+  </div>
+
+  {# ━━ KPI STRIP ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+    <a href="#" @click.prevent="tab='activity'" class="bg-white rounded-xl border border-gray-200 p-3 text-center hover:shadow-md hover:border-blue-200 transition cursor-pointer">
+      <p class="text-xl font-extrabold text-gray-900">{{ total_submissions|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Submissions</p>
+    </a>
+    <div class="bg-white rounded-xl border border-gray-200 p-3 text-center">
+      <p class="text-xl font-extrabold text-blue-600">{{ submissions_30d|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Subs (30d)</p>
+    </div>
+    <a href="#" @click.prevent="tab='activity'" class="bg-white rounded-xl border border-gray-200 p-3 text-center hover:shadow-md hover:border-violet-200 transition cursor-pointer">
+      <p class="text-xl font-extrabold text-violet-600">{{ total_drafts|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Resumes</p>
+    </a>
+    <div class="bg-white rounded-xl border border-gray-200 p-3 text-center">
+      <p class="text-xl font-extrabold text-orange-600">{{ total_cover_letters|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Covers</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-3 text-center">
+      <p class="text-xl font-extrabold {% if managed_consultants %}text-emerald-600{% else %}text-gray-300{% endif %}">{{ managed_consultants|length|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Consultants</p>
+    </div>
+    <div class="bg-white rounded-xl border border-gray-200 p-3 text-center">
+      <p class="text-xl font-extrabold {% if feature_flags %}text-indigo-600{% else %}text-gray-300{% endif %}">{{ feature_flags|length|default:"0" }}</p>
+      <p class="text-[10px] font-semibold text-gray-400 uppercase">Permissions</p>
+    </div>
+  </div>
+
+  {# ━━ TAB NAV ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div class="flex items-center gap-1 bg-white rounded-xl border border-gray-200 p-1 overflow-x-auto">
+    <button @click="tab='overview'" :class="tab==='overview' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'" class="px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap">Overview</button>
+    <button @click="tab='activity'" :class="tab==='activity' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'" class="px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap">Activity <span class="ml-1 text-[10px] opacity-70">({{ total_submissions|default:"0" }})</span></button>
+    <button @click="tab='permissions'" :class="tab==='permissions' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'" class="px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap">Permissions</button>
+    <button @click="tab='settings'" :class="tab==='settings' ? 'bg-gray-900 text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'" class="px-4 py-2 rounded-lg text-sm font-semibold transition whitespace-nowrap">Settings</button>
+  </div>
+
+  {# ━━ TAB: OVERVIEW ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div x-show="tab==='overview'" x-transition class="space-y-5">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+      {# LEFT: Activity Summary #}
+      <div class="lg:col-span-2 space-y-5">
+
+        {# Submission Pipeline #}
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-4">Submissions by Status</h2>
+          <div class="grid grid-cols-4 sm:grid-cols-7 gap-2 text-center">
+            <div class="p-2 rounded-lg bg-gray-50">
+              <p class="text-lg font-extrabold text-gray-600">{{ submission_stats.IN_PROGRESS|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-gray-400 uppercase">Draft</p>
+            </div>
+            <div class="p-2 rounded-lg bg-blue-50">
+              <p class="text-lg font-extrabold text-blue-700">{{ submission_stats.APPLIED|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-blue-400 uppercase">Applied</p>
+            </div>
+            <div class="p-2 rounded-lg bg-violet-50">
+              <p class="text-lg font-extrabold text-violet-700">{{ submission_stats.INTERVIEW|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-violet-400 uppercase">Interview</p>
+            </div>
+            <div class="p-2 rounded-lg bg-emerald-50">
+              <p class="text-lg font-extrabold text-emerald-700">{{ submission_stats.OFFER|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-emerald-400 uppercase">Offer</p>
+            </div>
+            <div class="p-2 rounded-lg bg-green-50">
+              <p class="text-lg font-extrabold text-green-700">{{ submission_stats.PLACED|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-green-400 uppercase">Placed</p>
+            </div>
+            <div class="p-2 rounded-lg bg-red-50">
+              <p class="text-lg font-extrabold text-red-600">{{ submission_stats.REJECTED|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-red-400 uppercase">Rejected</p>
+            </div>
+            <div class="p-2 rounded-lg bg-gray-50">
+              <p class="text-lg font-extrabold text-gray-400">{{ submission_stats.WITHDRAWN|default:"0" }}</p>
+              <p class="text-[9px] font-semibold text-gray-300 uppercase">Withdrawn</p>
+            </div>
+          </div>
+        </div>
+
+        {# Recent Submissions #}
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+            <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Recent Submissions</h2>
+            <span class="text-[10px] text-gray-400">Last 20</span>
+          </div>
+          <div class="divide-y divide-gray-50">
+            {% for sub in submissions %}
+            <a href="{% url 'submission-detail' sub.pk %}" class="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 transition group">
+              <span class="px-2 py-0.5 rounded text-[9px] font-bold shrink-0
+                {% if sub.status == 'APPLIED' %}bg-blue-50 text-blue-700
+                {% elif sub.status == 'INTERVIEW' %}bg-violet-50 text-violet-700
+                {% elif sub.status == 'OFFER' %}bg-emerald-50 text-emerald-700
+                {% elif sub.status == 'PLACED' %}bg-green-50 text-green-700
+                {% elif sub.status == 'REJECTED' %}bg-red-50 text-red-600
+                {% else %}bg-gray-100 text-gray-500{% endif %}">{{ sub.get_status_display }}</span>
+              <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium text-gray-800 truncate group-hover:text-indigo-700">{{ sub.job.title }}</p>
+                <p class="text-[10px] text-gray-400">{{ sub.consultant.user.get_full_name }} &middot; {{ sub.created_at|timesince }} ago</p>
+              </div>
+              <svg class="w-3.5 h-3.5 text-gray-300 group-hover:text-indigo-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </a>
+            {% empty %}
+            <div class="px-5 py-8 text-center text-gray-400 text-sm">No submissions created by this employee</div>
+            {% endfor %}
+          </div>
+        </div>
+      </div>
+
+      {# RIGHT: Quick Info #}
+      <div class="space-y-5">
+
+        {# Performance Card #}
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-3">Performance</h2>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Submissions (30d)</span>
+              <span class="font-bold text-gray-800">{{ submissions_30d|default:"0" }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Submissions (90d)</span>
+              <span class="font-bold text-gray-800">{{ submissions_90d|default:"0" }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Resumes Generated</span>
+              <span class="font-bold text-gray-800">{{ total_drafts|default:"0" }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Cover Letters</span>
+              <span class="font-bold text-gray-800">{{ total_cover_letters|default:"0" }}</span>
+            </div>
+          </div>
+        </div>
+
+        {# Consultants Managed #}
+        {% if managed_consultants %}
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+          <div class="px-5 py-3 border-b border-gray-100">
+            <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Consultants Worked With</h2>
+          </div>
+          <div class="divide-y divide-gray-50">
+            {% for cp in managed_consultants %}
+            <a href="{% url 'consultant-detail' cp.user.pk %}" class="flex items-center gap-3 px-5 py-2.5 hover:bg-gray-50 transition group">
+              <div class="h-7 w-7 rounded-lg bg-gradient-to-br from-indigo-400 to-purple-500 text-white flex items-center justify-center text-[10px] font-bold shrink-0">{{ cp.user.first_name|first|upper }}{{ cp.user.last_name|first|upper }}</div>
+              <div class="flex-1 min-w-0">
+                <p class="text-xs font-semibold text-gray-800 truncate group-hover:text-indigo-700">{{ cp.user.get_full_name }}</p>
+                <p class="text-[10px] text-gray-400">{{ cp.get_status_display }}</p>
+              </div>
+            </a>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        {# Quick Permissions Summary #}
+        <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+          <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-3">Quick Permissions</h2>
+          <div class="space-y-2">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Designation</span>
+              <span class="font-bold text-gray-800">{{ ep.designation.name|default:"None" }}</span>
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Manage Consultants</span>
+              {% if ep.can_manage_consultants %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700">Yes</span>
+              {% else %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-500">No</span>{% endif %}
+            </div>
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-gray-500">Active Features</span>
+              <span class="font-bold text-indigo-600">{{ feature_flags|length }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ━━ TAB: ACTIVITY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div x-show="tab==='activity'" x-transition class="space-y-5">
+
+    {# Full Submissions Table #}
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-100">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">All Submissions ({{ total_submissions }})</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead><tr class="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+            <th class="px-5 py-2">Job</th><th class="py-2">Consultant</th><th class="py-2">Status</th><th class="py-2">Submitted</th><th class="py-2"></th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for sub in submissions %}
+            <tr class="hover:bg-gray-50 transition">
+              <td class="px-5 py-2.5"><a href="{% url 'submission-detail' sub.pk %}" class="font-semibold text-gray-800 hover:text-indigo-700">{{ sub.job.title|truncatechars:40 }}</a></td>
+              <td class="py-2.5"><a href="{% url 'consultant-detail' sub.consultant.user.pk %}" class="text-gray-600 hover:text-indigo-700">{{ sub.consultant.user.get_full_name|truncatechars:25 }}</a></td>
+              <td class="py-2.5"><span class="px-2 py-0.5 rounded text-[9px] font-bold
+                {% if sub.status == 'APPLIED' %}bg-blue-50 text-blue-700{% elif sub.status == 'INTERVIEW' %}bg-violet-50 text-violet-700{% elif sub.status == 'OFFER' %}bg-emerald-50 text-emerald-700{% elif sub.status == 'PLACED' %}bg-green-50 text-green-700{% elif sub.status == 'REJECTED' %}bg-red-50 text-red-600{% else %}bg-gray-100 text-gray-500{% endif %}">{{ sub.get_status_display }}</span></td>
+              <td class="py-2.5 text-gray-400">{{ sub.created_at|date:"M j, Y" }}</td>
+              <td class="py-2.5"><a href="{% url 'submission-detail' sub.pk %}" class="text-indigo-600 hover:text-indigo-800 font-bold">View</a></td>
+            </tr>
+            {% empty %}
+            <tr><td colspan="5" class="px-5 py-8 text-center text-gray-400">No submissions created by this employee</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# Resume Drafts #}
+    {% if resume_drafts %}
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-100">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Resume Drafts Generated ({{ total_drafts }})</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead><tr class="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+            <th class="px-5 py-2">Job</th><th class="py-2">Consultant</th><th class="py-2">Status</th><th class="py-2">ATS</th><th class="py-2">Created</th><th class="py-2"></th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for draft in resume_drafts %}
+            <tr class="hover:bg-gray-50 transition">
+              <td class="px-5 py-2.5 font-semibold text-gray-800">{{ draft.job.title|truncatechars:35 }}</td>
+              <td class="py-2.5 text-gray-500">{{ draft.consultant.user.get_full_name|truncatechars:20 }}</td>
+              <td class="py-2.5"><span class="px-2 py-0.5 rounded-full text-[10px] font-bold
+                {% if draft.status == 'FINAL' %}bg-emerald-100 text-emerald-700{% elif draft.status == 'REVIEW' %}bg-amber-100 text-amber-700{% elif draft.status == 'ERROR' %}bg-red-100 text-red-700{% else %}bg-blue-100 text-blue-700{% endif %}">{{ draft.status }}</span></td>
+              <td class="py-2.5">{% if draft.ats_score %}<span class="font-bold {% if draft.ats_score >= 80 %}text-emerald-600{% elif draft.ats_score >= 60 %}text-amber-600{% else %}text-red-500{% endif %}">{{ draft.ats_score }}%</span>{% else %}<span class="text-gray-300">&mdash;</span>{% endif %}</td>
+              <td class="py-2.5 text-gray-400">{{ draft.created_at|date:"M j" }}</td>
+              <td class="py-2.5"><a href="{% url 'draft-detail' draft.pk %}" class="text-indigo-600 hover:text-indigo-800 font-bold">View</a></td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+
+    {# Cover Letters #}
+    {% if cover_letters %}
+    <div class="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+      <div class="px-5 py-3 border-b border-gray-100">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider">Cover Letters ({{ total_cover_letters }})</h2>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead><tr class="text-left text-[10px] font-semibold text-gray-400 uppercase tracking-wider border-b border-gray-100">
+            <th class="px-5 py-2">Job</th><th class="py-2">Consultant</th><th class="py-2">Created</th>
+          </tr></thead>
+          <tbody class="divide-y divide-gray-50">
+            {% for cl in cover_letters %}
+            <tr class="hover:bg-gray-50 transition">
+              <td class="px-5 py-2.5 font-semibold text-gray-800">{{ cl.job.title|truncatechars:40 }}</td>
+              <td class="py-2.5 text-gray-500">{{ cl.consultant.user.get_full_name|truncatechars:25 }}</td>
+              <td class="py-2.5 text-gray-400">{{ cl.created_at|date:"M j, Y" }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ━━ TAB: PERMISSIONS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div x-show="tab==='permissions'" x-transition class="space-y-5">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+      {# RBAC Role & Designation #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-4">Role &amp; Designation</h2>
+        <div class="space-y-3 text-xs">
+          <div class="flex justify-between"><span class="text-gray-500">System Role</span><span class="font-bold text-gray-800">{{ employee.get_role_display }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Designation Tier</span>
+            {% if ep.designation %}<span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-50 text-indigo-700">{{ ep.designation.name }} (Level {{ ep.designation.level }})</span>
+            {% else %}<span class="text-gray-300">Not assigned</span>{% endif %}
+          </div>
+          <div class="flex justify-between"><span class="text-gray-500">Department</span><span class="font-semibold text-gray-700">{{ ep.department|default:"&mdash;" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Can Manage Consultants</span>
+            {% if ep.can_manage_consultants %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700">Yes</span>
+            {% else %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-500">No</span>{% endif %}
+          </div>
+          <div class="flex justify-between"><span class="text-gray-500">Superuser</span>
+            {% if employee.is_superuser %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-red-50 text-red-600">Yes</span>
+            {% else %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-gray-100 text-gray-500">No</span>{% endif %}
+          </div>
+        </div>
+        <div class="mt-4 pt-4 border-t border-gray-100">
+          <a href="{% url 'employee-edit' employee.pk %}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition">Edit Permissions</a>
+        </div>
+      </div>
+
+      {# Feature Flags #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-4">Feature Flags <span class="text-gray-300 normal-case font-normal">(from designation)</span></h2>
+        {% if feature_flags %}
+        <div class="space-y-2">
+          {% for ff in feature_flags %}
+          <div class="flex items-center gap-3 p-2 rounded-lg bg-emerald-50/50">
+            {% if ff.icon %}<span class="text-base">{{ ff.icon }}</span>{% endif %}
+            <div class="flex-1 min-w-0">
+              <p class="text-xs font-semibold text-gray-800">{{ ff.label }}</p>
+              {% if ff.description %}<p class="text-[10px] text-gray-400 truncate">{{ ff.description }}</p>{% endif %}
+            </div>
+            <span class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-100 text-emerald-700">Enabled</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% else %}
+        <div class="text-center py-6">
+          <svg class="w-8 h-8 text-gray-200 mx-auto mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>
+          <p class="text-xs text-gray-400">No designation assigned. Assign one to enable feature flags.</p>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  {# ━━ TAB: SETTINGS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ #}
+  <div x-show="tab==='settings'" x-transition class="space-y-5">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+      {# Account Info #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-4">Account Information</h2>
+        <div class="space-y-3 text-xs">
+          <div class="flex justify-between"><span class="text-gray-500">Username</span><span class="font-mono font-semibold text-gray-800">{{ employee.username }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Email</span><span class="font-semibold text-gray-800">{{ employee.email }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Full Name</span><span class="font-semibold text-gray-800">{{ employee.get_full_name|default:"Not set" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Account Created</span><span class="text-gray-600">{{ account_created|date:"M j, Y g:i A" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Last Login</span><span class="text-gray-600">{% if last_login %}{{ last_login|date:"M j, Y g:i A" }} ({{ last_login|timesince }} ago){% else %}<span class="text-amber-600 font-semibold">Never</span>{% endif %}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Account Active</span>
+            {% if is_active %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-emerald-50 text-emerald-700">Active</span>
+            {% else %}<span class="px-2 py-0.5 rounded text-[9px] font-bold bg-red-50 text-red-600">Disabled</span>{% endif %}
+          </div>
+        </div>
+        <div class="mt-4 pt-4 border-t border-gray-100 flex gap-2">
+          <a href="{% url 'employee-edit' employee.pk %}" class="px-3 py-1.5 rounded-lg text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 transition">Edit Profile</a>
+        </div>
+      </div>
+
+      {# Company & Department #}
+      <div class="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
+        <h2 class="text-xs font-bold text-gray-600 uppercase tracking-wider mb-4">Organization</h2>
+        <div class="space-y-3 text-xs">
+          <div class="flex justify-between"><span class="text-gray-500">Company</span><span class="font-semibold text-gray-800">{{ ep.company_name|default:"&mdash;" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Department</span><span class="font-semibold text-gray-800">{{ ep.department|default:"&mdash;" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Designation</span><span class="font-semibold text-gray-800">{{ ep.designation|default:"&mdash;" }}</span></div>
+          <div class="flex justify-between"><span class="text-gray-500">Role</span><span class="font-semibold text-gray-800">{{ employee.get_role_display }}</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  {% endwith %}
 </div>
 {% endblock %}
